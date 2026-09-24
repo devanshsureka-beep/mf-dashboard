@@ -1,0 +1,31 @@
+@import "tailwindcss";
+
+/*
+ * MN Advisory Dashboard — light financial-operations theme.
+ * Colour is reserved for meaning: green/red only for financial direction or
+ * success/failure, amber for pending, blue for informational / advised.
+ */
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --color-background: #f7f8fa;
+  --color-surface: #ffffff;
+  --color-border: #e4e7ec;
+  --color-muted: #667085;
+  --color-ink: #101828;
+  --color-brand: #1d3a6e;
+  --color-brand-soft: #eef3fb;
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-feature-settings: "tnum" 1; /* tabular numbers for financial columns */
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

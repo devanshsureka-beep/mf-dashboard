@@ -1,0 +1,100 @@
+import type { Tx } from "@/lib/db/tx";
+import { bestSecurityMatch, detectPlanType, type SecurityCandidate } from "@/lib/domain/securities";
+
+export interface SecurityRow {
+  id: string;
+  isin: string | null;
+  scheme_name: string;
+  amc: string | null;
+  category: string | null;
+  plan_type: string | null;
+  asset_class: string | null;
+}
+
+export async function searchSecurities(tx: Tx, q: string, limit = 20): Promise<SecurityRow[]> {
+  const term = `%${q.trim()}%`;
+  return tx<SecurityRow[]>`
+    select id, isin, scheme_name, amc, category, plan_type, asset_class
+    from public.security_master
+    where is_active and (${q.trim() === ""} or scheme_name ilike ${term} or isin ilike ${term} or amc ilike ${term})
+    order by scheme_name
+    limit ${limit}
+  `;
+}
+
+export async function listAllSecurities(tx: Tx): Promise<SecurityRow[]> {
+  return tx<SecurityRow[]>`
+    select id, isin, scheme_name, amc, category, plan_type, asset_class
+    from public.security_master where is_active order by scheme_name
+  `;
+}
+
+/**
+ * Deterministic resolution for CAS holdings: ISIN is authoritative. Creates the
+ * security_master row when the ISIN is new. ISIN-less lines resolve by exact
+ * normalised name, else a new ISIN-less entry is created.
+ */
+export async function resolveOrCreateSecurity(
+  tx: Tx,
+  h: { isin?: string | null; scheme_name: string; amc?: string | null; category?: string | null; plan_type?: string | null },
+  createdBy: string | null,
+): Promise<string> {
+  const planType = h.plan_type ?? detectPlanType(h.scheme_name);
+  if (h.isin) {
+    const existing = await tx<{ id: string }[]>`select id from public.security_master where isin = ${h.isin}`;
+    if (existing[0]) return existing[0].id;
+    const inserted = await tx<{ id: string }[]>`
+      insert into public.security_master (isin, scheme_name, amc, category, plan_type, created_by)
+      values (${h.isin}, ${h.scheme_name}, ${h.amc ?? null}, ${h.category ?? null}, ${planType}, ${createdBy})
+      on conflict (isin) do update set updated_at = public.security_master.updated_at
+      returning id`;
+    return inserted[0].id;
+  }
+  const byName = await tx<{ id: string }[]>`
+    select id from public.security_master
+    where name_key = trim(regexp_replace(lower(${h.scheme_name}), '[^a-z0-9]+', ' ', 'g'))
+    order by (isin is null) desc
+    limit 1`;
+  if (byName[0]) return byName[0].id;
+  const inserted = await tx<{ id: string }[]>`
+    insert into public.security_master (scheme_name, amc, category, plan_type, created_by)
+    values (${h.scheme_name}, ${h.amc ?? null}, ${h.category ?? null}, ${planType}, ${createdBy})
+    returning id`;
+  return inserted[0].id;
+}
+
+/**
+ * Suggest a security for AI-extracted text. Only returns `confident: true`
+ * for ISIN hits or unambiguous name matches; otherwise the plan item is
+ * flagged needs_review for a person to resolve.
+ */
+export async function suggestSecurity(
+  tx: Tx,
+  name: string,
+  isin: string | null | undefined,
+  pool?: SecurityCandidate[],
+): Promise<{ id: string | null; confident: boolean }> {
+  if (isin) {
+    const hit = await tx<{ id: string }[]>`select id from public.security_master where isin = ${isin}`;
+    if (hit[0]) return { id: hit[0].id, confident: true };
+  }
+  const candidates =
+    pool ??
+    (await tx<SecurityCandidate[]>`
+      select id, scheme_name, isin, plan_type, aliases from public.security_master where is_active`);
+  const best = bestSecurityMatch(name, candidates);
+  return { id: best.candidate?.id ?? null, confident: best.confident };
+}
+
+export async function createSecurity(
+  tx: Tx,
+  input: { scheme_name: string; isin?: string | null; amc?: string | null; category?: string | null; plan_type?: string | null; asset_class?: string | null },
+  createdBy: string,
+): Promise<string> {
+  const rows = await tx<{ id: string }[]>`
+    insert into public.security_master (scheme_name, isin, amc, category, plan_type, asset_class, created_by)
+    values (${input.scheme_name}, ${input.isin || null}, ${input.amc || null}, ${input.category || null},
+            ${input.plan_type || detectPlanType(input.scheme_name)}, ${input.asset_class || null}, ${createdBy})
+    returning id`;
+  return rows[0].id;
+}
