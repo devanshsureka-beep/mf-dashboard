@@ -101,7 +101,7 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
               <TR>
                 <TH>Security</TH><TH>Action</TH><TH className="text-right">Current value</TH><TH className="text-right">Target value</TH>
                 <TH className="text-right">Target amount</TH><TH className="text-right">Advised</TH><TH className="text-right">Executed</TH>
-                <TH className="text-right">Pending</TH><TH className="text-right">Yet to advise</TH><TH>Status</TH>{editable ? <TH /> : null}
+                <TH className="text-right">Pending</TH><TH className="text-right">Yet to advise</TH><TH>Status</TH>
               </TR>
             </THead>
             <TBody>
@@ -112,6 +112,9 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
                     {i.needs_review ? <Badge tone="pending">needs review</Badge> : null}
                     {!i.security_id && i.side !== "NONE" ? <Badge tone="danger">no security</Badge> : null}
                     {i.reason ? <div className="truncate text-[11px] text-muted no-underline" title={i.reason}>{i.reason}</div> : null}
+                    {editable && i.item_status !== "CANCELLED" ? (
+                      <ItemEditor i={i} clientId={id} planId={planId} isActive={isActive} securities={securities} heldIds={heldIds} />
+                    ) : null}
                   </TD>
                   <TD><ActionBadge action={i.action} /></TD>
                   <TD className="text-right"><Money value={i.current_amount} /></TD>
@@ -125,13 +128,6 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
                     <StatusBadge status={i.item_status === "CANCELLED" ? "CANCELLED" : i.progress_status} />
                     {i.side !== "NONE" ? <TransitionBar className="mt-1" target={i.target_amount} executed={i.executed_amount} pending={i.pending_amount} /> : null}
                   </TD>
-                  {editable ? (
-                    <TD className="min-w-24">
-                      {i.item_status !== "CANCELLED" ? (
-                        <ItemEditor i={i} clientId={id} planId={planId} isActive={isActive} securities={securities} heldIds={heldIds} />
-                      ) : null}
-                    </TD>
-                  ) : null}
                 </TR>
               ))}
             </TBody>
@@ -270,8 +266,8 @@ function ItemEditor({ i, clientId, planId, isActive, securities, heldIds }: {
 }) {
   return (
     <details className="text-xs">
-      <summary className="cursor-pointer text-brand">{isActive ? "Amend" : "Edit"}</summary>
-      <div className="absolute right-8 z-30 mt-1 w-[520px] rounded-lg border border-border bg-white p-3 shadow-lg">
+      <summary className="cursor-pointer text-brand">{isActive ? "Amend / cancel" : i.needs_review ? "Resolve / edit" : "Edit"}</summary>
+      <div className="absolute z-30 mt-1 w-[520px] rounded-lg border border-border bg-white p-3 shadow-lg">
         <ActionForm action={updatePlanItemAction.bind(null, clientId, planId, i.plan_item_id)} className="grid grid-cols-2 gap-2">
           <Field label="Security" className="col-span-2"><SecuritySelect securities={securities} heldIds={heldIds} defaultValue={i.security_id} /></Field>
           <input type="hidden" name="scheme_name" value={i.scheme_name} />

@@ -1,0 +1,22 @@
+{
+  "client_code": "MN-00101",
+  "status": "PARSED",
+  "plan": {
+    "plan_name": "Portfolio rebalancing & execution report",
+    "plan_date": "2026-09-24",
+    "starting_portfolio_value": 626521.26,
+    "notes": "Moderate risk · wealth creation · direct plans only"
+  },
+  "items": [
+    { "action": "SELL", "scheme_name": "Sample Gold and Silver Passive FoF - Regular Growth", "isin": "INFDM0000990", "folio_number": "900000001/0", "current_amount": 437226.26, "target_amount": 437226.26, "reason": "Regular plan, no track record; exit", "priority": 10 },
+    { "action": "SWITCH", "scheme_name": "Sample Multi Cap Fund - Regular Growth", "isin": "INFDM0000980", "current_amount": 189295, "target_amount": 189295, "switch_to_scheme_name": "Sample Multi Cap Fund - Direct Growth", "priority": 20 },
+    { "action": "BUY", "scheme_name": "Sample Multi Cap Fund - Direct Growth", "target_amount": 250000, "target_weight": 39.9, "priority": 30 },
+    { "action": "BUY", "scheme_name": "Sample Gold Savings Fund - Direct Growth", "target_amount": 376521.26, "target_weight": 60.1, "priority": 40 }
+  ],
+  "sip_items": [
+    { "action": "STOP", "scheme_name": "Sample Multi Cap Fund - Regular Growth", "old_amount": 2500, "debit_day": 8 },
+    { "action": "START", "scheme_name": "Sample Multi Cap Fund - Direct Growth", "new_amount": 2500, "frequency": "MONTHLY", "debit_day": 8 }
+  ],
+  "declared_totals": { "exit_value": 626521.26, "buy_value": 626521.26, "sip_value": 2500 },
+  "warnings": []
+}

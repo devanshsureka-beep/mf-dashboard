@@ -1,0 +1,47 @@
+{
+  "cas_document_id": "REPLACE-WITH-CAS-DOCUMENT-ID",
+  "status": "PARSED",
+  "extraction_method": "AI_EXTRACTION",
+  "statement": {
+    "source": "CAMS",
+    "statement_from_date": "2020-01-01",
+    "statement_to_date": "2026-09-24",
+    "valuation_date": "2026-09-23",
+    "investor_name": "Sample Investor",
+    "investor_pan": "ABCDE1234F"
+  },
+  "holdings": [
+    {
+      "scheme_name": "Sample Gold and Silver Passive FoF - Regular Growth",
+      "isin": "INFDM0000990",
+      "amc": "Sample AMC",
+      "folio_number": "900000001/0",
+      "plan_type": "REGULAR",
+      "category": "Gold & silver FoF",
+      "units": 38123.456,
+      "nav": 11.4688,
+      "nav_date": "2026-09-23",
+      "current_value": 437226.26,
+      "cost_value": 400000
+    },
+    {
+      "scheme_name": "Sample Multi Cap Fund - Regular Growth",
+      "isin": "INFDM0000980",
+      "amc": "Sample AMC",
+      "folio_number": "900000002",
+      "plan_type": "REGULAR",
+      "category": "Multi Cap",
+      "units": 5000,
+      "nav": 37.859,
+      "nav_date": "2026-09-23",
+      "current_value": 189295,
+      "cost_value": 130000
+    }
+  ],
+  "transactions": [
+    { "date": "2025-12-29", "type": "PURCHASE", "scheme_name": "Sample Gold and Silver Passive FoF - Regular Growth", "isin": "INFDM0000990", "folio_number": "900000001/0", "units": 38123.456, "nav": 10.4924, "amount": 400000, "balance_units": 38123.456 },
+    { "date": "2026-09-08", "type": "SIP", "scheme_name": "Sample Multi Cap Fund - Regular Growth", "isin": "INFDM0000980", "folio_number": "900000002", "units": 66.2, "nav": 37.76, "amount": 2500, "balance_units": 5000 }
+  ],
+  "totals": { "current_value": 626521.26, "invested_value": 530000 },
+  "warnings": []
+}

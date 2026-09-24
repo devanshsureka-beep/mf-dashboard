@@ -52,7 +52,9 @@ export async function withUserTx<T>(
 }
 
 /**
- * Run `fn` in a transaction as the trusted server (service_role, bypasses RLS).
+ * Run `fn` in a transaction as the trusted server: the connection's own role
+ * (`postgres`, owner of the tables, so RLS does not apply). Business-rule
+ * triggers and the audit trail still apply.
  *
  * ONLY for integration endpoints (after API-key verification), the seed script
  * and background jobs. `label` is written to audit_logs.actor_label.
@@ -67,7 +69,6 @@ export async function withSystemTx<T>(
     await tx`
       select
         set_config('request.jwt.claims', '', true),
-        set_config('role', 'service_role', true),
         set_config('app.audit_reason', ${opts.reason ?? ""}, true),
         set_config('app.actor_label', ${label}, true)
     `;

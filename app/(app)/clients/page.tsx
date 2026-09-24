@@ -84,14 +84,14 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
                 <TH className="text-right">Buy advised</TH>
                 <TH className="text-right">Buy executed</TH>
                 <TH className="text-right">Pending</TH>
-                <TH>Status</TH>
               </TR>
             </THead>
             <TBody>
               {clients.map((c) => (
                 <TR key={c.client_id}>
                   <TD>
-                    <Link href={`/clients/${c.client_id}`} className="whitespace-nowrap font-medium text-ink hover:underline">{c.full_name}</Link>
+                    <Link href={`/clients/${c.client_id}`} className="whitespace-nowrap font-medium text-ink hover:underline">{c.full_name}</Link>{" "}
+                    {c.status !== "ACTIVE" ? <StatusBadge status={c.status} /> : null}
                     <div className="whitespace-nowrap text-xs text-muted">
                       {c.client_code}
                       {c.unadvised_count > 0 ? <span className="ml-2 text-red-700" title="Unadvised activity detected in CAS">● unadvised</span> : null}
@@ -107,7 +107,6 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
                   <TD className="text-right text-blue-700"><Money value={c.advised_buy} zeroDash /></TD>
                   <TD className="text-right text-emerald-700"><Money value={c.executed_buy} zeroDash /></TD>
                   <TD className="text-right"><Money value={c.pending_total} zeroDash className={c.pending_total > 0 ? "font-medium text-amber-700" : "text-muted"} /></TD>
-                  <TD><StatusBadge status={c.status} /></TD>
                 </TR>
               ))}
             </TBody>
