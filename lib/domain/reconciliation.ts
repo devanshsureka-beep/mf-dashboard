@@ -230,7 +230,13 @@ export function reconcile(input: EngineInput): MatchProposal[] {
       const allocated = Math.min(expected.units, remaining);
       remaining = round4(remaining - allocated);
       const ratio = allocated / expected.units;
-      const confidence = confidenceFor(ratio, advice.quantityBasis, ambiguous);
+      // The CAS may evidence exactly the executions already recorded manually,
+      // with the rest of the call still pending: that is a clean match too.
+      const unverifiedUnits =
+        advice.quantityBasis === "UNITS" ? advice.unverifiedExecutedUnits : nav ? advice.unverifiedExecutedAmount / nav : 0;
+      const matchesRecorded = unverifiedUnits > UNIT_EPSILON && ratio < 0.97 &&
+        confidenceFor(allocated / unverifiedUnits, advice.quantityBasis, false) === "HIGH";
+      const confidence = matchesRecorded ? (ambiguous ? "MEDIUM" : "HIGH") : confidenceFor(ratio, advice.quantityBasis, ambiguous);
       const sign = wantSell ? -1 : 1;
       const partial = ratio < 0.97;
       proposals.push({
@@ -245,7 +251,7 @@ export function reconcile(input: EngineInput): MatchProposal[] {
         status: "SUGGESTED",
         systemNote: [
           `${wantSell ? "Reduction" : "Increase"} of ${round4(allocated)} units vs ${round4(expected.units)} expected`,
-          partial ? "(looks like a partial execution)" : "",
+          matchesRecorded ? "(matches executions already recorded; remainder of the call still pending)" : partial ? "(looks like a partial execution)" : "",
           ambiguous ? `— ${candidates.length} open calls on this security, allocated oldest first` : "",
           advice.unverifiedExecutedAmount > 0 ? "— includes executions recorded manually, awaiting CAS verification" : "",
         ].filter(Boolean).join(" "),
