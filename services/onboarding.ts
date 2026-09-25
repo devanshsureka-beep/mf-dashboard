@@ -1,7 +1,7 @@
 import type { Actor, Tx } from "@/lib/db/tx";
 import { AppError } from "@/lib/errors";
 import { advisoryReportResultSchema } from "@/lib/integrations/contracts";
-import { buildPlanFromReport, type PlanHolding } from "@/lib/domain/report-plan";
+import { buildPlanFromReport, type PlanHolding, type ReportPlanDraft } from "@/lib/domain/report-plan";
 import { toCasParseResult, type CasParseOutput } from "@/lib/parsers/cas";
 import { sameInvestor, type AdvisoryReportParse } from "@/lib/parsers/advisory-report";
 import { createClient } from "@/services/clients";
@@ -37,13 +37,13 @@ export function checkDocumentsBelongTogether(cas: CasParseOutput, report: Adviso
   return { investorName: cas.investor.name, reportName: report.clientName, pan: cas.investor.pan, namesMatch, existingClient: null, problem };
 }
 
-/**
- * Everything that must hold before anything is saved: same investor, and every
- * report line tied to the CAS (see buildPlanFromReport). Pure.
- */
-export function onboardingProblems(cas: CasParseOutput, report: AdvisoryReportParse): string[] {
+export function previewOnboarding(cas: CasParseOutput, report: AdvisoryReportParse): {
+  problems: string[];
+  draft: ReportPlanDraft | null;
+  holdings: PlanHolding[];
+} {
   const check = checkDocumentsBelongTogether(cas, report);
-  if (check.problem) return [check.problem];
+  if (check.problem) return { problems: [check.problem], draft: null, holdings: [] };
   let holdings: PlanHolding[];
   try {
     holdings = toCasParseResult(cas, "00000000-0000-0000-0000-000000000000").holdings.map((h) => ({
@@ -51,9 +51,18 @@ export function onboardingProblems(cas: CasParseOutput, report: AdvisoryReportPa
       current_value: h.current_value, plan_type: h.plan_type ?? null,
     }));
   } catch (e) {
-    return [(e as Error).message];
+    return { problems: [(e as Error).message], draft: null, holdings: [] };
   }
-  return buildPlanFromReport(report, holdings, cas.valuationDate).problems;
+  const draft = buildPlanFromReport(report, holdings, cas.valuationDate);
+  return { problems: draft.problems, draft, holdings };
+}
+
+/**
+ * Everything that must hold before anything is saved: same investor, and every
+ * report line tied to the CAS (see buildPlanFromReport). Pure.
+ */
+export function onboardingProblems(cas: CasParseOutput, report: AdvisoryReportParse): string[] {
+  return previewOnboarding(cas, report).problems;
 }
 
 export function problemsMessage(problems: string[]): string {

@@ -4,10 +4,8 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { runAction, str, type ActionResult } from "@/lib/actions";
 import { casPasswordTemplate, passwordCandidates } from "@/lib/cas/password";
-import { readCasPdf } from "@/lib/cas/reader";
+import { readCasPdf, readReportPdf } from "@/lib/cas/reader";
 import { AppError } from "@/lib/errors";
-import { parseAdvisoryReportLines, ReportParseError } from "@/lib/parsers/advisory-report";
-import { extractPdfLines, findWorkingPassword, PdfPasswordError } from "@/lib/pdf/text";
 import { ADVISORY_ROLES, actionTx } from "@/lib/server";
 import { objectPath, prepareUpload, uploadAsUser } from "@/lib/storage";
 import { knownClientPhones } from "@/services/cas-intake";
@@ -35,15 +33,7 @@ export async function onboardAction(_p: ActionResult | null, fd: FormData): Prom
     });
     const { parsed: cas, passwordProtected } = await readCasPdf(casFile.bytes, candidates);
 
-    let report;
-    try {
-      const pw = await findWorkingPassword(reportFile.bytes, candidates);
-      report = parseAdvisoryReportLines(await extractPdfLines(reportFile.bytes, pw));
-    } catch (e) {
-      if (e instanceof PdfPasswordError) throw new AppError("The advisory report is password protected and none of the passwords worked.");
-      if (e instanceof ReportParseError) throw new AppError(`The advisory report could not be read: ${e.message}`);
-      throw e;
-    }
+    const report = await readReportPdf(reportFile.bytes, candidates);
 
     const client = await actionTx(
       (tx, actor) => ensureClientFromDocuments(tx, actor, { cas, report, advisorId: str(fd, "advisor_id") || null, phone: mobile }),

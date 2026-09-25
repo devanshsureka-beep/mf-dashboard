@@ -227,6 +227,23 @@ DB integration tests (`tests/db`) need `TEST_DATABASE_URL` (e.g. in `.env.test.l
 - AI drafts that cannot be activated
 - reconciliation confirm without double counting, and unadvised activity
 
+## Test site vs live site
+
+| | Test site (staging) | Live site (production) |
+|---|---|---|
+| Git branch | working branch (`claude/…`) | `main` |
+| Vercel environment | Preview | Production |
+| Supabase project | `mn-advisory-staging` | `mn-advisory` |
+| Banner | amber "TEST SITE" (env `APP_ENV=staging`) | none |
+
+1. Every change is pushed to the working branch and appears on the test site's preview URL.
+2. Test it there with real PDFs and throw-away clients. Nothing touches live data.
+3. To go live, merge the working branch into `main` (a pull request on GitHub). Vercel deploys `main` to the live site. To undo a bad release, use Vercel → Deployments → the previous one → "Instant Rollback".
+
+Database changes follow the same path: a new migration is applied to the staging project first and to production when the change goes live.
+
+**Check Documents** (`/onboard/check`) runs every onboarding check on a CAS + report and shows the exact plan that would be created, without saving anything. It is safe to use on the live site.
+
 ## Deploy on Vercel
 
 **Region:** `vercel.json` runs the server functions in `bom1` (Mumbai), next to the Supabase project (`ap-south-1`). Keep them in the same region: every page and upload makes several database calls, and a cross-continent hop adds about 0.25 s to each one. If you move the database, change `regions` too.

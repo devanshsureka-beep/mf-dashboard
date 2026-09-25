@@ -5,6 +5,7 @@
 import { extractPdfLines, findWorkingPassword, PdfPasswordError } from "@/lib/pdf/text";
 import { CasParseError, parseCasLines, type CasParseOutput } from "@/lib/parsers/cas";
 import { AppError } from "@/lib/errors";
+import { parseAdvisoryReportLines, ReportParseError, type AdvisoryReportParse } from "@/lib/parsers/advisory-report";
 
 export interface CasReadResult {
   parsed: CasParseOutput;
@@ -31,6 +32,18 @@ export async function readCasPdf(bytes: Uint8Array, candidates: string[]): Promi
     return { parsed: parseCasLines(lines), passwordProtected: password !== null };
   } catch (e) {
     if (e instanceof CasParseError) throw new AppError(`This does not look like a KFintech/CAMS consolidated CAS: ${e.message}`);
+    throw e;
+  }
+}
+
+/** Read the advisory report PDF (usually not locked; the same candidates are tried if it is). */
+export async function readReportPdf(bytes: Uint8Array, candidates: string[]): Promise<AdvisoryReportParse> {
+  try {
+    const pw = await findWorkingPassword(bytes, candidates);
+    return parseAdvisoryReportLines(await extractPdfLines(bytes, pw));
+  } catch (e) {
+    if (e instanceof PdfPasswordError) throw new AppError("The advisory report is password protected and none of the passwords worked.");
+    if (e instanceof ReportParseError) throw new AppError(`The advisory report could not be read: ${e.message}`);
     throw e;
   }
 }

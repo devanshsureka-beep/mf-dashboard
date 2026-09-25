@@ -3,13 +3,14 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  LayoutDashboard, Users, PhoneCall, Hourglass, FileSearch, ScrollText, ShieldCheck, LogOut, UserPlus, FileStack,
+  LayoutDashboard, Users, PhoneCall, Hourglass, FileSearch, ScrollText, ShieldCheck, LogOut, UserPlus, FileStack, ClipboardCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AppRole } from "@/types/domain";
 
 const NAV: { href: string; label: string; icon: typeof Users; roles?: AppRole[] }[] = [
   { href: "/", label: "Command Centre", icon: LayoutDashboard },
+  { href: "/onboard/check", label: "Check Documents", icon: ClipboardCheck },
   { href: "/onboard", label: "Onboard Client", icon: UserPlus, roles: ["ADMIN", "ADVISOR"] },
   { href: "/clients", label: "Clients", icon: Users },
   { href: "/advice", label: "Advice Call Ledger", icon: PhoneCall },
@@ -33,7 +34,7 @@ export function Sidebar({ name, role, signOut }: { name: string; role: AppRole; 
       </div>
       <nav className="flex-1 space-y-0.5 p-2">
         {NAV.filter((n) => !n.roles || n.roles.includes(role)).map((n) => {
-          const active = n.href === "/" ? path === "/" : path.startsWith(n.href);
+          const active = n.href === "/" || n.href === "/onboard" ? path === n.href : path.startsWith(n.href);
           const Icon = n.icon;
           return (
             <Link
