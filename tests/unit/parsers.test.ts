@@ -201,3 +201,24 @@ describe("Univest report, second layout (partial trim, wrapped cells, SIP routin
     });
   });
 });
+
+describe("ISIN reading", () => {
+  it("validates the ISIN check digit", async () => {
+    const { isValidIsin } = await import("@/lib/parsers/cas");
+    expect(isValidIsin("INF769K01101")).toBe(true);
+    expect(isValidIsin("INF917K01HD4")).toBe(true);
+    expect(isValidIsin("INF769K01102")).toBe(false);
+    expect(isValidIsin("INF769K0110")).toBe(false);
+  });
+
+  it("re-joins an ISIN the two-column header pushed onto the next line, only with a valid check digit", async () => {
+    const { findIsin } = await import("@/lib/parsers/cas");
+    const header = [
+      "117EBRGG-Mirae Asset Large and Midcap Fund (formerly Mirae Asset Emerging Bluechip Fund) - Regular Plan (Non Demat) - ISIN: INF769K | Registrar :",
+      "01101(Advisor: ARN-0000) | KFINTECH",
+    ];
+    expect(findIsin(header)).toBe("INF769K01101");
+    expect(findIsin([header[0], "01109(Advisor: ARN-0000) | KFINTECH"])).toBeNull(); // wrong digits never accepted
+    expect(findIsin(["X Fund - Direct | (Demat) (Advisor:INZ000031633) - ISIN:INF917K01HD4 | Registrar : CAMS"])).toBe("INF917K01HD4");
+  });
+});

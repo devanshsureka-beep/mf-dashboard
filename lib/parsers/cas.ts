@@ -146,6 +146,43 @@ function mostCommon<T>(xs: T[]): T | null {
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const round4 = (n: number) => Math.round(n * 10000) / 10000;
 
+/** ISIN check digit (ISO 6166): letters to numbers, then Luhn. */
+export function isValidIsin(isin: string): boolean {
+  if (!/^[A-Z]{2}[A-Z0-9]{9}\d$/.test(isin)) return false;
+  const digits = isin.split("").map((ch) => (/[A-Z]/.test(ch) ? String(ch.charCodeAt(0) - 55) : ch)).join("");
+  let sum = 0;
+  for (let i = 0; i < digits.length; i++) {
+    let d = Number(digits[digits.length - 1 - i]);
+    if (i % 2 === 1) {
+      d *= 2;
+      if (d > 9) d -= 9;
+    }
+    sum += d;
+  }
+  return sum % 10 === 0;
+}
+
+/**
+ * The ISIN from a folio's header lines. The CAS prints the header in two
+ * columns, so a long scheme name can push the ISIN's end onto the next line
+ * ("ISIN: INF769K | Registrar :" / "01101(Advisor: …)"). A split ISIN is
+ * re-joined only when the result passes the ISIN check digit.
+ */
+export function findIsin(header: string[]): string | null {
+  for (let i = 0; i < header.length; i++) {
+    const m = /ISIN\s*:\s*([A-Z0-9]{2,12})/.exec(header[i]);
+    if (!m) continue;
+    if (m[1].length === 12) return isValidIsin(m[1]) ? m[1] : null;
+    for (const next of header.slice(i + 1, i + 3)) {
+      const cont = /^\s*([A-Z0-9]+)/.exec(next.split(" | ").find((c) => /^[A-Z0-9]/.test(c.trim())) ?? "")?.[1] ?? "";
+      const candidate = (m[1] + cont).slice(0, 12);
+      if (candidate.length === 12 && isValidIsin(candidate)) return candidate;
+    }
+    return null;
+  }
+  return null;
+}
+
 export function parseCasLines(rawLines: string[]): CasParseOutput {
   const lines = rawLines.map(normaliseLine).filter((l) => l.length > 0);
   const text = lines.join("\n");
@@ -188,11 +225,7 @@ export function parseCasLines(rawLines: string[]): CasParseOutput {
   const finishHeader = () => {
     if (!cur) return;
     const joined = header.join(" | ");
-    // ISIN, also when the PDF split it across cells ("INF769K | 01101").
-    const isin =
-      /ISIN\s*:\s*([A-Z]{2}[A-Z0-9]{9}\d)/.exec(joined)?.[1] ??
-      /ISIN\s*:\s*([A-Z]{2}[A-Z0-9]{9}\d)/.exec(joined.replace(/\s*\|\s*/g, "").replace(/(ISIN:?)\s+/g, "$1"))?.[1] ??
-      null;
+    const isin = findIsin(header);
     const registrar = /Registrar\s*:\s*([A-Za-z]+)/.exec(joined)?.[1] ?? null;
     // First header line is the holder name when it has no scheme markers.
     const holder = header[0] && !/ISIN|Registrar|Advisor|Demat|-/.test(header[0]) ? header[0].trim() : null;
@@ -204,7 +237,11 @@ export function parseCasLines(rawLines: string[]): CasParseOutput {
     cur.isin = isin;
     cur.registrar = registrar ? registrar.toUpperCase() : null;
     cur.planType = planTypeOf(cur.schemeName, raw);
-    if (!isin) warnings.push(`ISIN not found for folio ${cur.folio} (${cur.schemeName || "unknown scheme"}).`);
+    if (!isin) {
+      warnings.push(/ISIN\s*:/.test(joined)
+        ? `ISIN for folio ${cur.folio} (${cur.schemeName || "unknown scheme"}) could not be read with a valid check digit.`
+        : `ISIN not found for folio ${cur.folio} (${cur.schemeName || "unknown scheme"}).`);
+    }
     if (!cur.schemeName) warnings.push(`Scheme name not found for folio ${cur.folio}.`);
   };
 
