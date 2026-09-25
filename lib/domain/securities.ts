@@ -71,3 +71,21 @@ export function bestSecurityMatch(
   const confident = top.score >= 0.85 && top.score - second >= 0.1;
   return { candidate: top.score >= 0.5 ? top.c : null, score: top.score, confident };
 }
+
+// Words that never distinguish one fund from another.
+const NOISE = new Set(["non", "demat", "physical", "fund", "plan", "option", "growth", "scheme", "the", "of", "and", "india"]);
+
+/**
+ * Strict "same fund" test for attaching an ISIN to a fund known only by name:
+ * every distinguishing word must be the same on both sides ("Large Cap" is
+ * NOT "Large and Mid Cap"). Plan type is compared separately by the caller.
+ */
+export function sameFundName(a: string, b: string): boolean {
+  const key = (s: string) =>
+    new Set(tokens(s.replace(/\(formerly[^)]*\)/gi, " ")).filter((t) => !NOISE.has(t)));
+  const ka = key(a);
+  const kb = key(b);
+  if (ka.size === 0 || ka.size !== kb.size) return false;
+  for (const t of ka) if (!kb.has(t)) return false;
+  return true;
+}

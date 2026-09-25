@@ -1,5 +1,5 @@
 import type { Tx } from "@/lib/db/tx";
-import { bestSecurityMatch, detectPlanType, type SecurityCandidate } from "@/lib/domain/securities";
+import { bestSecurityMatch, detectPlanType, sameFundName, type SecurityCandidate } from "@/lib/domain/securities";
 
 export interface SecurityRow {
   id: string;
@@ -46,17 +46,16 @@ export async function resolveOrCreateSecurity(
     // A fund recommended by name (advisory report, no ISIN) shows up in a CAS
     // for the first time: attach the ISIN to that entry so calls made against
     // it match the CAS transactions. Only on a confident, same-plan match.
-    const isinLess = await tx<SecurityCandidate[]>`
-      select id, scheme_name, isin, plan_type, aliases from public.security_master where isin is null and is_active`;
-    const best = bestSecurityMatch(h.scheme_name, isinLess);
-    if (best.confident && best.candidate && (!planType || !best.candidate.plan_type || best.candidate.plan_type === planType)) {
+    const isinLess = await reportOnlySecurities(tx);
+    const same = isinLess.filter((c) => sameFundName(h.scheme_name, c.scheme_name) && (!planType || !c.plan_type || c.plan_type === planType));
+    if (same.length === 1) {
       await tx`
         update public.security_master
            set isin = ${h.isin}, plan_type = coalesce(plan_type, ${planType}), amc = coalesce(amc, ${h.amc ?? null}),
                aliases = case when ${h.scheme_name} = any(aliases) or scheme_name = ${h.scheme_name} then aliases
                               else array_append(aliases, ${h.scheme_name}) end
-         where id = ${best.candidate.id} and isin is null`;
-      return best.candidate.id;
+         where id = ${same[0].id} and isin is null`;
+      return same[0].id;
     }
     const inserted = await tx<{ id: string }[]>`
       insert into public.security_master (isin, scheme_name, amc, category, plan_type, created_by)
@@ -76,6 +75,20 @@ export async function resolveOrCreateSecurity(
     values (${h.scheme_name}, ${h.amc ?? null}, ${h.category ?? null}, ${planType}, ${createdBy})
     returning id`;
   return inserted[0].id;
+}
+
+/**
+ * Funds known only by name that came from a report (to buy / start a SIP),
+ * never from a CAS holding: the only ones an ISIN may be attached to later.
+ */
+async function reportOnlySecurities(tx: Tx): Promise<SecurityCandidate[]> {
+  return tx<SecurityCandidate[]>`
+    select sm.id, sm.scheme_name, sm.isin, sm.plan_type, sm.aliases
+    from public.security_master sm
+    where sm.isin is null and sm.is_active
+      and not exists (select 1 from public.portfolio_holdings h where h.security_id = sm.id)
+      and (exists (select 1 from public.advisory_plan_items i where i.security_id = sm.id and i.action = 'BUY')
+           or exists (select 1 from public.sip_plan_items x where x.security_id = sm.id and x.action in ('START', 'CHANGE')))`;
 }
 
 export type SecurityInput = { isin?: string | null; scheme_name: string; amc?: string | null; category?: string | null; plan_type?: string | null };
@@ -102,13 +115,13 @@ export async function resolveSecuritiesBulk(tx: Tx, inputs: SecurityInput[], cre
   const missingIsin = missing.filter(([, x]) => x.isin);
   if (missingIsin.length) {
     // Name-only entries (funds bought from a report) pick up their ISIN here.
-    const isinLess = await tx<SecurityCandidate[]>`
-      select id, scheme_name, isin, plan_type, aliases from public.security_master where isin is null and is_active`;
+    const isinLess = await reportOnlySecurities(tx);
     const toInsert: { isin: string; scheme_name: string; amc: string | null; category: string | null; plan_type: string | null; created_by: string | null }[] = [];
     for (const [k, x] of missingIsin) {
       const planType = x.plan_type ?? detectPlanType(x.scheme_name);
-      const best = bestSecurityMatch(x.scheme_name, isinLess);
-      if (best.confident && best.candidate && (!planType || !best.candidate.plan_type || best.candidate.plan_type === planType)) {
+      const same = isinLess.filter((c) => sameFundName(x.scheme_name, c.scheme_name) && (!planType || !c.plan_type || c.plan_type === planType));
+      const best = { confident: same.length === 1, candidate: same.length === 1 ? same[0] : null };
+      if (best.confident && best.candidate) {
         const cand = best.candidate;
         await tx`
           update public.security_master

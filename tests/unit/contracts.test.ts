@@ -57,3 +57,15 @@ describe("fund name matching (suggestions only)", () => {
     expect(nameSimilarity("abc", "")).toBe(0);
   });
 });
+
+describe("strict same-fund test (used before attaching an ISIN)", () => {
+  it("accepts only the same fund, never a sibling fund of the same house", async () => {
+    const { sameFundName } = await import("@/lib/domain/securities");
+    expect(sameFundName("Mirae Asset Large Cap Fund - Regular Plan (Non Demat)", "Mirae Asset Large and Midcap Fund - Regular Plan (Non Demat)")).toBe(false);
+    expect(sameFundName("Edelweiss Mid Cap Fund (Direct)", "Edelweiss Mid Cap Fund - Direct Plan - Growth")).toBe(true);
+    expect(sameFundName("Motilal Oswal Large & Midcap Fund (Direct)", "Motilal Oswal Large and Midcap Fund - Direct Plan Growth")).toBe(true);
+    expect(sameFundName("Mirae Asset Large and Midcap Fund (formerly Mirae Asset Emerging Bluechip Fund) - Regular Plan", "Mirae Asset Large & Midcap Fund - Regular")).toBe(true);
+    expect(sameFundName("HDFC Flexi Cap Fund", "HDFC Flexi Cap Fund IDCW")).toBe(false);
+    expect(sameFundName("Nippon India Small Cap Fund", "Nippon India Nifty Smallcap 250 Index Fund")).toBe(false);
+  });
+});

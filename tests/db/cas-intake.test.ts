@@ -8,6 +8,8 @@ import { runReconciliation } from "@/services/reconciliation";
 import { ingestParsedCas } from "@/services/cas-intake";
 import { ensureClientFromDocuments, onboardFromDocuments } from "@/services/onboarding";
 import { resolveOrCreateSecurity } from "@/services/securities";
+import { createClient } from "@/services/clients";
+import { addPlanItem, createDraftPlan } from "@/services/plans";
 import { parseCasLines, type CasParseOutput } from "@/lib/parsers/cas";
 import { parseAdvisoryReportLines } from "@/lib/parsers/advisory-report";
 import { clientWithActivePlan, parsed, progress, scenario, sql, TEST_DB, type Ctx } from "./harness";
@@ -251,18 +253,29 @@ describeDb("onboarding from CAS + advisory report", () => {
     });
   });
 
-  it("a fund bought by name picks up its ISIN from the first CAS that holds it", async () => {
+  it("a fund bought by name picks up its ISIN from the first CAS that holds it, and nothing else ever does", async () => {
     await scenario(async (ctx) => {
       const tag = randomUUID().slice(0, 4).replace(/\d/g, "q");
-      const nameOnly = await ctx.as("advisor", (t) => resolveOrCreateSecurity(t, { scheme_name: `Zephyr ${tag} Opportunities Fund (Direct)`, plan_type: "DIRECT" }, ctx.users.advisor.id));
-      const isin = `INF${String(Math.floor(Math.random() * 1e7)).padStart(7, "0")}Z1`;
-      const fromCas = await ctx.as("ops", (t) => resolveOrCreateSecurity(t, { isin, scheme_name: `Zephyr ${tag} Opportunities Fund - Direct Plan - Growth` }, ctx.users.ops.id));
-      expect(fromCas).toBe(nameOnly);
-      const row = (await ctx.tx<{ isin: string }[]>`select isin from public.security_master where id = ${nameOnly}`)[0];
-      expect(row.isin).toBe(isin);
+      const isinOf = (end: string) => `INF${String(Math.floor(Math.random() * 1e7)).padStart(7, "0")}${end}`;
+      // A report recommends buying "Zephyr … Opportunities Fund (Direct)" (no ISIN yet).
+      const client = await ctx.as("advisor", (t) => createClient(t, ctx.users.advisor, { full_name: "Buyer", status: "ACTIVE" }));
+      const nameOnly = await ctx.as("advisor", async (t) => {
+        const id = await resolveOrCreateSecurity(t, { scheme_name: `Zephyr ${tag} Opportunities Fund (Direct)`, plan_type: "DIRECT" }, ctx.users.advisor.id);
+        const planId = await createDraftPlan(t, ctx.users.advisor, { clientId: client.id, planName: "p" });
+        await addPlanItem(t, ctx.users.advisor, planId, { security_id: id, scheme_name: "Zephyr", action: "BUY", target_amount: 100000 });
+        return id;
+      });
+      // A different fund of the same house ("… Large Cap" vs "… Large and Mid Cap") must never take it over.
+      const other = await ctx.as("ops", (t) => resolveOrCreateSecurity(t, { isin: isinOf("Q3"), scheme_name: `Zephyr ${tag} Opportunities Large Cap Fund - Direct Plan - Growth` }, ctx.users.ops.id));
+      expect(other).not.toBe(nameOnly);
       // A Regular-plan ISIN never attaches to the Direct entry.
-      const reg = await ctx.as("ops", (t) => resolveOrCreateSecurity(t, { isin: `INF${String(Math.floor(Math.random() * 1e7)).padStart(7, "0")}R2`, scheme_name: `Zephyr ${tag} Opportunities Fund - Regular Plan - Growth` }, ctx.users.ops.id));
+      const reg = await ctx.as("ops", (t) => resolveOrCreateSecurity(t, { isin: isinOf("R2"), scheme_name: `Zephyr ${tag} Opportunities Fund - Regular Plan - Growth` }, ctx.users.ops.id));
       expect(reg).not.toBe(nameOnly);
+      // The same fund in the CAS: the ISIN is attached to the report's entry.
+      const isin = isinOf("Z1");
+      const fromCas = await ctx.as("ops", (t) => resolveOrCreateSecurity(t, { isin, scheme_name: `Zephyr ${tag} Opportunities Fund - Direct Plan - Growth (Non Demat)` }, ctx.users.ops.id));
+      expect(fromCas).toBe(nameOnly);
+      expect((await ctx.tx<{ isin: string }[]>`select isin from public.security_master where id = ${nameOnly}`)[0].isin).toBe(isin);
     });
   });
 
