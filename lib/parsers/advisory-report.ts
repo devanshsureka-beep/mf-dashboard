@@ -25,6 +25,8 @@ export interface ReportSellRow {
   /** Part of the holding only ("Trim ₹5L", "partial"), not a full exit. */
   partial: boolean;
   value: number;
+  /** One row covering several folios of the same fund ("x2 folios"). */
+  folioCount?: number;
 }
 export interface ReportBuyRow {
   fund: string;
@@ -58,7 +60,7 @@ export interface ReportReviewRow {
 }
 
 export interface AdvisoryReportParse {
-  template: "UNIVEST_REBALANCING_V1";
+  template: "UNIVEST_REBALANCING_V1" | "GENERIC_TABLES";
   clientName: string | null;
   riskProfile: string | null;
   goal: string | null;
@@ -74,6 +76,10 @@ export interface AdvisoryReportParse {
   sipTotals: { current: number | null; next: number | null };
   sipRouting: { fund: string; amount: number }[];
   review: ReportReviewRow[];
+  /** Funds the report keeps / defers with their value (not sold now). */
+  holds: { fund: string; folio: string | null; folioCount: number; planType: "DIRECT" | "REGULAR" | null; value: number; note: string }[];
+  /** Funds named in a fund list / status table (proves the report covers them). */
+  mentioned: { fund: string; planType: "DIRECT" | "REGULAR" | null; folio: string | null; folioCount: number }[];
   deploymentNotes: string[];
   /** Anything that does not reconcile. Callers must block on any entry. */
   problems: string[];
@@ -127,7 +133,7 @@ export function mapSellAction(text: string): ReportSellAction {
   return "UNKNOWN";
 }
 
-function mapRisk(text: string | null): string | null {
+export function mapRisk(text: string | null): string | null {
   if (!text) return null;
   const t = text.toLowerCase();
   if (/moderately aggressive|moderately high/.test(t)) return "MODERATELY_AGGRESSIVE";
@@ -160,10 +166,16 @@ function findHeader(lines: string[], ...labels: string[]): number {
 const isPageEnd = (l: string) => /^UNIVEST WEALTH\b/.test(l) || /^Univest Wealth Portfolio Report/i.test(l);
 
 // ---------------------------------------------------------------------------
+/** The first Univest layout ("Portfolio Rebalancing & Execution Report"). */
+export function isUnivestV1(rawLines: string[]): boolean {
+  const text = rawLines.join("\n");
+  return /UNIVEST WEALTH/i.test(text) && /LUMPSUM ACTION PLAN|WHAT WE SELL|FUND \| FOLIO \| ACTION/i.test(text.replace(/(\S) (?=\S( |$))/g, "$1"));
+}
+
 export function parseAdvisoryReportLines(rawLines: string[]): AdvisoryReportParse {
   const lines = rawLines.map((l) => l.replace(/\s+/g, " ").trim()).filter((l) => l && !l.startsWith("@@PAGE_BREAK"));
   const text = lines.join("\n");
-  if (!/UNIVEST WEALTH/i.test(text) || !/LUMPSUM ACTION PLAN|WHAT WE SELL|FUND \| FOLIO \| ACTION/i.test(text.replace(/(\S) (?=\S( |$))/g, "$1"))) {
+  if (!isUnivestV1(lines)) {
     throw new ReportParseError("This does not look like a Univest Portfolio Rebalancing & Execution Report.");
   }
   const problems: string[] = [];
@@ -459,6 +471,8 @@ export function parseAdvisoryReportLines(rawLines: string[]): AdvisoryReportPars
     sipTotals: { current: sipCurrent, next: sipNext },
     sipRouting,
     review,
+    holds: [],
+    mentioned: [],
     deploymentNotes,
     problems,
     warnings: problems,

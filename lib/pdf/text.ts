@@ -80,21 +80,50 @@ export async function findWorkingPassword(bytes: Uint8Array, candidates: (string
   throw new PdfPasswordError("INCORRECT_PASSWORD");
 }
 
-export async function extractPdfLines(bytes: Uint8Array, password?: string | null): Promise<string[]> {
+/** A piece of text with its position on the page (PDF points, y grows upwards). */
+export interface PdfItem {
+  x: number;
+  end: number;
+  y: number;
+  s: string;
+}
+export interface PdfPage {
+  page: number;
+  items: PdfItem[];
+}
+
+/** Every page's text items with coordinates (for table reconstruction). */
+export async function extractPdfPages(bytes: Uint8Array, password?: string | null): Promise<PdfPage[]> {
   const { doc, close } = await openDocument(bytes, password);
   try {
-    const lines: string[] = [];
+    const pages: PdfPage[] = [];
     for (let p = 1; p <= doc.numPages; p++) {
       const page = await doc.getPage(p);
       const content = await page.getTextContent();
-      lines.push(...itemsToLines(content.items as TextItemLike[]));
-      lines.push(`@@PAGE_BREAK ${p}`);
+      const items = (content.items as TextItemLike[])
+        .filter((it) => it.str && it.str.trim())
+        .map((it) => ({ x: it.transform[4], end: it.transform[4] + (it.width || 0), y: it.transform[5], s: it.str }));
+      pages.push({ page: p, items });
       page.cleanup();
     }
-    return lines;
+    return pages;
   } finally {
     await close();
   }
+}
+
+/** Text lines with "@@PAGE_BREAK n" markers, built from extracted pages. */
+export function pagesToLines(pages: PdfPage[]): string[] {
+  const lines: string[] = [];
+  for (const p of pages) {
+    lines.push(...itemsToLines(p.items.map((i) => ({ str: i.s, transform: [1, 0, 0, 1, i.x, i.y], width: i.end - i.x }))));
+    lines.push(`@@PAGE_BREAK ${p.page}`);
+  }
+  return lines;
+}
+
+export async function extractPdfLines(bytes: Uint8Array, password?: string | null): Promise<string[]> {
+  return pagesToLines(await extractPdfPages(bytes, password));
 }
 
 /** Group text items into visual rows (top→bottom), columns joined by " | ". */

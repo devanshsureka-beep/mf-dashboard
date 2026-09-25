@@ -36,7 +36,7 @@ const LABELS: Record<CheckId, string> = {
 export function categorise(problem: string): CheckId {
   if (/^The CAS is for|PAN/.test(problem)) return "investor";
   if (/was made from a CAS valued/.test(problem)) return "statement";
-  if (/not covered by the report|reviews .* not in the CAS|report values it at/.test(problem)) return "coverage";
+  if (/not covered by the report|reviews .* not in the CAS|report values it at|report keeps|both sells it and keeps it|Held \/ deferred/.test(problem)) return "coverage";
   if (/\bSIP\b/.test(problem)) return "sips";
   if (/[Rr]eview|verdict/.test(problem)) return "review";
   if (/\b[Bb]uy\b|top-up/.test(problem)) return "buys";
@@ -69,8 +69,12 @@ export function documentChecks(args: {
     statement: `Both valued on ${cas.valuationDate ?? "—"}.`,
     cas: `${holdings.length} funds, ${inr(Math.round(casTotal * 100) / 100)}; ${cas.schemes.reduce((t, s) => t + s.transactions.length, 0)} transactions.`,
     sells: `${sells.length} rows (${sells.filter((s) => s.partial).length} partial) = ${inr(report.sellTotal)}, same as the printed total; each tied to its CAS folio.`,
-    review: `${report.review.length} verdicts (${report.review.map((r) => r.verdict).filter(Boolean).join(", ")}) agree with the sell and buy lists.`,
-    coverage: `All ${holdings.length} CAS funds have a verdict in the report, valued as in the CAS.`,
+    review: report.review.length
+      ? `${report.review.length} verdicts (${report.review.map((r) => r.verdict).filter(Boolean).join(", ")}) agree with the sell and buy lists.`
+      : `This report layout has no verdict table; every row was checked against its printed TOTAL and against the CAS instead.`,
+    coverage: report.review.length
+      ? `All ${holdings.length} CAS funds have a verdict in the report, valued as in the CAS.`
+      : `All ${holdings.length} CAS funds are sold, kept (${report.holds.length} with values checked) or named in the report's fund list.`,
     buys: `${report.buys.length} rows = ${inr(report.buyTotal)}, same as the printed total.`,
     sips: sips.length
       ? `${sips.filter((s) => s.change === "START").length} start, ${sips.filter((s) => s.change === "STOP").length} stop, ${sips.filter((s) => s.change === "CHANGE").length} change; new total ${inr(report.sipTotals.next)}/month and current ${inr(report.sipTotals.current)}/month match the report${report.sipRouting.length ? " and its routing panel" : ""}.`

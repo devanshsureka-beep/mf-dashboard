@@ -3,7 +3,8 @@
  * for extracted documents; a person confirms unresolved suggestions.
  */
 
-const STOP_WORDS = new Set(["fund", "the", "of", "and", "plan", "option", "scheme", "growth", "india", "ltd", "mf"]);
+// Plan words (direct / regular) are compared separately (plan type), never as name evidence.
+const STOP_WORDS = new Set(["fund", "the", "of", "and", "plan", "option", "scheme", "growth", "india", "ltd", "mf", "direct", "regular", "dir", "reg"]);
 
 export function tokens(name: string): string[] {
   return name
@@ -11,6 +12,10 @@ export function tokens(name: string): string[] {
     .replace(/\bfof\b/g, "fund of funds")
     // Same words, different spellings across registrars and reports.
     .replace(/\bpru\b/g, "prudential")
+    .replace(/\babsl\b/g, "aditya birla sun life")
+    .replace(/\bsl\b/g, "sun life")
+    .replace(/\bmosl\b/g, "motilal oswal")
+    .replace(/\bboi\b/g, "bank of india")
     .replace(/\b(large|mid|small|flexi|multi)cap\b/g, "$1 cap")
     .replace(/\blow[\s-]*vol\b/g, "low volatility")
     .replace(/[^a-z0-9]+/g, " ")

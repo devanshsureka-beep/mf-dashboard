@@ -2,10 +2,11 @@
  * Read a CAS PDF: open it (trying password candidates), extract text lines and
  * parse them deterministically. Pure Node: no Next.js, no network.
  */
-import { extractPdfLines, findWorkingPassword, PdfPasswordError } from "@/lib/pdf/text";
+import { extractPdfLines, extractPdfPages, findWorkingPassword, PdfPasswordError } from "@/lib/pdf/text";
 import { CasParseError, parseCasLines, type CasParseOutput } from "@/lib/parsers/cas";
 import { AppError } from "@/lib/errors";
-import { parseAdvisoryReportLines, ReportParseError, type AdvisoryReportParse } from "@/lib/parsers/advisory-report";
+import { ReportParseError, type AdvisoryReportParse } from "@/lib/parsers/advisory-report";
+import { parseAdvisoryReportPages } from "@/lib/parsers/report";
 
 export interface CasReadResult {
   parsed: CasParseOutput;
@@ -40,7 +41,7 @@ export async function readCasPdf(bytes: Uint8Array, candidates: string[]): Promi
 export async function readReportPdf(bytes: Uint8Array, candidates: string[]): Promise<AdvisoryReportParse> {
   try {
     const pw = await findWorkingPassword(bytes, candidates);
-    return parseAdvisoryReportLines(await extractPdfLines(bytes, pw));
+    return parseAdvisoryReportPages(await extractPdfPages(bytes, pw));
   } catch (e) {
     if (e instanceof PdfPasswordError) throw new AppError("The advisory report is password protected and none of the passwords worked.");
     if (e instanceof ReportParseError) throw new AppError(`The advisory report could not be read: ${e.message}`);
