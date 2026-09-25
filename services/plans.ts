@@ -327,31 +327,33 @@ export async function ingestAdvisoryReport(
     const id = opts.securityIds?.[name.toLowerCase()];
     return id ? { id, confident: true } : null;
   };
+  const itemRows = [];
   for (const it of payload.items) {
     const sug = known(it.scheme_name) ?? (await suggestSecurity(tx, it.scheme_name, it.isin, pool));
     const flag = !sug.confident && it.action !== "RETAIN";
     if (flag) needsReview++;
-    await tx`
-      insert into public.advisory_plan_items
-        (plan_id, client_id, security_id, scheme_name, folio_number, action, target_amount, target_units, current_amount,
-         target_weight, reason, priority, needs_review, notes, created_by)
-      values (${planId}, ${clientId}, ${sug.id}, ${it.scheme_name}, ${it.folio_number ?? null}, ${it.action},
-              ${it.target_amount}, ${it.target_units ?? null}, ${it.current_amount ?? null}, ${it.target_weight ?? null},
-              ${it.reason ?? null}, ${it.priority ?? priority}, ${flag},
-              ${flag ? "Security match needs confirmation (extracted from report)." : null}, ${createdBy})`;
+    itemRows.push({
+      plan_id: planId, client_id: clientId, security_id: sug.id, scheme_name: it.scheme_name, folio_number: it.folio_number ?? null,
+      action: it.action, target_amount: it.target_amount, target_units: it.target_units ?? null, current_amount: it.current_amount ?? null,
+      target_weight: it.target_weight ?? null, reason: it.reason ?? null, priority: it.priority ?? priority, needs_review: flag,
+      notes: flag ? "Security match needs confirmation (extracted from report)." : null, created_by: createdBy,
+    });
     priority += 10;
   }
+  // One insert for all lines (the database may be far from the app server).
+  if (itemRows.length) await tx`insert into public.advisory_plan_items ${tx(itemRows)}`;
+  const sipRows = [];
   for (const s of payload.sip_items) {
     const sug = known(s.scheme_name) ?? (await suggestSecurity(tx, s.scheme_name, s.isin, pool));
     const flag = !sug.confident;
     if (flag) needsReview++;
-    await tx`
-      insert into public.sip_plan_items (client_id, plan_id, security_id, scheme_name, folio_number, action, old_amount,
-                                         new_amount, frequency, debit_day, notes, needs_review, created_by)
-      values (${clientId}, ${planId}, ${sug.id}, ${s.scheme_name}, ${s.folio_number ?? null}, ${s.action},
-              ${s.old_amount ?? null}, ${s.new_amount ?? null}, ${s.frequency}, ${s.debit_day ?? null},
-              ${s.notes ?? null}, ${flag}, ${createdBy})`;
+    sipRows.push({
+      client_id: clientId, plan_id: planId, security_id: sug.id, scheme_name: s.scheme_name, folio_number: s.folio_number ?? null,
+      action: s.action, old_amount: s.old_amount ?? null, new_amount: s.new_amount ?? null, frequency: s.frequency,
+      debit_day: s.debit_day ?? null, notes: s.notes ?? null, needs_review: flag, created_by: createdBy,
+    });
   }
+  if (sipRows.length) await tx`insert into public.sip_plan_items ${tx(sipRows)}`;
 
   // Cross-check declared totals from the report against extracted line items.
   const t = await tx<{ target_exit_value: number; target_buy_value: number; target_sip_value: number }[]>`

@@ -9,6 +9,7 @@ import { findClientByPan, ingestParsedCas, isDuplicateCas, type StoredFile } fro
 import { registerDocument } from "@/services/documents";
 import { ingestAdvisoryReport } from "@/services/plans";
 import { resolveOrCreateSecurity, suggestSecurity } from "@/services/securities";
+import type { SecurityCandidate } from "@/lib/domain/securities";
 
 /**
  * Onboarding from two documents: the client's CAS and the paid advisory
@@ -125,10 +126,12 @@ export async function onboardFromDocuments(
   // Funds to buy are usually new to the client: find them, or create a
   // name-only entry that picks up its ISIN from the first CAS that holds it.
   const securityIds: Record<string, string> = {};
+  const pool = await tx<SecurityCandidate[]>`
+    select id, scheme_name, isin, plan_type, aliases from public.security_master where is_active`;
   for (const it of [...draft.items.filter((i) => i.action === "BUY"), ...draft.sip_items.filter((s) => !s.isin)]) {
     const key = it.scheme_name.toLowerCase();
     if (securityIds[key]) continue;
-    const sug = await suggestSecurity(tx, it.scheme_name, null);
+    const sug = await suggestSecurity(tx, it.scheme_name, null, pool);
     securityIds[key] = sug.confident && sug.id
       ? sug.id
       : await resolveOrCreateSecurity(tx, { scheme_name: it.scheme_name, amc: "amc" in it ? it.amc ?? null : null, plan_type: it.plan_type ?? null }, actor.id);

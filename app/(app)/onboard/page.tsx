@@ -7,6 +7,9 @@ import { ADVISORY_ROLES, pageData } from "@/lib/server";
 import { listAdvisors } from "@/services/clients";
 import { onboardAction } from "./actions";
 
+// Reading PDFs and saving a whole CAS can take a while on a cold start.
+export const maxDuration = 120;
+
 export const metadata = { title: "Onboard client" };
 
 export default async function OnboardPage() {

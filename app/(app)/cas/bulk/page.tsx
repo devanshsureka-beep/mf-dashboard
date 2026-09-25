@@ -4,6 +4,9 @@ import { casPasswordTemplate } from "@/lib/cas/password";
 import { requireActor } from "@/lib/auth/session";
 import { BulkUploader } from "./bulk-uploader";
 
+// Reading PDFs and saving a whole CAS can take a while on a cold start.
+export const maxDuration = 120;
+
 export const metadata = { title: "Bulk CAS upload" };
 
 export default async function BulkCasPage() {

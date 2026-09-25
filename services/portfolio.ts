@@ -3,7 +3,7 @@ import type { Tx } from "@/lib/db/tx";
 import { AppError } from "@/lib/errors";
 import type { CasParsed, CasParseResult, CasTransactionInput } from "@/lib/integrations/contracts";
 import type { CasDocumentRow, HoldingRow, SnapshotRow } from "@/types/domain";
-import { resolveOrCreateSecurity } from "./securities";
+import { resolveSecuritiesBulk, securityKey } from "./securities";
 
 // -----------------------------------------------------------------------------
 // Queries
@@ -186,37 +186,33 @@ export async function createSnapshotFromParsed(tx: Tx, a: CreateSnapshotArgs): P
     );
   }
 
-  const securityCache = new Map<string, string>();
-  const secFor = async (x: { isin?: string | null; scheme_name: string; amc?: string | null; category?: string | null; plan_type?: string | null }) => {
-    const k = x.isin ?? `name:${x.scheme_name.toLowerCase()}`;
-    const hit = securityCache.get(k);
-    if (hit) return hit;
-    const id = await resolveOrCreateSecurity(tx, x, a.createdBy);
-    securityCache.set(k, id);
-    return id;
-  };
+  // Resolve every fund once, then insert holdings and transactions in batches
+  // (a few round trips per CAS instead of one per row).
+  const secIds = await resolveSecuritiesBulk(
+    tx,
+    [...merged.values(), ...p.transactions.map((t) => ({ isin: t.isin, scheme_name: t.scheme_name }))],
+    a.createdBy,
+  );
 
-  for (const h of merged.values()) {
-    const securityId = await secFor(h);
-    await tx`
-      insert into public.portfolio_holdings
-        (snapshot_id, client_id, security_id, scheme_name, amc, folio_number, isin, plan_type, category,
-         units, cost_value, current_value, latest_nav, latest_nav_date)
-      values (${snapshotId}, ${a.clientId}, ${securityId}, ${h.scheme_name}, ${h.amc ?? null}, ${h.folio_number ?? null},
-              ${h.isin ?? null}, ${h.plan_type ?? null}, ${h.category ?? null}, ${h.units}, ${h.cost_value ?? null},
-              ${h.current_value}, ${h.nav ?? null}, ${h.nav_date ?? p.statement.valuation_date})`;
+  const holdingRows = [...merged.values()].map((h) => ({
+    snapshot_id: snapshotId, client_id: a.clientId, security_id: secIds.get(securityKey(h)) ?? null,
+    scheme_name: h.scheme_name, amc: h.amc ?? null, folio_number: h.folio_number ?? null, isin: h.isin ?? null,
+    plan_type: h.plan_type ?? null, category: h.category ?? null, units: h.units, cost_value: h.cost_value ?? null,
+    current_value: h.current_value, latest_nav: h.nav ?? null, latest_nav_date: h.nav_date ?? p.statement.valuation_date,
+  }));
+  for (const chunk of chunks(holdingRows, 500)) {
+    await tx`insert into public.portfolio_holdings ${tx(chunk)}`;
   }
 
-  for (const t of p.transactions) {
-    const securityId = await secFor({ isin: t.isin, scheme_name: t.scheme_name });
-    await tx`
-      insert into public.portfolio_transactions
-        (client_id, source_snapshot_id, security_id, transaction_date, transaction_type, scheme_name, isin,
-         folio_number, units, nav, amount, balance_units, description, dedupe_hash)
-      values (${a.clientId}, ${snapshotId}, ${securityId}, ${t.date}, ${t.type}, ${t.scheme_name}, ${t.isin ?? null},
-              ${t.folio_number ?? null}, ${t.units ?? null}, ${t.nav ?? null}, ${t.amount ?? null},
-              ${t.balance_units ?? null}, ${t.description ?? null}, ${transactionDedupeHash(t)})
-      on conflict (client_id, dedupe_hash) do nothing`;
+  const txnRows = p.transactions.map((t) => ({
+    client_id: a.clientId, source_snapshot_id: snapshotId,
+    security_id: secIds.get(securityKey({ isin: t.isin, scheme_name: t.scheme_name })) ?? null,
+    transaction_date: t.date, transaction_type: t.type, scheme_name: t.scheme_name, isin: t.isin ?? null,
+    folio_number: t.folio_number ?? null, units: t.units ?? null, nav: t.nav ?? null, amount: t.amount ?? null,
+    balance_units: t.balance_units ?? null, description: t.description ?? null, dedupe_hash: transactionDedupeHash(t),
+  }));
+  for (const chunk of chunks(txnRows, 500)) {
+    await tx`insert into public.portfolio_transactions ${tx(chunk)} on conflict (client_id, dedupe_hash) do nothing`;
   }
 
   if (a.reviewStatus === "CONFIRMED") {
@@ -338,3 +334,8 @@ export async function rejectSnapshot(tx: Tx, snapshotId: string, reason: string)
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
+function chunks<T>(xs: T[], n: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < xs.length; i += n) out.push(xs.slice(i, i + n));
+  return out;
+}

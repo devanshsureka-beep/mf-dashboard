@@ -229,6 +229,8 @@ DB integration tests (`tests/db`) need `TEST_DATABASE_URL` (e.g. in `.env.test.l
 
 ## Deploy on Vercel
 
+**Region:** `vercel.json` runs the server functions in `bom1` (Mumbai), next to the Supabase project (`ap-south-1`). Keep them in the same region: every page and upload makes several database calls, and a cross-continent hop adds about 0.25 s to each one. If you move the database, change `regions` too.
+
 1. Push this repository to GitHub and import it in Vercel (framework: Next.js; defaults are fine).
 2. Add all environment variables above (Production + Preview). Use the **transaction pooler** `DATABASE_URL` (port 6543).
 3. Apply migrations to the production database (`supabase db push`) **before** the first deploy.
