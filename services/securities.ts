@@ -43,6 +43,21 @@ export async function resolveOrCreateSecurity(
   if (h.isin) {
     const existing = await tx<{ id: string }[]>`select id from public.security_master where isin = ${h.isin}`;
     if (existing[0]) return existing[0].id;
+    // A fund recommended by name (advisory report, no ISIN) shows up in a CAS
+    // for the first time: attach the ISIN to that entry so calls made against
+    // it match the CAS transactions. Only on a confident, same-plan match.
+    const isinLess = await tx<SecurityCandidate[]>`
+      select id, scheme_name, isin, plan_type, aliases from public.security_master where isin is null and is_active`;
+    const best = bestSecurityMatch(h.scheme_name, isinLess);
+    if (best.confident && best.candidate && (!planType || !best.candidate.plan_type || best.candidate.plan_type === planType)) {
+      await tx`
+        update public.security_master
+           set isin = ${h.isin}, plan_type = coalesce(plan_type, ${planType}), amc = coalesce(amc, ${h.amc ?? null}),
+               aliases = case when ${h.scheme_name} = any(aliases) or scheme_name = ${h.scheme_name} then aliases
+                              else array_append(aliases, ${h.scheme_name}) end
+         where id = ${best.candidate.id} and isin is null`;
+      return best.candidate.id;
+    }
     const inserted = await tx<{ id: string }[]>`
       insert into public.security_master (isin, scheme_name, amc, category, plan_type, created_by)
       values (${h.isin}, ${h.scheme_name}, ${h.amc ?? null}, ${h.category ?? null}, ${planType}, ${createdBy})

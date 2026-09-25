@@ -36,6 +36,10 @@
 | 12 | **CAS passwords.** | Never stored. A password is passed once, in memory, to the extraction webhook; only a `password_protected` flag is kept. |
 | 13 | **Active plan edits** must not silently change history, but plans do evolve. | Amending an ACTIVE plan requires a reason (enforced by trigger). `approved_target_*` values are frozen at approval, and current targets show amendments. A wholesale re-plan is a new plan: the old one becomes `REPLACED`. |
 | 14 | **PostgREST cannot run multi-step business operations atomically.** | Server-side transactions with RLS (`withUserTx`). |
+| 15 | **Holdings diffs cannot tell *when* a call was executed**, and cannot separate two trades in the same fund. | A detailed CAS carries every transaction. Reconciliation engine **v2** (`lib/domain/txn-matching.ts`) matches each *new* CAS transaction (first seen in this snapshot) to calls. The rules: same security/ISIN, same direction (SELL ↔ redemption / switch-out, BUY ↔ purchase / switch-in), call date (IST) ≤ transaction date, oldest call first, 3% tolerance. Clear matches (≤ 30 days) are auto-confirmed, and the execution gets the exact CAS date, amount, units and NAV. Engine v1 (holdings diff) remains for statements without transactions. |
+| 16 | **Name-only securities.** Funds to buy come from the report without an ISIN. | They are created ISIN-less. The first CAS that holds the fund attaches its ISIN to that entry (confident, same-plan-type name match only), so calls on it match CAS transactions. |
+| 17 | **SIP plan actions** need evidence too. | A SIP instalment on or after the advice/approval date completes a START (or CHANGE at the new amount), and a "SIP Cancelled" row completes a STOP. SIP instalments never satisfy lump-sum calls. |
+| 18 | **Deterministic document reading.** | `lib/pdf/text.ts` (pdf.js) → `lib/parsers/cas.ts` (KFintech/CAMS consolidated) and `lib/parsers/advisory-report.ts` (Univest template). Every table is cross-checked against its printed total, and warnings stop auto-confirmation. |
 
 ## 4. Counting rules (per advice item, `v_advice_items`)
 

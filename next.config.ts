@@ -9,8 +9,13 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
-  // The postgres driver opens TCP sockets; keep it out of the server bundle.
-  serverExternalPackages: ["postgres"],
+  // The postgres driver opens TCP sockets; pdf.js loads its worker at runtime.
+  // Keep both out of the server bundle.
+  serverExternalPackages: ["postgres", "pdfjs-dist"],
+  // pdf.js imports its worker dynamically, which file tracing cannot see.
+  outputFileTracingIncludes: {
+    "/**": ["./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs"],
+  },
   experimental: {
     // CAS / report PDFs are uploaded through server actions (bucket limit is 25 MB).
     serverActions: { bodySizeLimit: "26mb" },

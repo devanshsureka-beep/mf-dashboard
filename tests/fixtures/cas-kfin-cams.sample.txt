@@ -1,0 +1,209 @@
+Consolidated Account Statement
+01-Jan-1980 To 19-Sep-2026
+Email Id: TEST.INVESTOR@EXAMPLE.COM
+This Consolidated Account Statement is brought to you as an investor
+Test Investor | friendly initiative by KFIN and CAMS and lists the transactions,balances
+and valuation of Mutual Funds selected by you. The consolidation has
+been carried out based on the email id entered by you. If you have not
+Sample Address
+also entered a PAN Number and if the email id is common to several
+Sample Address
+members | of | your | family, this | statement | will | consolidate | all | those
+Sample Address
+investments as well.
+Delhi
+india | If you | find | any | folios missing | from | this | consolidation, | you | have | not
+registered your email id against those folios.
+Phone Res | : 9800001234
+Mobile | : 9800001234
+PORTFOLIO SUMMARY
+Mutual Fund | Cost Value | Market Value
+(INR) | (INR)
+360 ONE Mutual Fund | 20000.00 | 31823.12
+Aditya Birla Sun Life Mutual Fund | 50000.00 | 53631.61
+AXIS Mutual Fund | 20000.00 | 26697.62
+HDFC Mutual Fund | 135000.00 | 227651.49
+HSBC Mutual Fund | 10000.00 | 10475.67
+Total | 235000.00 | 350279.51
+Amount | Price | Unit
+Date | Transaction | Units
+(INR) | (INR) | Balance
+360 ONE Mutual Fund
+Folio No : 00001000/11 | PAN: ABCPT1234Q | PAN : OK
+Test Investor
+IFIFCDG-360 ONE Flexicap Fund Direct Plan Growth | (Demat) (Advisor:INZ000031633) - ISIN:INF579M01AS1 | Registrar : CAMS
+Nominee 1 : | Nominee 2 : | Nominee 3 :
+Opening Unit | Balance | 0.000
+30-Jun-2023 | NFO Purchase | 1,999.90 | 199.990 | 10.0000 | 199.990
+30-Jun-2023 | *** Stamp Duty *** | 0.10
+30-Jun-202310-Aug-2023 | Purchase | 2,999.85 | 295.543 | 10.1503 | 495.533
+10-Aug-2023 | *** Stamp Duty *** | 0.15
+10-Aug-2023
+Page | 1 | of | 25
+KFINCASWS-190926194527 Version 1.0
+@@PAGE_BREAK 1
+Consolidated Account Statement
+01-Jan-1980 To 19-Sep-2026
+Amount | Price | Unit
+Date | Transaction | Units
+(INR) | (INR) | Balance
+01-Sep-2023 | Purchase | 4,999.75 | 480.731 | 10.4003 | 976.264
+01-Sep-2023 | *** Stamp Duty *** | 0.25
+01-Sep-202306-Oct-2023 | Purchase | 4,999.75 | 471.710 | 10.5992 | 1,447.974
+06-Oct-2023 | *** Stamp Duty *** | 0.25
+06-Oct-202306-Feb-2024 | Purchase | 4,999.75 | 404.868 | 12.3491 | 1,852.842
+06-Feb-2024 | *** Stamp Duty *** | 0.25
+Closing Unit Balance: 1,852.84206-Feb-2024 | NAV on 18-SEP-2026 : INR 17.1753 | Market Value on 18-SEP-2026 : INR 31,823.12
+Total Cost Value : INR 20,000.00
+Entry Load is NIL ; Exit Load @ 1% of the applicable NAV for redemptions / switches before 365 days from the date of allotment "Please ensure that your account information is up to date. If there are any
+changes to your KYC details like address, contact details, occupation, income, PEP status, FATCA/CRS information etc. kindly update them immediately."
+Aditya Birla Sun Life Mutual Fund
+Folio No : 00002000/12 | PAN: ABCPT1234Q | PAN : OK
+Test Investor
+B291GZ-Aditya Birla Sun Life Consumption Fund - Growth-Direct Plan(Formerly known as Aditya Birla Sun Life India GenNext Fund) | (Demat) | Registrar : CAMS
+(Advisor:INZ000031633) - ISIN:INF209K01WC7
+Nominee 1 : | Nominee 2 : | Nominee 3 :
+Opening Unit | Balance | 0.000
+12-Dec-2023 | Purchase | 9,999.50 | 51.251 | 195.11 | 51.251
+12-Dec-2023 | *** Stamp Duty *** | 0.50
+12-Dec-202306-Aug-2025 | Purchase | 9,999.50 | 40.856 | 244.75 | 92.107
+06-Aug-2025 | *** Stamp Duty *** | 0.50
+Closing Unit Balance: 92.10706-Aug-2025 | NAV on 18-SEP-2026 : INR 235.26 | Market Value on 18-SEP-2026 : INR 21,669.09
+Total Cost Value : INR 20,000.00
+Current Load Structure:WEF 26-JUN-2025.Entry Load : Nil:Exit Load: For redemption / switch-out of units on or before 30 days from the date of allotment: 1% of applicable NAV.For redemption /
+switch-out of units after 30 days from the date of allotment: Nil .The exit load applicable for your redemption/switch-out will be based on the exit load in effect when the units were allotted for each
+purchase.
+Folio No : 00002000/12 | PAN: ABCPT1234Q | PAN : OK
+Test Investor
+B16Z-Aditya Birla Sun Life Digital India Fund - Growth-Direct Plan | (Demat) (Advisor:INZ000031633) - ISIN:INF209K01VF2 | Registrar : CAMS
+Nominee 1 : | Nominee 2 : | Nominee 3 :
+Opening Unit | Balance | 0.000
+14-Jul-2023 | Purchase | 4,999.75 | 34.191 | 146.23 | 34.191
+14-Jul-2023 | *** Stamp Duty *** | 0.25
+14-Jul-202310-Aug-2023 | Purchase | 4,999.75 | 33.830 | 147.79 | 68.021
+10-Aug-2023 | *** Stamp Duty *** | 0.25
+10-Aug-202323-Oct-2023 | Purchase | 4,999.75 | 33.034 | 151.35 | 101.055
+23-Oct-2023 | *** Stamp Duty *** | 0.25
+23-Oct-202306-Feb-2024 | Purchase | 4,999.75 | 27.067 | 184.72 | 128.122
+06-Feb-2024 | *** Stamp Duty *** | 0.25
+06-Feb-202406-Nov-2025 | Purchase | 9,999.50 | 52.111 | 191.89 | 180.233
+06-Nov-2025 | *** Stamp Duty *** | 0.50
+Closing Unit Balance: 180.23306-Nov-2025 | NAV on 18-SEP-2026 : INR 177.34 | Market Value on 18-SEP-2026 : INR 31,962.52
+Total Cost Value : INR 30,000.00
+Current Load Structure: WEF 30-JAN-2025 Entry Load: Nil. Exit Load: For redemption/switch out of units on or before 30 days from the date of allotment: 1.00% of applicable NAV. For redemption/switch
+out of units after 30 days from the date of allotment: Nil.The exit load applicable for your redemption/switch-out will be based on the exit load in effect when the units were allotted for each purchase.
+Page | 2 | of | 25
+KFINCASWS-190926194527 Version 1.0
+@@PAGE_BREAK 2
+Consolidated Account Statement
+01-Jan-1980 To 19-Sep-2026
+AXIS Mutual Fund
+Folio No : 00003000/13 | PAN: ABCPT1234Q | PAN : OK
+Test Investor
+128IMDGG-Axis India Manufacturing Fund Direct Growth (Demat) | (Advisor:INZ000031633) - ISIN:INF846K016S3 | Registrar : KFINTECH
+Nominee 1 : | Nominee 2 : | Nominee 3 :
+Opening Unit | Balance | 0.000
+21-Dec-2023 | Initial Purchase | 9,999.50 | 999.950 | 10.00 | 999.950
+21-Dec-2023 | *** Stamp Duty *** | 0.50
+21-Dec-202307-Sep-2026 | Purchase | 9,999.50 | 592.037 | 16.89 | 1,591.987
+07-Sep-2026 | *** Stamp Duty *** | 0.50
+Closing Unit Balance: 1,591.98707-Sep-2026 | NAV on 18-SEP-2026 : INR 16.77 | Market Value on 18-SEP-2026 : INR 26,697.62
+Total Cost Value : INR 20,000.00
+Entry Load - Nil. Exit Load : If redeemed/switched out within 90 Days from the date of allotment: For 10% of investment: Nil, For remaining investment: 1%.-. If redeemed/switched out after 90 Days from
+the date of allotment: Nil. w.e.f. 20/11/2025, --Entry Load - Nil. Exit Load : If redeemed/switched out within12 months from the date of allotment: For 10% of investment: Nil, For remaining investment: 1% .
+If redeemed/switched out after 12 months from the date of allotment: Nil. w.e.f 01/12/2023.
+HDFC Mutual Fund
+Folio No : 00004000/14 | PAN: ABCPT1234Q | PAN : OK
+Test Investor
+HHDDGR-HDFC Defence Fund Direct Growth | (Demat) (Advisor:INZ000031633) - ISIN:INF179KC1GI5 | Registrar : CAMS
+Nominee 1 : | Nominee 2 : | Nominee 3 :
+Opening Unit | Balance | 0.000
+06-Nov-2023 | SIP Purchase Instalment No - 1 Online | 9,999.50 | 821.382 | 12.174 | 821.382
+06-Nov-2023 | *** Stamp Duty *** | 0.50
+06-Nov-202306-Dec-2023 | SIP Purchase Instalment No - 2/2114 Online | 9,999.50 | 700.490 | 14.275 | 1,521.872
+06-Dec-2023 | *** Stamp Duty *** | 0.50
+06-Dec-202302-Jan-2024 | SIP Purchase Instalment No - 3/2114 Online | 9,999.50 | 658.468 | 15.186 | 2,180.340
+02-Jan-2024 | *** Stamp Duty *** | 0.50
+02-Jan-202402-Feb-2024 | SIP Purchase Instalment No - 4/2114 Online | 9,999.50 | 632.240 | 15.816 | 2,812.580
+02-Feb-2024 | *** Stamp Duty *** | 0.50
+02-Feb-202404-Mar-2024 | SIP Purchase Instalment No - 5/2114 Online | 9,999.50 | 596.914 | 16.752 | 3,409.494
+04-Mar-2024 | *** Stamp Duty *** | 0.50
+04-Mar-202402-Apr-2024 | SIP Purchase Instalment No - 6/2114 Online | 9,999.50 | 574.948 | 17.392 | 3,984.442
+02-Apr-2024 | *** Stamp Duty *** | 0.50
+02-Apr-202421-Jun-2024 | SIP Purchase Instalment No - 1 Online | 9,999.50 | 417.847 | 23.931 | 4,402.289
+21-Jun-2024 | *** Stamp Duty *** | 0.50
+21-Jun-202402-Jul-2024 | SIP Purchase Instalment No - 9/2114 Online | 9,999.50 | 416.872 | 23.987 | 4,819.161
+02-Jul-2024 | *** Stamp Duty *** | 0.50
+02-Jul-202412-Jul-2024 | *** Cancelled ***
+12-Jul-2024 | *** Cancelled ***
+12-Aug-2024 | SIP Purchase Instalment No - 1 Online | 9,999.50 | 444.719 | 22.485 | 5,263.880
+12-Aug-2024 | *** Stamp Duty *** | 0.50
+Page | 8 | of | 25
+KFINCASWS-190926194527 Version 1.0
+@@PAGE_BREAK 8
+Consolidated Account Statement
+01-Jan-1980 To 19-Sep-2026
+Amount | Price | Unit
+Date | Transaction | Units
+(INR) | (INR) | Balance
+12-Aug-2024 | *** Stamp Duty *** | 0.50
+12-Aug-202405-Sep-2024 | SIP Purchase Instalment No - 2/2105 Online | 9,999.50 | 440.915 | 22.679 | 5,704.795
+05-Sep-2024 | *** Stamp Duty *** | 0.50
+05-Sep-202409-Oct-2024 | SIP Purchase Instalment No - 3/2105 Online | 9,999.50 | 458.861 | 21.792 | 6,163.656
+09-Oct-2024 | *** Stamp Duty *** | 0.50
+09-Oct-202406-Dec-2024 | SIP Purchase Instalment No - 5/2105 Online | 9,999.50 | 438.613 | 22.798 | 6,602.269
+06-Dec-2024 | *** Stamp Duty *** | 0.50
+06-Dec-202405-Mar-2025 | SIP Purchase Instalment No - 8/2105 Online | 9,999.50 | 568.962 | 17.575 | 7,171.231
+05-Mar-2025 | *** Stamp Duty *** | 0.50
+05-Mar-202529-Jun-2025 | *** SIP Cancelled ***
+30-Jan-2026 | SIP Purchase Instalment No - 1 Online | 4,999.75 | 200.664 | 24.916 | 7,371.895
+30-Jan-2026 | *** Stamp Duty *** | 0.25
+30-Jan-202610-May-2026 | *** SIP Cancelled ***
+10-May-2026 | *** SIP Cancelled ***
+Closing Unit Balance: 7,371.895 | NAV on 18-SEP-2026 : INR 30.881 | Total Cost Value : INR 1,35,000.00 | Market Value on 18-SEP-2026 : INR 2,27,651.49
+An open ended equity scheme investing in Defence & allied sector companies, Exit Load: In respect of each purchase/switch-in of units, an Exit load of 1% is payable if units are redeemed/switched-out
+within 1 year from the date of allotment. No Entry / Exit Load shall be levied on bonus units and Units allotted on Re-investment of Income Distribution cum Capital Withdrawal. In respect of Systematic
+Transactions such as SIP, GSIP, STP, FlexSTP, Swing STP, Exit Load, if any, prevailing on the date of registration / enrolment shall be levied. For further details, visit www.hdfcfund.com (under Investor
+Corner) or contact any of our Investor Service Centre. GST Identification Number: 27AAATH1809A1Z9. "Please ensure that your account information is up to date. If there are any changes to your KYC
+details like address, contact details, occupation, income, PEP status, FATCA/CRS information etc. kindly update them immediately."
+Folio No : 00004000/14 | PAN: ABCPT1234Q | PAN : OK
+Test Investor
+H02T-HDFC Flexi Cap Fund - Direct Plan - Growth Option | (Demat) (Advisor:INZ000031633) - ISIN:INF179K01UT0 | Registrar : CAMS
+Nominee 1 : | Nominee 2 : | Nominee 3 :
+Opening Unit | Balance | 0.000
+26-Oct-2023 | Purchase Online | 4,999.75 | 3.599 | 1,389.271 | 3.599
+26-Oct-2023 | *** Stamp Duty *** | 0.25
+26-Oct-202316-Nov-2023 | Purchase Online | 4,999.75 | 3.391 | 1,474.412 | 6.990
+16-Nov-2023 | *** Stamp Duty *** | 0.25
+16-Nov-202317-Nov-2023 | Purchase Online | 14,999.25 | 10.181 | 1,473.236 | 17.171
+17-Nov-2023 | *** Stamp Duty *** | 0.75
+17-Nov-202306-Feb-2024 | Purchase Online | 4,999.75 | 2.963 | 1,687.181 | 20.134
+06-Feb-2024 | *** Stamp Duty *** | 0.25
+06-Feb-202427-Mar-2026 | Redemption - NEFT PAYOUT - 1000000001 | (41,124.65) | (20.1340) | 2,042.568 | 0.000
+27-Mar-2026 | *** STT Paid *** | 0.41
+Closing Unit Balance: 0.00027-Mar-2026 | NAV on 18-SEP-2026 : INR 2,242.757 | Market Value on 18-SEP-2026 : INR 0.00
+Total Cost Value : INR 0.00
+"HDFC Equity Fund has undergone a change in Fundamental Attributes viz. w.e.f. January 29th, 2021 and the scheme shall be managed as HDFC Flexi Cap Fund. Current Load Structure : Entry Load:
+Not Applicable. Exit Load: In respect of each purchase/switch-in of units, an Exit load of 1% if units are redeemed/switched-out within 12 Months from the date of allotment. No Exit Load if units are
+redeemed /switched-out after 12 Months. The rate of exit load levied on units redeemed will be the rate prevailing at the time of allotment of the units. For further details visit www.hdfcfund.com (under
+Investor Corner) or contact any of our Investor Service Centre. GST Identification Number : 27AAATH1809A1Z9. "Please ensure that your account information is up to date. If there are any changes to
+your KYC details like address, contact details, occupation, income, PEP status, FATCA/CRS information etc. kindly update them immediately."
+HSBC Mutual Fund
+Folio No : 00005000/15 | PAN: ABCPT1234Q | PAN : OK
+Test Investor
+OFIVGD-HSBC Value Fund - Direct Growth (Formerly known as L&T India Value Fund Direct Plan - Growth) | (Demat) (Advisor:INZ000031633) - | Registrar : CAMS
+ISIN:INF917K01HD4
+Nominee 1 : | Nominee 2 : | Nominee 3 :
+Opening Unit | Balance | 0.000
+08-Sep-2025 | Purchase | 9,999.50 | 82.533 | 121.1583 | 82.533
+08-Sep-2025 | *** Stamp Duty *** | 0.50
+Closing Unit Balance: 82.53308-Sep-2025 | NAV on 18-SEP-2026 : INR 126.9271 | Market Value on 18-SEP-2026 : INR 10,475.67
+Total Cost Value : INR 10,000.00
+Exit Load:If the units redeemed or switched out are upto 10% of the units purchased or switched in (the limit) within 1 year from the date of allotment: Nil | If units redeemed or switched out are over and
+above the limit within 1 year from the date of allotment: 1% of applicable NAVIf units are redeemed or switched out on or after 1 year from the date of allotment: Nil "Please ensure that your account
+information is up to date. If there are any changes to your KYC details like address, contact details, occupation, income, PEP status, FATCA/CRS information etc. kindly update them immediately."
+Consolidated Account Statement
+01-Jan-1980 To 19-Sep-2026
+Page | 9 | of | 9
+KFINCASWS-000000000000 Version 1.0
+@@PAGE_BREAK 9

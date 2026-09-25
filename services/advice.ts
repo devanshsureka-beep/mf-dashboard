@@ -64,10 +64,13 @@ export async function issueAdvice(tx: Tx, actor: Actor, input: IssueAdviceInput)
 
 export async function getAdviceItem(tx: Tx, id: string): Promise<AdviceItemView> {
   const rows = await tx<AdviceItemView[]>`
-    select v.*, c.client_code, c.full_name as client_name, pr.full_name as advisor_name
+    select v.*, c.client_code, c.full_name as client_name, pr.full_name as advisor_name,
+           t.first_execution_date::text as first_execution_date, t.lag_days, t.completion_lag_days,
+           coalesce(t.cas_verified, false) as cas_verified
     from public.v_advice_items v
     join public.clients c on c.id = v.client_id
     left join public.profiles pr on pr.id = v.advisor_id
+    left join public.v_advice_execution_timing t on t.advice_item_id = v.id
     where v.id = ${id}`;
   if (!rows[0]) throw new AppError("Advice item not found.", "NOT_FOUND");
   return rows[0];
@@ -188,10 +191,13 @@ export async function listAdviceLedger(tx: Tx, f: LedgerFilters = {}): Promise<A
     : f.status === "OPEN" ? ["ISSUED", "PARTIALLY_EXECUTED"]
     : null;
   return tx<AdviceItemView[]>`
-    select v.*, c.client_code, c.full_name as client_name, pr.full_name as advisor_name
+    select v.*, c.client_code, c.full_name as client_name, pr.full_name as advisor_name,
+           t.first_execution_date::text as first_execution_date, t.lag_days, t.completion_lag_days,
+           coalesce(t.cas_verified, false) as cas_verified
     from public.v_advice_items v
     join public.clients c on c.id = v.client_id
     left join public.profiles pr on pr.id = v.advisor_id
+    left join public.v_advice_execution_timing t on t.advice_item_id = v.id
     where (${f.from ?? null}::date is null or (v.communicated_at at time zone 'Asia/Kolkata')::date >= ${f.from ?? null}::date)
       and (${f.to ?? null}::date is null or (v.communicated_at at time zone 'Asia/Kolkata')::date <= ${f.to ?? null}::date)
       and (${f.advisorId ?? null}::uuid is null or v.advisor_id = ${f.advisorId ?? null})

@@ -22,7 +22,7 @@ export default async function ReconciliationPage() {
   }));
   return (
     <>
-      <PageHeader title="CAS reconciliation" subtitle="A new CAS is compared with the previous confirmed snapshot. Nothing is marked executed until a person confirms a match." />
+      <PageHeader title="CAS reconciliation" subtitle="Each new CAS is compared with the calls: transactions that clearly match a call are confirmed as executed automatically; everything else waits for your decision." />
 
       <Card className="mb-4">
         <CardHeader><CardTitle>Upload a new CAS</CardTitle></CardHeader>
@@ -49,7 +49,7 @@ export default async function ReconciliationPage() {
                   <TD className="text-xs">{formatDate(r.previous_snapshot_date)} → {formatDate(r.current_snapshot_date)}</TD>
                   <TD className="text-right"><Money value={r.previous_value} /></TD>
                   <TD className="text-right"><Money value={r.current_value} /></TD>
-                  <TD className="text-xs text-muted">{r.summary.changes ?? 0} changes · {r.summary.advice_matches ?? 0} advice matches · {r.summary.unadvised ?? 0} unadvised · {r.summary.sip_instalments ?? 0} SIP</TD>
+                  <TD className="text-xs text-muted">{r.summary.transactions != null ? `${r.summary.transactions} transactions · ${r.summary.auto_confirmed ?? 0} auto-confirmed` : `${r.summary.changes ?? 0} changes`} · {r.summary.advice_matches ?? 0} advice matches · {r.summary.unadvised ?? 0} unadvised · {r.summary.sip_instalments ?? 0} SIP</TD>
                   <TD className={`num ${r.open_matches ? "font-semibold text-amber-700" : "text-muted"}`}>{r.open_matches}</TD>
                   <TD><StatusBadge status={r.status} /></TD>
                   <TD><Link className="text-xs text-brand hover:underline" href={`/reconciliation/${r.id}`}>Review →</Link></TD>

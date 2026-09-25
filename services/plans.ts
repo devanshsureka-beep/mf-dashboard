@@ -278,6 +278,11 @@ export async function ingestAdvisoryReport(
   tx: Tx,
   payload: AdvisoryReportResult,
   createdBy: string | null,
+  opts: {
+    extractionSource?: "AI_EXTRACTION" | "IMPORT";
+    /** Securities already resolved by the caller, keyed by lower-cased scheme name. */
+    securityIds?: Record<string, string>;
+  } = {},
 ): Promise<{ planId: string | null; clientId: string; itemsNeedingReview: number; warnings: string[] }> {
   const client = await tx<{ id: string; created_by: string | null }[]>`
     select id, created_by from public.clients
@@ -310,7 +315,7 @@ export async function ingestAdvisoryReport(
     values (${clientId}, ${payload.plan.plan_name}, coalesce(${payload.plan.plan_date ?? null}::date, app.today_ist()),
             ${payload.plan.notes ?? null}, ${snapshot[0]?.id ?? null},
             ${payload.plan.starting_portfolio_value ?? snapshot[0]?.total_current_value ?? null},
-            ${payload.document_id ?? null}, 'AI_EXTRACTION', ${tx.json(JSON.parse(JSON.stringify(payload)))}, ${createdBy})
+            ${payload.document_id ?? null}, ${opts.extractionSource ?? "AI_EXTRACTION"}, ${tx.json(JSON.parse(JSON.stringify(payload)))}, ${createdBy})
     returning id`;
   const planId = plan[0].id;
 
@@ -318,8 +323,12 @@ export async function ingestAdvisoryReport(
     select id, scheme_name, isin, plan_type, aliases from public.security_master where is_active`;
   let needsReview = 0;
   let priority = 10;
+  const known = (name: string) => {
+    const id = opts.securityIds?.[name.toLowerCase()];
+    return id ? { id, confident: true } : null;
+  };
   for (const it of payload.items) {
-    const sug = await suggestSecurity(tx, it.scheme_name, it.isin, pool);
+    const sug = known(it.scheme_name) ?? (await suggestSecurity(tx, it.scheme_name, it.isin, pool));
     const flag = !sug.confident && it.action !== "RETAIN";
     if (flag) needsReview++;
     await tx`
@@ -333,7 +342,7 @@ export async function ingestAdvisoryReport(
     priority += 10;
   }
   for (const s of payload.sip_items) {
-    const sug = await suggestSecurity(tx, s.scheme_name, s.isin, pool);
+    const sug = known(s.scheme_name) ?? (await suggestSecurity(tx, s.scheme_name, s.isin, pool));
     const flag = !sug.confident;
     if (flag) needsReview++;
     await tx`

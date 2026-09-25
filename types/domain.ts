@@ -212,6 +212,11 @@ export interface AdviceItemView {
   pending_amount: number;
   effective_advised_amount: number;
   execution_pct: number | null;
+  /** Advised -> executed timing (v_advice_execution_timing), IST calendar days. */
+  first_execution_date?: string | null;
+  lag_days?: number | null;
+  completion_lag_days?: number | null;
+  cas_verified?: boolean;
   created_at: Date;
   created_by: string | null;
 }
@@ -308,6 +313,7 @@ export interface ReconciliationRunRow {
   previous_value: number;
   current_value: number;
   summary: Record<string, number>;
+  engine_version: string;
   created_at: Date;
   completed_at: Date | null;
   open_matches?: number;
@@ -342,6 +348,12 @@ export interface ReconciliationMatchRow {
   resolution_note: string | null;
   resolved_at: Date | null;
   reviewed_at: Date | null;
+  cas_transaction_id: string | null;
+  transaction_date: string | null;
+  transaction_amount: number | null;
+  transaction_units: number | null;
+  transaction_nav: number | null;
+  auto_confirmed: boolean;
   advice_action?: AdviceAction | null;
   advice_status?: AdviceStatus | null;
   advice_batch_code?: string | null;

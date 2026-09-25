@@ -54,7 +54,9 @@ export default async function AdviceItemPage(props: PageProps<"/advice/items/[it
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard label={a.quantity_basis === "UNITS" ? "Advised (estimate)" : "Advised"} value={formatINR(a.advised_amount)} hint={a.advised_units ? `${formatUnits(a.advised_units)} units · basis ${a.quantity_basis}` : `basis ${a.quantity_basis}`} />
-        <StatCard label="Executed" value={formatINR(a.executed_amount)} hint={a.executed_units ? `${formatUnits(a.executed_units)} units · ${a.execution_count} execution(s)` : `${a.execution_count} execution(s)`} tone="success" />
+        <StatCard label="Executed" value={formatINR(a.executed_amount)} hint={a.first_execution_date
+          ? `first on ${a.first_execution_date} · ${(a.lag_days ?? 0) <= 0 ? "same day as call" : `${a.lag_days} day(s) after call`}${a.cas_verified ? " · CAS verified" : ""}`
+          : a.executed_units ? `${formatUnits(a.executed_units)} units · ${a.execution_count} execution(s)` : `${a.execution_count} execution(s)`} tone="success" />
         <StatCard label="Pending execution" value={formatINR(a.pending_amount)} hint={a.pending_units ? `${formatUnits(a.pending_units)} units` : undefined} tone={a.pending_amount > 0 ? "attention" : "default"} />
         <StatCard label="Counted as advised" value={formatINR(a.effective_advised_amount)} hint="= executed + pending (used in plan totals)" />
       </div>

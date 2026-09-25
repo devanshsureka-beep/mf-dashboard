@@ -3,12 +3,24 @@
 Internal web application for investment-advisory operations. It tracks the full advisory lifecycle of every client:
 
 ```
-CAS onboarding → portfolio snapshot → advisory plan (end state)
-      → individual BUY / SELL / SWITCH calls issued over time
-      → client executions (partial fills supported)
-      → next CAS → reconciliation (confirm / reject / unadvised)
-      → pending actions + immutable audit history
+Onboard: upload CAS + paid advisory report → client, holdings and DRAFT plan created automatically
+      → approve plan → BUY / SELL / SWITCH calls recorded daily (what, amount, exact time)
+      → client executes (partial fills supported)
+      → every few days: bulk-upload all clients' CAS → each matched to its client by PAN
+      → CAS transactions matched to calls → clear matches confirmed automatically
+        (exact date, amount, units, NAV) → advised vs executed, with the delay in days
+      → unclear matches and unadvised trades go to a review list; immutable audit history
 ```
+
+### Daily workflow
+
+| When | Where | What happens |
+|---|---|---|
+| New paid client | **Onboard Client** (`/onboard`) | Upload the CAS and the advisory report (and the client's mobile number). Both PDFs are read by built-in parsers (no AI, no external service). The client is created from the CAS (name, PAN, email, mobile) and the report (risk profile, goal). The CAS becomes the baseline snapshot, and the report becomes a DRAFT plan: sell lines are tied to CAS folios, buy lines to funds, and SIP start/stop lines to SIP actions. Review, then approve. |
+| New report for an existing client | same page | Same PAN → same client, and a new DRAFT plan. Approving it replaces the current plan, and the old one stays in history as REPLACED. |
+| Every call | **Advice Call Ledger** → Issue call | What, amount and timestamp. |
+| Every ~3 days | **Bulk CAS Upload** (`/cas/bulk`) | Drop every client's CAS at once. Each file is opened with the password template, matched to the client by PAN, stored, and snapshotted. It is auto-confirmed when holdings reconcile with the statement totals, then reconciled transaction by transaction. A trade done on day 1 appears in the CAS generated on day 2. |
+| After each upload | **CAS & Reconciliation** | Review only what the engine could not decide, and acknowledge unadvised trades. The ledger shows *Executed on* with the delay (same day / +N days) and a CAS tick. |
 
 For every client and every plan line the app always shows five separate numbers:
 
@@ -130,6 +142,7 @@ Copy `.env.example` to `.env.local` (local) or set them in Vercel → Project �
 | `N8N_ADVISORY_PARSE_WEBHOOK_URL` | n8n Webhook URL of your advisory-report extraction workflow (optional) | server |
 | `N8N_NOTIFICATION_WEBHOOK_URL` | n8n Webhook URL receiving business events (optional) | server |
 | `N8N_WEBHOOK_TOKEN` | Token the app sends to n8n webhooks as `Authorization: Bearer …` | **server only** |
+| `CAS_PASSWORD_TEMPLATE` | Your CAS password pattern with `{last4}` where the client's last 4 mobile digits go, e.g. `Prefix{last4}$`. Used only in memory to open CAS PDFs | **server only** (mark as Sensitive) |
 | `SEED_DEMO_PASSWORD` | Any strong password, only for demo users created by `npm run seed` | dev only |
 
 ## Run locally
@@ -274,7 +287,7 @@ These are enforced **in the database**, so they hold for every code path, includ
 3. **The CAS is evidence.** Each CAS makes a new snapshot, which starts PENDING_REVIEW. Holdings are immutable once reviewed, and metrics use only CONFIRMED snapshots.
 4. **History never disappears.** Deletes are blocked on financial tables. Cancellations, revisions and voided executions are status changes with mandatory reasons. `audit_logs` is append-only.
 5. **AI output needs validation.** Extractions land as PENDING_REVIEW snapshots or DRAFT plans. Uncertain security matches are flagged `needs_review`, and plans cannot be approved until those are resolved.
-6. **No automatic matching.** Reconciliation only *suggests*; a CAS_VERIFIED execution exists only after a person confirms a match.
+6. **Only clear matches are automatic.** A CAS transaction is confirmed as the execution of a call automatically only when all of these hold: same fund (ISIN), same direction, dated on or after the call (IST), within 30 days, and within 3% of the call (partial fills allowed). The execution then carries the CAS date, amount, units and NAV. Everything else is a suggestion for a person, and trades with no call are UNADVISED. Auto-confirmed matches are marked `auto_confirmed` and audited.
 7. **Everything is timestamped.** `communicated_at` and `created_at` are immutable, and the audit log records who, when, old, new and why.
 8. **Five numbers, always.** They come from the SQL views, never from front-end arithmetic.
 9. **Partial execution** is supported at every level: many executions per call, many calls per plan item.
@@ -289,5 +302,5 @@ Summary (details and a production checklist in [`docs/SECURITY.md`](docs/SECURIT
 - RLS on every table: advisors see assigned clients; operations cannot create plans or issue or alter advice; only admins see the global audit log and manage users.
 - Private storage bucket, 60-second signed URLs, and per-client storage policies.
 - The service-role key, database URL and integration keys are server-only (never `NEXT_PUBLIC_`).
-- **CAS passwords are never stored or logged.** A password is passed once, in memory, to the extraction webhook.
+- **CAS passwords are never stored or logged.** Passwords are built in memory from `CAS_PASSWORD_TEMPLATE` plus the mobile number, or typed once, and are used only to open the PDF during that request.
 - Security headers, generic error messages (no SQL or stack traces in the browser), and constant-time API-key comparison.

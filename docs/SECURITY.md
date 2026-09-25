@@ -30,7 +30,8 @@ This system stores sensitive financial data: holdings, PAN and client identities
 **Secrets**
 - `SUPABASE_SERVICE_ROLE_KEY`, `DATABASE_URL`, `INTEGRATION_API_KEY` and `N8N_WEBHOOK_TOKEN` are server-only (no `NEXT_PUBLIC_` prefix). Modules that use them import `server-only`.
 - Integration keys are compared in constant time, and the API refuses to work when the key is missing or shorter than 24 characters.
-- **CAS passwords are never persisted or logged.** A password travels once, in memory, from the upload form to the n8n webhook over HTTPS; only a `password_protected` flag is stored. Server error logging records the context and the Postgres error code, never request bodies.
+- **CAS passwords are never persisted or logged.** The built-in reader builds candidates in memory from `CAS_PASSWORD_TEMPLATE` (a server-only secret) plus client mobile numbers, the file name, or a typed password/mobile. They are used only to open the PDF during that request. The optional n8n path passes a typed password once over HTTPS. Only a `password_protected` flag is stored. Server error logging records the context and the Postgres error code, never request bodies.
+- Real client documents are never committed: parser tests use masked fixtures (`tests/fixtures/*`).
 
 **Web**
 - Security headers are set: `X-Frame-Options: DENY`, `nosniff`, HSTS, `Referrer-Policy` and `Permissions-Policy`. `X-Powered-By` is off, and pages are `noindex`.

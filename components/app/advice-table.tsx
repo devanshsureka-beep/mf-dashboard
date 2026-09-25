@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { Money } from "./money";
 import { ActionBadge, StatusBadge } from "./status-badge";
-import { formatDateTime, formatUnits, humanize } from "@/lib/format";
+import { formatDate, formatDateTime, formatUnits, humanize } from "@/lib/format";
 import type { AdviceItemView } from "@/types/domain";
 
 /** Advice call ledger table (Page 5 and Client 360 "Calls" tab). */
@@ -21,6 +21,7 @@ export function AdviceTable({ rows, showClient = true, compact = false }: { rows
           {full ? <TH className="text-right">Units</TH> : null}
           {full ? <TH>Channel</TH> : null}
           <TH className="text-right">Executed</TH>
+          <TH>Executed on</TH>
           <TH className="text-right">Pending</TH>
           <TH>Execution status</TH>
         </TR>
@@ -48,11 +49,27 @@ export function AdviceTable({ rows, showClient = true, compact = false }: { rows
             {full ? <TD className="text-right num text-xs">{a.advised_units ? formatUnits(a.advised_units) : "—"}</TD> : null}
             {full ? <TD className="text-xs">{humanize(a.communication_channel)}</TD> : null}
             <TD className="text-right text-emerald-700"><Money value={a.executed_amount} /></TD>
+            <TD className="whitespace-nowrap text-xs"><ExecutionTiming a={a} /></TD>
             <TD className="text-right"><Money value={a.pending_amount} className={a.pending_amount > 0 ? "text-amber-700" : "text-muted"} /></TD>
             <TD><StatusBadge status={a.status} /></TD>
           </TR>
         ))}
       </TBody>
     </Table>
+  );
+}
+
+/** "24 Sep · same day" / "27 Sep · +1 day", with a CAS tick when the CAS proved it. */
+export function ExecutionTiming({ a }: { a: Pick<AdviceItemView, "first_execution_date" | "lag_days" | "cas_verified"> }) {
+  if (!a.first_execution_date) return <span className="text-muted">—</span>;
+  const lag = a.lag_days ?? 0;
+  return (
+    <span title={a.cas_verified ? "Execution confirmed from the client's CAS" : "Recorded manually; not yet seen in a CAS"}>
+      {formatDate(a.first_execution_date)}
+      <span className={`ml-1 ${lag <= 1 ? "text-emerald-700" : lag <= 3 ? "text-amber-700" : "text-red-700"}`}>
+        · {lag <= 0 ? "same day" : `+${lag} day${lag === 1 ? "" : "s"}`}
+      </span>
+      {a.cas_verified ? <span className="ml-1 text-emerald-700">✓ CAS</span> : null}
+    </span>
   );
 }

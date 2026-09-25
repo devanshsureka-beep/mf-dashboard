@@ -3,16 +3,18 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  LayoutDashboard, Users, PhoneCall, Hourglass, FileSearch, ScrollText, ShieldCheck, LogOut,
+  LayoutDashboard, Users, PhoneCall, Hourglass, FileSearch, ScrollText, ShieldCheck, LogOut, UserPlus, FileStack,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AppRole } from "@/types/domain";
 
 const NAV: { href: string; label: string; icon: typeof Users; roles?: AppRole[] }[] = [
   { href: "/", label: "Command Centre", icon: LayoutDashboard },
+  { href: "/onboard", label: "Onboard Client", icon: UserPlus, roles: ["ADMIN", "ADVISOR"] },
   { href: "/clients", label: "Clients", icon: Users },
   { href: "/advice", label: "Advice Call Ledger", icon: PhoneCall },
   { href: "/executions/pending", label: "Pending Executions", icon: Hourglass },
+  { href: "/cas/bulk", label: "Bulk CAS Upload", icon: FileStack },
   { href: "/reconciliation", label: "CAS & Reconciliation", icon: FileSearch },
   { href: "/audit", label: "Audit Log", icon: ScrollText, roles: ["ADMIN"] },
   { href: "/admin/users", label: "Users & Access", icon: ShieldCheck, roles: ["ADMIN"] },

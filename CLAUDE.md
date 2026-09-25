@@ -12,7 +12,8 @@ Read `README.md` and `docs/ARCHITECTURE.md` first. The core model is **Plan → 
 - `lib/domain/*`: pure logic with unit tests in `tests/unit`.
 - Business rules belong in triggers (`*_business_rules.sql`) when they protect financial history; mirror friendly validation in services.
 - Changes to financial records that need a reason: call `setAuditReason(tx, reason)` before the write.
-- AI/extraction output must land as DRAFT plans / PENDING_REVIEW snapshots and pass zod contracts in `lib/integrations/contracts.ts`.
+- AI/extraction output must land as DRAFT plans / PENDING_REVIEW snapshots and pass zod contracts in `lib/integrations/contracts.ts`. The built-in deterministic parsers (`lib/parsers/*`) may auto-confirm a snapshot only when all their cross-checks pass; reconciliation auto-confirms only the clear transaction matches defined in `lib/domain/txn-matching.ts`.
+- Never commit real client documents, names, PANs or folios, nor the CAS password template (it is the `CAS_PASSWORD_TEMPLATE` secret).
 - Never log request bodies (CAS passwords, PII). Never expose server secrets with `NEXT_PUBLIC_`.
 
 ## Checks before committing

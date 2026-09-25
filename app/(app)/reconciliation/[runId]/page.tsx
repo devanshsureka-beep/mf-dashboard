@@ -23,6 +23,17 @@ export default async function RunPage(props: PageProps<"/reconciliation/[runId]"
   const unadvised = matches.filter((m) => m.classification === "UNADVISED");
   const sip = matches.filter((m) => m.classification === "SIP_INSTALMENT");
   const act = (m: ReconciliationMatchRow) => resolveMatchAction.bind(null, runId, m.id);
+  const byTxn = matches.some((m) => m.cas_transaction_id);
+  const autoCount = advice.filter((m) => m.auto_confirmed).length;
+  const txnCell = (m: ReconciliationMatchRow) => (
+    <TD className="text-xs">
+      <div className="font-medium">{formatDate(m.transaction_date)}</div>
+      <div className={m.change_type === "DECREASE" ? "text-red-700" : "text-emerald-700"}>
+        {m.change_type === "DECREASE" ? "Redeemed" : "Invested"} <Money value={m.transaction_amount} full />
+      </div>
+      <div className="num text-muted">{formatUnits(m.transaction_units)} u @ {m.transaction_nav ?? "—"}</div>
+    </TD>
+  );
 
   return (
     <>
@@ -40,26 +51,35 @@ export default async function RunPage(props: PageProps<"/reconciliation/[runId]"
         <StatCard label="New portfolio value" value={formatINRCompact(run.current_value)} hint={formatDate(run.current_snapshot_date)} />
         <StatCard label="Advice matches" value={advice.length} hint={`${advice.filter((m) => m.status === "SUGGESTED").length} awaiting decision`} tone={advice.some((m) => m.status === "SUGGESTED") ? "attention" : "default"} />
         <StatCard label="Unadvised changes" value={unadvised.length} tone={unadvised.some((m) => !m.reviewed_at) ? "danger" : "default"} />
-        <StatCard label="SIP instalments" value={sip.length} hint="Explained by CAS SIP transactions" />
+        <StatCard label="SIP instalments" value={sip.length} hint={run.summary.sip_items_completed ? `${run.summary.sip_items_completed} SIP plan action(s) verified` : "Explained by CAS SIP transactions"} />
       </div>
 
       <Card className="mt-4">
-        <CardHeader><CardTitle>Detected changes matched to advice</CardTitle><span className="text-xs text-muted">Confirming creates or verifies a CAS_VERIFIED execution. Nothing is automatic.</span></CardHeader>
+        <CardHeader>
+          <CardTitle>{byTxn ? "CAS transactions matched to calls" : "Detected changes matched to advice"}</CardTitle>
+          <span className="text-xs text-muted">
+            {byTxn
+              ? `${autoCount} clear match${autoCount === 1 ? "" : "es"} confirmed automatically with the CAS date, amount, units and NAV. The rest need your decision.`
+              : "Confirming creates or verifies a CAS_VERIFIED execution."}
+          </span>
+        </CardHeader>
         {advice.length === 0 ? <CardContent><EmptyState title="No changes matched open advice" /></CardContent> : (
           <Table className="text-[13px] [&_td]:px-2 [&_th]:px-2">
             <THead>
-              <TR><TH>Security</TH><TH className="text-right">Previous units</TH><TH className="text-right">New units</TH><TH className="text-right">Difference</TH><TH>Matching advice</TH><TH className="text-right">Expected</TH><TH>Confidence</TH><TH>Status</TH><TH>Decision</TH></TR>
+              <TR><TH>Security</TH>{byTxn ? <TH>CAS transaction</TH> : <><TH className="text-right">Previous units</TH><TH className="text-right">New units</TH><TH className="text-right">Difference</TH></>}<TH>Matching advice</TH><TH className="text-right">Expected</TH><TH>Confidence</TH><TH>Status</TH><TH>Decision</TH></TR>
             </THead>
             <TBody>
               {advice.map((m) => (
                 <TR key={m.id}>
                   <TD className="max-w-56"><div className="truncate font-medium" title={m.scheme_name}>{m.scheme_name}</div><div className="text-[11px] text-muted">{humanize(m.change_type)} · {m.folio_numbers.join(", ")}</div></TD>
+                  {byTxn ? txnCell(m) : <>
                   <TD className="text-right num text-xs">{formatUnits(m.previous_units)}</TD>
                   <TD className="text-right num text-xs">{formatUnits(m.current_units)}</TD>
                   <TD className={`text-right num text-xs font-medium ${m.detected_change < 0 ? "text-red-700" : "text-emerald-700"}`}>
                     {m.detected_change > 0 ? "+" : ""}{formatUnits(m.detected_change)}
                     <div className="font-normal text-muted">≈ <Money value={m.approx_amount} /></div>
                   </TD>
+                  </>}
                   <TD className="text-xs">
                     <Link href={`/advice/items/${m.advice_item_id}`} className="flex items-center gap-1 hover:underline">
                       {m.advice_action ? <ActionBadge action={m.advice_action} /> : null} {m.advice_batch_code}
@@ -67,10 +87,13 @@ export default async function RunPage(props: PageProps<"/reconciliation/[runId]"
                     <div className="text-muted">{formatDateTime(m.advice_communicated_at)}</div>
                     <div className="text-muted">{m.advice_advised_units ? `${formatUnits(m.advice_advised_units)} units` : <Money value={m.advice_advised_amount} />} · <StatusBadge status={m.advice_status} /></div>
                   </TD>
-                  <TD className="text-right num text-xs">{m.expected_change != null ? formatUnits(m.expected_change) : "—"}<div className="text-muted">allocated {formatUnits(m.allocated_units)}</div></TD>
+                  {byTxn
+                    ? <TD className="text-right text-xs"><Money value={m.expected_amount} /><div className="text-muted">matched <Money value={m.approx_amount} /></div></TD>
+                    : <TD className="text-right num text-xs">{m.expected_change != null ? formatUnits(m.expected_change) : "—"}<div className="text-muted">allocated {formatUnits(m.allocated_units)}</div></TD>}
                   <TD><StatusBadge status={m.confidence} /></TD>
                   <TD>
                     <StatusBadge status={m.status} />
+                    {m.auto_confirmed ? <div><Badge tone="success">AUTO</Badge></div> : null}
                     {m.confirmed_amount ? <div className="text-[11px] text-muted"><Money value={m.confirmed_amount} full /></div> : null}
                     {m.resolution_note ? <div className="max-w-40 text-[11px] text-muted">{m.resolution_note}</div> : null}
                   </TD>
@@ -118,14 +141,16 @@ export default async function RunPage(props: PageProps<"/reconciliation/[runId]"
         <CardHeader><CardTitle className="text-red-700">Unadvised transactions</CardTitle><span className="text-xs text-muted">Holding changes with no matching recommendation. They appear under Needs Attention until acknowledged.</span></CardHeader>
         {unadvised.length === 0 ? <CardContent><p className="text-sm text-muted">None — every change is explained by advice or SIP instalments.</p></CardContent> : (
           <Table className="text-[13px] [&_td]:px-2 [&_th]:px-2">
-            <THead><TR><TH>Security</TH><TH className="text-right">Previous</TH><TH className="text-right">Current</TH><TH className="text-right">Units change</TH><TH className="text-right">Approx. amount</TH><TH>Note</TH><TH>Review</TH></TR></THead>
+            <THead><TR><TH>Security</TH>{byTxn ? <TH>CAS transaction</TH> : <><TH className="text-right">Previous</TH><TH className="text-right">Current</TH><TH className="text-right">Units change</TH></>}<TH className="text-right">{byTxn ? "Unadvised amount" : "Approx. amount"}</TH><TH>Note</TH><TH>Review</TH></TR></THead>
             <TBody>
               {unadvised.map((m) => (
                 <TR key={m.id}>
                   <TD className="max-w-64"><div className="truncate font-medium">{m.scheme_name}</div><Badge tone="danger">UNADVISED {humanize(m.change_type).toUpperCase()}</Badge></TD>
+                  {byTxn ? txnCell(m) : <>
                   <TD className="text-right"><Money value={m.previous_value} /><div className="num text-[11px] text-muted">{formatUnits(m.previous_units)} u</div></TD>
                   <TD className="text-right"><Money value={m.current_value} /><div className="num text-[11px] text-muted">{formatUnits(m.current_units)} u</div></TD>
                   <TD className="text-right num text-xs">{formatUnits(m.detected_change)}{m.allocated_units && Math.abs(m.allocated_units) < Math.abs(m.detected_change) ? <div className="text-muted">unexplained {formatUnits(m.allocated_units)}</div> : null}</TD>
+                  </>}
                   <TD className="text-right font-medium text-red-700"><Money value={m.approx_amount} /></TD>
                   <TD className="max-w-56 text-xs text-muted">{m.system_note}{m.resolution_note ? <div className="text-ink">{m.resolution_note}</div> : null}</TD>
                   <TD>
