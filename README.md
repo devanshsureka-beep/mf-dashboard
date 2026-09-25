@@ -1,6 +1,6 @@
-# MN Advisory Dashboard
+# Univest MF Premium · Advisory Desk
 
-Internal web application for investment-advisory operations. It tracks the full advisory lifecycle of every client:
+Internal desk for Univest MF Premium (paid mutual-fund advisory) clients. Staff only; clients never see it. It tracks the full advisory lifecycle of every client:
 
 ```
 Onboard: upload CAS + paid advisory report → client, holdings and DRAFT plan created automatically
@@ -18,9 +18,9 @@ Onboard: upload CAS + paid advisory report → client, holdings and DRAFT plan c
 |---|---|---|
 | New paid client | **Onboard Client** (`/onboard`) | Upload the CAS and the advisory report (and the client's mobile number). Both PDFs are read by built-in parsers (no AI, no external service). The client is created from the CAS (name, PAN, email, mobile) and the report (risk profile, goal). The CAS becomes the baseline snapshot, and the report becomes a DRAFT plan: sell lines are tied to CAS folios, buy lines to funds, and SIP start/stop lines to SIP actions. Review, then approve. |
 | New report for an existing client | same page | Same PAN → same client, and a new DRAFT plan. Approving it replaces the current plan, and the old one stays in history as REPLACED. |
-| Every call | **Advice Call Ledger** → Issue call | What, amount and timestamp. |
+| Every call | **Call Ledger** → Issue call | What, amount and timestamp. |
 | Every ~3 days | **Bulk CAS Upload** (`/cas/bulk`) | Drop every client's CAS at once. Each file is opened with the password template, matched to the client by PAN, stored, and snapshotted. It is auto-confirmed when holdings reconcile with the statement totals, then reconciled transaction by transaction. A trade done on day 1 appears in the CAS generated on day 2. |
-| After each upload | **CAS & Reconciliation** | Review only what the engine could not decide, and acknowledge unadvised trades. The ledger shows *Executed on* with the delay (same day / +N days) and a CAS tick. |
+| After each upload | **CAS Matching** | Review only what the engine could not decide, and acknowledge unadvised trades. The ledger shows *Executed on* with the delay (same day / +N days) and a CAS tick. |
 
 For every client and every plan line the app always shows five separate numbers:
 
@@ -88,7 +88,7 @@ Browser ──► Next.js (Vercel)
 ```
 app/
   (app)/                    authenticated pages
-    page.tsx                Command Centre
+    page.tsx                Overview (daily desk)
     clients/                Clients list, new client, Client 360 (tabs), plans, CAS upload, documents
     advice/                 Call ledger, issue call, call detail (revise / cancel / executions)
     executions/pending/     Pending executions
@@ -184,7 +184,7 @@ All schema changes live in `supabase/migrations/` (timestamped, applied in order
 | `…0005_advice_executions.sql` | advice batches, advice items, executions |
 | `…0006_reconciliation_notes_audit.sql` | reconciliation runs / matches, client notes, append-only audit log |
 | `…0007_business_rules.sql` | audit triggers, immutability guards, status derivation, reason enforcement |
-| `…0008_metrics_views.sql` | Target / Advised / Executed / Pending / Yet-to-advise views, Command Centre function |
+| `…0008_metrics_views.sql` | Target / Advised / Executed / Pending / Yet-to-advise views, Overview metrics function |
 | `…0009_rls.sql` | grants + Row Level Security policies |
 | `…0010_storage.sql` | private `client-documents` bucket + storage policies |
 
@@ -242,7 +242,7 @@ DB integration tests (`tests/db`) need `TEST_DATABASE_URL` (e.g. in `.env.test.l
 
 Database changes follow the same path: a new migration is applied to the staging project first and to production when the change goes live.
 
-**Check Documents** (`/onboard/check`) runs every onboarding check on a CAS + report and shows the exact plan that would be created, without saving anything. It is safe to use on the live site.
+**Document Check** (`/onboard/check`) runs every onboarding check on a CAS + report and shows the exact plan that would be created, without saving anything. It is safe to use on the live site.
 
 ## Deploy on Vercel
 
@@ -254,7 +254,7 @@ Database changes follow the same path: a new migration is applied to the staging
 4. Deploy. Create the first admin (only needed once):
    - Supabase → Authentication → Users → *Add user* (email + password, auto-confirm), then in the SQL editor:
      `update public.profiles set role = 'ADMIN', is_active = true, full_name = 'Your Name' where email = 'you@firm.in';`
-   - After that, create every other user from **Users & Access** inside the app.
+   - After that, create every other user from **Team & Access** inside the app.
 5. Do **not** run the demo seed in production.
 
 ## n8n integration

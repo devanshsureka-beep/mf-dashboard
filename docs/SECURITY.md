@@ -49,4 +49,4 @@ This system stores sensitive financial data: holdings, PAN and client identities
 - [ ] The Supabase Data API (PostgREST) remains protected by the same RLS. If you do not need it, remove `public` from *Exposed schemas* (Settings → API) to shrink the attack surface; the app does not use it.
 - [ ] Review `audit_logs` access. Advisors can read the trail of their own clients; tighten `audit_logs_select` if needed.
 - [ ] Never run `npm run seed` against production.
-- [ ] Monitor failed CAS extractions and unadvised activity daily (Command Centre → Needs attention).
+- [ ] Monitor failed CAS extractions and unadvised activity daily (Overview → Needs attention).

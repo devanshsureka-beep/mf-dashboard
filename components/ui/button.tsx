@@ -8,8 +8,8 @@ export const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-brand text-white hover:bg-brand/90",
-        outline: "border border-border bg-surface text-ink hover:bg-gray-50",
+        default: "bg-brand text-white shadow-[0_1px_2px_rgba(16,24,40,0.1)] hover:bg-brand-700",
+        outline: "border border-border bg-surface text-ink shadow-[0_1px_2px_rgba(16,24,40,0.05)] hover:bg-slate-50",
         ghost: "text-ink hover:bg-gray-100",
         danger: "bg-red-600 text-white hover:bg-red-700",
         success: "bg-emerald-600 text-white hover:bg-emerald-700",

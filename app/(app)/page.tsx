@@ -5,7 +5,8 @@ import { LinkButton } from "@/components/ui/button";
 import { StatCard } from "@/components/app/stat-card";
 import { Money } from "@/components/app/money";
 import { ActionBadge, StatusBadge } from "@/components/app/status-badge";
-import { PageHeader, EmptyState } from "@/components/app/page-header";
+import { PageHeader, EmptyState, SectionTitle } from "@/components/app/page-header";
+import { PAGES } from "@/lib/brand";
 import { formatDate, formatDateTime, formatINRCompact, humanize } from "@/lib/format";
 import { pageData } from "@/lib/server";
 import { getCommandCentreMetrics, listDocumentsNeedingReview, listReviewDue } from "@/services/dashboard";
@@ -13,9 +14,14 @@ import { listAdviceLedger } from "@/services/advice";
 import { listUnadvisedActivity } from "@/services/reconciliation";
 import { listDueFollowUps } from "@/services/notes";
 
-export const metadata = { title: "Command Centre" };
+export const metadata = { title: PAGES.overview };
 
-export default async function CommandCentre() {
+function greeting(now = new Date()): string {
+  const hour = Number(new Intl.DateTimeFormat("en-IN", { hour: "numeric", hourCycle: "h23", timeZone: "Asia/Kolkata" }).format(now));
+  return hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+}
+
+export default async function Overview() {
   const { m, recent, unadvised, docs, reviews, followUps, actor } = await pageData(async (tx) => ({
     m: await getCommandCentreMetrics(tx),
     recent: await listAdviceLedger(tx, { limit: 12 }),
@@ -28,8 +34,9 @@ export default async function CommandCentre() {
   return (
     <>
       <PageHeader
-        title="Command Centre"
-        subtitle={<>Good day, {actor.fullName.split(" ")[0] || "there"} · {formatDate(m.day)} (IST)</>}
+        eyebrow={formatDate(m.day)}
+        title={`${greeting()}, ${actor.fullName.split(" ")[0] || "there"}`}
+        subtitle="Premium clients at a glance: today's calls, what is still pending, and what needs a decision."
         actions={
           actor.role !== "OPERATIONS" ? (
             <>
@@ -43,21 +50,21 @@ export default async function CommandCentre() {
       />
 
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard label="Total clients" value={m.total_clients} href="/clients" />
-        <StatCard label="Total portfolio value" value={formatINRCompact(m.total_portfolio_value)} hint="Latest confirmed CAS per client" />
+        <StatCard label="Premium clients" value={m.total_clients} href="/clients" />
+        <StatCard label="Assets under advice" value={formatINRCompact(m.total_portfolio_value)} hint="Latest confirmed CAS per client" />
         <StatCard label="Active advisory plans" value={m.active_plans} hint={m.draft_plans ? `${m.draft_plans} draft awaiting approval` : undefined} />
-        <StatCard label="Calls issued today" value={m.calls_issued_today} hint={`${m.advice_items_today} individual calls`} href={`/advice?from=${m.day}&to=${m.day}`} />
+        <StatCard label="Calls today" value={m.calls_issued_today} hint={`${m.advice_items_today} fund-level instructions`} href={`/advice?from=${m.day}&to=${m.day}`} />
       </section>
 
-      <h2 className="mb-2 mt-6 text-xs font-semibold uppercase tracking-wide text-muted">Today</h2>
+      <SectionTitle>Today</SectionTitle>
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard label="Sell advised" value={formatINRCompact(m.sell_advised_today)} href={`/advice?from=${m.day}&to=${m.day}&side=SELL`} />
         <StatCard label="Buy advised" value={formatINRCompact(m.buy_advised_today)} href={`/advice?from=${m.day}&to=${m.day}&side=BUY`} />
         <StatCard label="Executed value" value={formatINRCompact(m.executed_value_today)} tone="success" />
-        <StatCard label="Pending value (all open calls)" value={formatINRCompact(m.pending_value_total)} tone={m.pending_value_total > 0 ? "attention" : "default"} href="/executions/pending" />
+        <StatCard label="Pending value (open calls)" value={formatINRCompact(m.pending_value_total)} tone={m.pending_value_total > 0 ? "attention" : "default"} href="/executions/pending" />
       </section>
 
-      <h2 className="mb-2 mt-6 text-xs font-semibold uppercase tracking-wide text-muted">Needs attention</h2>
+      <SectionTitle>Needs attention</SectionTitle>
       <section className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         <StatCard label="Pending executions" value={m.pending_executions} hint={`${m.stale_pending_executions} older than 3 days`} tone={m.stale_pending_executions ? "attention" : "default"} href="/executions/pending?status=PENDING" />
         <StatCard label="Partial executions" value={m.partial_executions} tone={m.partial_executions ? "attention" : "default"} href="/executions/pending?status=PARTIAL" />
@@ -67,11 +74,11 @@ export default async function CommandCentre() {
         <StatCard label="Reviews & follow-ups due" value={m.review_due + m.follow_ups_due} tone={m.review_due + m.follow_ups_due ? "attention" : "default"} href="#reviews" />
       </section>
 
-      <div className="mt-6 grid gap-4 xl:grid-cols-3">
+      <div className="mt-7 grid gap-4 xl:grid-cols-3">
         <Card className="xl:col-span-2">
           <CardHeader>
-            <CardTitle>Recent advice</CardTitle>
-            <Link href="/advice" className="text-xs text-brand hover:underline">Open ledger →</Link>
+            <CardTitle>Latest calls</CardTitle>
+            <Link href="/advice" className="text-xs text-brand hover:underline">Open call ledger →</Link>
           </CardHeader>
           {recent.length === 0 ? (
             <CardContent><EmptyState title="No calls issued yet" /></CardContent>
@@ -86,7 +93,7 @@ export default async function CommandCentre() {
                     <TD className="whitespace-nowrap text-xs text-muted">{formatDateTime(a.communicated_at)}</TD>
                     <TD className="whitespace-nowrap"><Link className="hover:underline" href={`/clients/${a.client_id}`}>{a.client_name}</Link></TD>
                     <TD><ActionBadge action={a.action} /></TD>
-                    <TD className="max-w-56 truncate" title={a.scheme_name}><Link className="hover:underline" href={`/advice/items/${a.id}`}>{a.scheme_name}</Link></TD>
+                    <TD className="max-w-48 truncate" title={a.scheme_name}><Link className="hover:underline" href={`/advice/items/${a.id}`}>{a.scheme_name}</Link></TD>
                     <TD className="text-right"><Money value={a.advised_amount} /></TD>
                     <TD className="text-right"><Money value={a.pending_amount} className={a.pending_amount > 0 ? "text-amber-700" : "text-muted"} /></TD>
                     <TD><StatusBadge status={a.status} /></TD>

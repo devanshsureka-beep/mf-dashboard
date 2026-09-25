@@ -10,7 +10,7 @@ import { pageData } from "@/lib/server";
 import { listAdviceLedger, type LedgerFilters } from "@/services/advice";
 import { listAdvisors, listClientSummaries } from "@/services/clients";
 
-export const metadata = { title: "Advice call ledger" };
+export const metadata = { title: "Call ledger" };
 
 export default async function AdviceLedgerPage(props: PageProps<"/advice">) {
   const sp = await props.searchParams;
@@ -36,7 +36,7 @@ export default async function AdviceLedgerPage(props: PageProps<"/advice">) {
   return (
     <>
       <PageHeader
-        title="Advice call ledger"
+        title="Call ledger"
         subtitle="Every call actually communicated to a client, with exact timestamps. Revised and cancelled calls stay visible."
         actions={actor.role !== "OPERATIONS" ? <LinkButton href="/advice/new">Issue call</LinkButton> : null}
       />

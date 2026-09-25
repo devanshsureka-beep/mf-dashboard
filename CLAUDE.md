@@ -1,6 +1,6 @@
 @AGENTS.md
 
-# MN Advisory Dashboard — notes for AI assistants and developers
+# Univest MF Premium · Advisory Desk — notes for AI assistants and developers
 
 Read `README.md` and `docs/ARCHITECTURE.md` first. The core model is **Plan → Advice → Execution**. Never merge these concepts, and never compute the five transition numbers (Target / Advised / Executed / Pending / Yet to advise) outside the SQL views in `supabase/migrations/*_metrics_views.sql`.
 

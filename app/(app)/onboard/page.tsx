@@ -18,7 +18,7 @@ export default async function OnboardPage() {
   return (
     <>
       <PageHeader
-        title="Onboard a client"
+        title="Onboard a Premium client"
         subtitle="Upload the client's CAS and the paid advisory report. The client, current holdings and the plan are filled in automatically."
       />
       <Card className="max-w-3xl">

@@ -1,19 +1,24 @@
 import type { Metadata } from "next";
+import { Inter } from "next/font/google";
+import { BRAND } from "@/lib/brand";
 import "./globals.css";
+
+const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
 
 // APP_ENV=staging is set only for Vercel "Preview" deployments (the test site),
 // which use the separate staging database.
 const isStaging = process.env.APP_ENV === "staging";
+const prefix = isStaging ? "[TEST] " : "";
 
 export const metadata: Metadata = {
-  title: { default: `${isStaging ? "[TEST] " : ""}MN Advisory Dashboard`, template: `${isStaging ? "[TEST] " : ""}%s · MN Advisory` },
-  description: "Advisory lifecycle operations: plan, advice, execution, CAS reconciliation.",
+  title: { default: `${prefix}${BRAND.company} ${BRAND.product} · ${BRAND.desk}`, template: `${prefix}%s · ${BRAND.short}` },
+  description: "Internal desk for Univest MF Premium clients: plan, calls, execution, CAS matching.",
   robots: { index: false, follow: false },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en-IN" className="h-full antialiased">
+    <html lang="en-IN" className={`${inter.variable} h-full antialiased`}>
       <body className="min-h-full">
         {isStaging ? (
           <>

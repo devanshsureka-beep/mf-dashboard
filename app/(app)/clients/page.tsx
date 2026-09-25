@@ -11,7 +11,7 @@ import { pageData } from "@/lib/server";
 import { listAdvisors, listClientSummaries } from "@/services/clients";
 import { CLIENT_STATUSES } from "@/types/domain";
 
-export const metadata = { title: "Clients" };
+export const metadata = { title: "Premium clients" };
 
 export default async function ClientsPage(props: PageProps<"/clients">) {
   const sp = await props.searchParams;
@@ -39,7 +39,7 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
   return (
     <>
       <PageHeader
-        title="Clients"
+        title="Premium clients"
         subtitle={<>{clients.length} clients · <Money value={totals.value} /> under advice · <Money value={totals.pending} /> pending execution</>}
         actions={actor.role !== "OPERATIONS" ? <LinkButton href="/clients/new">New client</LinkButton> : null}
       />

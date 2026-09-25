@@ -9,7 +9,7 @@ import { pageData } from "@/lib/server";
 import { listClientSummaries } from "@/services/clients";
 import { assignClientAction, createUserAction, unassignAction, updateUserAction } from "./actions";
 
-export const metadata = { title: "Users & access" };
+export const metadata = { title: "Team & access" };
 
 export default async function UsersPage() {
   const { users, assignments, clients } = await pageData(async (tx) => ({
@@ -26,7 +26,7 @@ export default async function UsersPage() {
 
   return (
     <>
-      <PageHeader title="Users & access" subtitle="Staff accounts are created here (public sign-up is disabled). Roles are enforced by Row Level Security in the database." />
+      <PageHeader title="Team & access" subtitle="Staff accounts are created here (public sign-up is disabled). Roles are enforced by Row Level Security in the database." />
       <div className="grid gap-4 xl:grid-cols-3">
         <Card className="xl:col-span-2">
           <CardHeader><CardTitle>Staff</CardTitle></CardHeader>

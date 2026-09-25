@@ -12,7 +12,7 @@ import { listClientSummaries } from "@/services/clients";
 import { listCasDocuments } from "@/services/portfolio";
 import { listRuns } from "@/services/reconciliation";
 
-export const metadata = { title: "CAS & reconciliation" };
+export const metadata = { title: "CAS matching" };
 
 export default async function ReconciliationPage() {
   const { runs, docs, clients } = await pageData(async (tx) => ({
@@ -22,7 +22,7 @@ export default async function ReconciliationPage() {
   }));
   return (
     <>
-      <PageHeader title="CAS reconciliation" subtitle="Each new CAS is compared with the calls: transactions that clearly match a call are confirmed as executed automatically; everything else waits for your decision." />
+      <PageHeader title="CAS matching" subtitle="Each new CAS is compared with the calls: transactions that clearly match a call are confirmed as executed automatically; everything else waits for your decision." />
 
       <Card className="mb-4">
         <CardHeader><CardTitle>Upload a new CAS</CardTitle></CardHeader>

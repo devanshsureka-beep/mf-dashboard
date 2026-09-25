@@ -14,7 +14,7 @@ import { getMatches, getRun } from "@/services/reconciliation";
 import type { ReconciliationMatchRow } from "@/types/domain";
 import { cancelRunAction, resolveMatchAction } from "../actions";
 
-export const metadata = { title: "Reconciliation run" };
+export const metadata = { title: "CAS matching run" };
 
 export default async function RunPage(props: PageProps<"/reconciliation/[runId]">) {
   const { runId } = await props.params;

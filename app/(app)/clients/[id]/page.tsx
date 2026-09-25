@@ -8,6 +8,7 @@ import { formatDate, humanize } from "@/lib/format";
 import { pageData } from "@/lib/server";
 import { cn } from "@/lib/utils";
 import { getClientSummary } from "@/services/clients";
+import { PAGES } from "@/lib/brand";
 import { OverviewTab } from "./_tabs/overview";
 import { PortfolioTab } from "./_tabs/portfolio";
 import { PlanTab } from "./_tabs/plan";
@@ -40,31 +41,42 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
   return (
     <>
       {/* Header */}
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2 text-xs text-muted">
-            <Link href="/clients" className="hover:underline">Clients</Link> / <span className="num">{c.client_code}</span>
-          </div>
-          <h1 className="mt-0.5 flex items-center gap-2 text-xl font-semibold">
-            {c.full_name} <StatusBadge status={c.status} />
-            {c.unadvised_count > 0 ? <Badge tone="danger">{c.unadvised_count} unadvised change(s)</Badge> : null}
-          </h1>
-          <div className="mt-1 flex flex-wrap gap-x-5 gap-y-1 text-sm text-muted">
-            <span>Advisor: <span className="text-ink">{c.advisor_name ?? "—"}</span></span>
-            <span>Risk: <span className="text-ink">{humanize(c.risk_profile)}</span></span>
-            <span>Latest CAS: <span className="text-ink">{c.latest_cas_date ? formatDate(c.latest_cas_date) : "none"}</span></span>
-            {c.next_review_date ? <span>Next review: <span className="text-ink">{formatDate(c.next_review_date)}</span></span> : null}
-          </div>
-          {c.goal ? <div className="mt-1 max-w-3xl text-sm text-muted">Goal: <span className="text-ink">{c.goal}</span></div> : null}
-        </div>
-        <div className="text-right">
-          <div className="text-xs uppercase tracking-wide text-muted">Portfolio value</div>
-          <div className="text-2xl font-semibold"><Money value={c.current_portfolio_value} /></div>
-          <div className="text-xs text-muted">
-            Initial <Money value={c.initial_portfolio_value} />{c.baseline_date ? ` (${formatDate(c.baseline_date)})` : ""}
-          </div>
-        </div>
+      <div className="mb-2 flex items-center gap-2 text-xs text-muted">
+        <Link href="/clients" className="hover:text-ink hover:underline">{PAGES.clients}</Link>
+        <span aria-hidden>/</span>
+        <span className="num">{c.client_code}</span>
       </div>
+      <section className="mb-4 overflow-hidden rounded-xl border border-border bg-surface shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
+        <div className="flex flex-col gap-5 p-5 md:flex-row md:items-start md:justify-between">
+          <div className="flex min-w-0 flex-1 items-start gap-4">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-brand-50 text-base font-semibold text-brand-700 ring-1 ring-brand-100" aria-hidden>
+              {c.full_name.split(/\s+/).map((w: string) => w[0]).slice(0, 2).join("").toUpperCase()}
+            </div>
+            <div className="min-w-0">
+              <h1 className="flex flex-wrap items-center gap-2 text-2xl font-semibold tracking-tight">
+                {c.full_name}
+                <StatusBadge status={c.status} />
+                {c.unadvised_count > 0 ? <Badge tone="danger">{c.unadvised_count} unadvised change(s)</Badge> : null}
+              </h1>
+              <dl className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-sm">
+                <div className="flex gap-1.5"><dt className="text-muted">Client ID</dt><dd className="num font-medium">{c.client_code}</dd></div>
+                <div className="flex gap-1.5"><dt className="text-muted">Advisor</dt><dd className="font-medium">{c.advisor_name ?? "—"}</dd></div>
+                <div className="flex gap-1.5"><dt className="text-muted">Risk</dt><dd className="font-medium">{humanize(c.risk_profile)}</dd></div>
+                <div className="flex gap-1.5"><dt className="text-muted">Latest CAS</dt><dd className="font-medium">{c.latest_cas_date ? formatDate(c.latest_cas_date) : "none"}</dd></div>
+                {c.next_review_date ? <div className="flex gap-1.5"><dt className="text-muted">Next review</dt><dd className="font-medium">{formatDate(c.next_review_date)}</dd></div> : null}
+              </dl>
+              {c.goal ? <p className="mt-1.5 max-w-3xl text-sm text-muted">Goal: <span className="text-ink">{c.goal}</span></p> : null}
+            </div>
+          </div>
+          <div className="shrink-0 rounded-lg bg-slate-50 px-4 py-3 ring-1 ring-border md:text-right">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Portfolio value</div>
+            <div className="text-2xl font-semibold tracking-tight"><Money value={c.current_portfolio_value} /></div>
+            <div className="text-xs text-muted">
+              At onboarding <Money value={c.initial_portfolio_value} />{c.baseline_date ? ` (${formatDate(c.baseline_date)})` : ""}
+            </div>
+          </div>
+        </div>
+      </section>
 
       {/* Primary summary */}
       <div className="grid gap-3 lg:grid-cols-2">
@@ -72,7 +84,7 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
         <TransitionSummary side="BUY" n={{ target: c.target_buy, advised: c.advised_buy, executed: c.executed_buy, pending: c.pending_buy, yetToAdvise: c.yet_to_advise_buy }} />
       </div>
       {!c.active_plan_id ? (
-        <p className="mt-2 text-sm text-amber-700">No ACTIVE advisory plan — targets are zero until a plan is approved. {canAdvise ? <Link className="underline" href={`/clients/${id}/plans/new`}>Create a plan</Link> : null}</p>
+        <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">No active advisory plan. Targets stay at zero until a plan is approved. {canAdvise ? <Link className="underline" href={`/clients/${id}/plans/new`}>Create a plan</Link> : null}</p>
       ) : null}
       {c.off_plan_pending > 0 ? <p className="mt-2 text-xs text-muted">Also <Money value={c.off_plan_pending} /> pending on off-plan calls (not linked to a plan item).</p> : null}
 
@@ -97,8 +109,8 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
             key={t}
             href={`/clients/${id}?tab=${t}`}
             className={cn(
-              "-mb-px whitespace-nowrap border-b-2 px-3 py-2 text-sm",
-              t === tab ? "border-brand font-medium text-brand" : "border-transparent text-muted hover:text-ink",
+              "-mb-px whitespace-nowrap border-b-2 px-3.5 py-2.5 text-sm transition-colors",
+              t === tab ? "border-brand font-semibold text-brand" : "border-transparent text-muted hover:border-border hover:text-ink",
             )}
           >
             {LABEL[t]}

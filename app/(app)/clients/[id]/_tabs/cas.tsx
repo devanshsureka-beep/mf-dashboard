@@ -44,7 +44,7 @@ export async function CasTab({ clientId, actor }: { clientId: string; actor: Act
         )}
       </Card>
       <Card>
-        <CardHeader><CardTitle>Reconciliation runs</CardTitle></CardHeader>
+        <CardHeader><CardTitle>CAS matching runs</CardTitle></CardHeader>
         {runs.length === 0 ? <div className="p-4"><EmptyState title="No reconciliation yet">A run is created when a second CAS snapshot is confirmed.</EmptyState></div> : (
           <Table>
             <THead><TR><TH>Created</TH><TH>Compared</TH><TH>Status</TH><TH>Open items</TH><TH /></TR></THead>

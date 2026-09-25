@@ -1,31 +1,53 @@
 @import "tailwindcss";
 
 /*
- * MN Advisory Dashboard — light financial-operations theme.
- * Colour is reserved for meaning: green/red only for financial direction or
- * success/failure, amber for pending, blue for informational / advised.
+ * Univest MF Premium · Advisory Desk — internal operations theme.
+ * Navy sidebar, light working surface. Colour is reserved for meaning:
+ * green/red only for financial direction or success/failure, amber for
+ * pending, blue for informational / advised. The brand scale is used for
+ * navigation, primary actions and links only.
  */
 @theme {
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
-  --color-background: #f7f8fa;
+  --color-background: #f4f6fb;
   --color-surface: #ffffff;
-  --color-border: #e4e7ec;
-  --color-muted: #667085;
-  --color-ink: #101828;
-  --color-brand: #1d3a6e;
-  --color-brand-soft: #eef3fb;
+  --color-border: #e3e7ef;
+  --color-muted: #5f6b80;
+  --color-ink: #0f1a2e;
+
+  /* Brand: change these to retheme the whole desk. */
+  --color-brand-50: #eef2ff;
+  --color-brand-100: #e0e7ff;
+  --color-brand-200: #c3cdfe;
+  --color-brand-300: #9aa8fb;
+  --color-brand-400: #6d7cf5;
+  --color-brand-500: #4c57ec;
+  --color-brand-600: #3a3fd6;
+  --color-brand-700: #3033ad;
+  --color-brand-800: #292d8a;
+  --color-brand-900: #262a6e;
+  --color-brand: #3a3fd6;
+  --color-brand-soft: #eef2ff;
+
+  --color-sidebar: #0e1530;
+  --color-sidebar-ink: #c9cfe3;
+  --color-sidebar-muted: #7f89a8;
 }
 
 body {
   background: var(--color-background);
   color: var(--color-ink);
   font-family: var(--font-sans);
-  font-feature-settings: "tnum" 1; /* tabular numbers for financial columns */
+  font-feature-settings: "tnum" 1, "cv11" 1; /* tabular numbers for financial columns */
 }
 
 .num {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+::selection {
+  background: var(--color-brand-100);
 }
