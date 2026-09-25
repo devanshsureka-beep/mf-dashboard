@@ -54,7 +54,7 @@ export function ActionForm({ action, children, className, resetOnSuccess = false
         <p
           role={state.ok ? "status" : "alert"}
           className={cn(
-            "mt-2 rounded-md px-3 py-2 text-sm",
+            "mt-2 whitespace-pre-line rounded-md px-3 py-2 text-sm",
             state.ok ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-700",
           )}
         >

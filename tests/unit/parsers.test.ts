@@ -1,11 +1,12 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { classifyTransaction, normaliseLine, parseCasLines, parseNumber, toCasParseResult, CasParseError } from "@/lib/parsers/cas";
-import { mapSellAction, parseAdvisoryReportLines, sameInvestor, ReportParseError } from "@/lib/parsers/advisory-report";
+import { mapSellAction, parseAdvisoryReportLines, parseAmount, sameInvestor, ReportParseError } from "@/lib/parsers/advisory-report";
 import { casParseResultSchema } from "@/lib/integrations/contracts";
 
 const casLines = readFileSync("tests/fixtures/cas-kfin-cams.sample.txt", "utf8").split("\n");
 const reportLines = readFileSync("tests/fixtures/univest-report.sample.txt", "utf8").split("\n");
+const report2Lines = readFileSync("tests/fixtures/univest-report-2.sample.txt", "utf8").split("\n");
 
 describe("CAS parser (KFintech + CAMS consolidated, detailed)", () => {
   const p = parseCasLines(casLines);
@@ -121,7 +122,82 @@ describe("Univest advisory report parser", () => {
     expect(mapSellAction("Switch to Direct")).toBe("SWITCH");
     expect(mapSellAction("Retain")).toBe("RETAIN");
     expect(mapSellAction("??")).toBe("UNKNOWN");
+    expect(mapSellAction("Trim, oldest units first")).toBe("SELL");
     expect(sameInvestor("Ravi Kumar Test", "RAVI KUMAR TEST")).toBe(true);
     expect(sameInvestor("Sunita Rao", "Ravi Kumar Test")).toBe(false);
+  });
+});
+
+describe("Univest report, second layout (partial trim, wrapped cells, SIP routing panel)", () => {
+  const r = parseAdvisoryReportLines(report2Lines);
+
+  it("reads every table and everything reconciles", () => {
+    expect(r.problems).toEqual([]);
+    expect(r.clientName).toBe("Sample Client");
+    expect(r.riskProfile).toBe("AGGRESSIVE");
+  });
+
+  it("reads a partial trim whose action text wraps into two cells", () => {
+    expect(r.sells).toHaveLength(6);
+    const trim = r.sells.find((s) => /HDFC Large Cap/.test(s.fund))!;
+    expect(trim).toMatchObject({ action: "SELL", partial: true, value: 500000, actionText: "Trim, oldest units first", folio: "70000005/73" });
+    expect(r.sells.filter((s) => !s.partial)).toHaveLength(5);
+    expect(r.sellTotal).toBe(3826013);
+  });
+
+  it("reads the SIP table even with the routing panel printed in between, and ties it out", () => {
+    expect(r.sips).toHaveLength(18);
+    expect(r.sips.filter((s) => s.change === "START")).toHaveLength(9);
+    expect(r.sips.filter((s) => s.change === "STOP")).toHaveLength(8);
+    expect(r.sips.find((s) => s.change === "CHANGE")).toMatchObject({ fund: "DSP Small Cap Fund", current: 16500, next: 12000 });
+    expect(r.sips.find((s) => s.excludedFromTotal)).toMatchObject({ change: "STOP", current: 20000 });
+    expect(r.sipTotals).toEqual({ current: 125700, next: 120000 });
+    expect(r.sipRouting).toHaveLength(10);
+  });
+
+  it("reads one verdict per holding in the fund-wise review", () => {
+    expect(r.review).toHaveLength(11);
+    expect(r.review.find((x) => /HDFC Large Cap/.test(x.fund))).toMatchObject({ verdict: "TRIM", amount: 500000 });
+    expect(r.review.find((x) => /Invesco/.test(x.fund))).toMatchObject({ verdict: "ADD", amount: 400000 });
+    expect(r.buys.find((b) => /Invesco/.test(b.fund))?.kind).toBe("TOP_UP");
+  });
+
+  it("parses rupee amounts in lakh / crore notation with their precision", () => {
+    expect(parseAmount("₹5.00L")).toEqual({ value: 500000, precision: 500 });
+    expect(parseAmount("₹38,26,013.13")).toEqual({ value: 3826013.13, precision: 1 });
+    expect(parseAmount("₹1.2 Cr")?.value).toBe(12000000);
+    expect(parseAmount("20,000*")?.value).toBe(20000);
+  });
+
+  describe("tampering with any figure is caught (nothing is guessed)", () => {
+    const tamper = (from: string, to: string) => {
+      const lines = report2Lines.map((l) => l.replace(from, to));
+      expect(lines).not.toEqual(report2Lines);
+      return parseAdvisoryReportLines(lines).problems;
+    };
+    it("a sell row dropped", () => {
+      const lines = report2Lines.filter((l) => !l.startsWith("HDFC Large Cap Fund (Reg) | 70000005"));
+      const p = parseAdvisoryReportLines(lines).problems;
+      expect(p.some((x) => /Sell rows add up/.test(x))).toBe(true);
+      expect(p.some((x) => /TRIM .* no row/.test(x))).toBe(true);
+    });
+    it("a sell value that disagrees with the review", () => {
+      expect(tamper("| Full exit | ₹5,62,206 |", "| Full exit | ₹5,00,000 |").some((x) => /UTI Nifty 50/.test(x))).toBe(true);
+    });
+    it("a review verdict that disagrees with the sell list", () => {
+      expect(tamper("| 6.9% | 6.9% | EXIT |", "| 6.9% | 6.9% | HOLD |").some((x) => /HOLD .*sells it|no EXIT/.test(x))).toBe(true);
+    });
+    it("a SIP amount that disagrees with the routing panel and total", () => {
+      const p = tamper("Bandhan Small Cap Fund | — | 15,000 | New", "Bandhan Small Cap Fund | — | 16,000 | New");
+      expect(p.some((x) => /New SIP rows add up/.test(x))).toBe(true);
+      expect(p.some((x) => /routing panel lists Bandhan/.test(x))).toBe(true);
+    });
+    it("a SIP row whose wording contradicts its amounts", () => {
+      expect(tamper("Kotak Mid Cap Fund | 13,200 | — | Stop", "Kotak Mid Cap Fund | 13,200 | — | New").some((x) => /says "New"/.test(x))).toBe(true);
+    });
+    it("a buy row dropped", () => {
+      const lines = report2Lines.filter((l) => !l.startsWith("DSP India T.I.G.E.R. Fund | ₹3,50,000"));
+      expect(parseAdvisoryReportLines(lines).problems.some((x) => /Buy rows add up/.test(x))).toBe(true);
+    });
   });
 });

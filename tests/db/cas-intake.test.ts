@@ -8,7 +8,7 @@ import { runReconciliation } from "@/services/reconciliation";
 import { ingestParsedCas } from "@/services/cas-intake";
 import { ensureClientFromDocuments, onboardFromDocuments } from "@/services/onboarding";
 import { resolveOrCreateSecurity } from "@/services/securities";
-import { parseCasLines } from "@/lib/parsers/cas";
+import { parseCasLines, type CasParseOutput } from "@/lib/parsers/cas";
 import { parseAdvisoryReportLines } from "@/lib/parsers/advisory-report";
 import { clientWithActivePlan, parsed, progress, scenario, sql, TEST_DB, type Ctx } from "./harness";
 
@@ -139,10 +139,36 @@ describeDb("CAS transactions prove execution (engine v2)", () => {
 });
 
 describeDb("onboarding from CAS + advisory report", () => {
-  const cas = parseCasLines(readFileSync("tests/fixtures/cas-kfin-cams.sample.txt", "utf8").split("\n"));
-  const report = parseAdvisoryReportLines(readFileSync("tests/fixtures/univest-report.sample.txt", "utf8").split("\n"));
+  const report = parseAdvisoryReportLines(readFileSync("tests/fixtures/univest-report-2.sample.txt", "utf8").split("\n"));
+  // The CAS this (masked) report was made from, valued the same day.
+  const funds: [string, string, string, number, "DIRECT" | "REGULAR"][] = [
+    ["DSP Small Cap Fund - Direct Plan - Growth", "INF740K01QD1", "70000006/35", 569399.04, "DIRECT"],
+    ["HDFC Large Cap Fund - Regular Plan - Growth", "INF179K01BE2", "70000005/73", 1037894.75, "REGULAR"],
+    ["ICICI Prudential Nifty Next 50 Index Fund - Direct Plan - Growth", "INF109K01Y80", "70000004/71", 246455.47, "DIRECT"],
+    ["ICICI Prudential Nifty Alpha Low-Volatility 30 ETF FOF Direct Plan Growth", "INF109KC1R89", "70000004/71", 370300.7, "DIRECT"],
+    ["Invesco India Mid Cap Fund - Direct Plan Growth", "INF205K01MV6", "70000010/0", 5040.04, "DIRECT"],
+    ["Kotak Mid Cap Fund Direct Growth", "INF174K01LT0", "70000007", 465736.74, "DIRECT"],
+    ["Mirae Asset Large and Midcap Fund - Regular Plan", "INF769K01101", "70000008/0", 1674437.55, "REGULAR"],
+    ["Nippon India Small Cap Fund - Direct Growth", "INF204K01K15", "70000009/0", 336522.94, "DIRECT"],
+    ["Parag Parikh Flexi Cap Fund - Direct Plan Growth", "INF879O01027", "70000003", 417074.33, "DIRECT"],
+    ["SBI Large Cap Fund - Regular Plan - Growth", "INF200K01180", "70000001", 1729976.66, "REGULAR"],
+    ["UTI Nifty 50 Index Fund - Direct Plan", "INF789F01XA0", "70000002/0", 562205.97, "DIRECT"],
+  ];
+  const cas: CasParseOutput = {
+    format: "KFIN_CAMS_CONSOLIDATED",
+    source: "CAMS",
+    investor: { name: "Sample Client", email: "sample.client@example.com", mobile: "9800004321", pan: "ABCPS4321Q" },
+    period: { from: "1990-01-01", to: "2026-09-24" },
+    valuationDate: "2026-09-23",
+    summaryTotal: { cost: null, market: null },
+    schemes: funds.map(([schemeName, isin, folio, value, planType]) => ({
+      amc: null, schemeName, rawSchemeLine: schemeName, isin, folio, pan: "ABCPS4321Q", registrar: "CAMS", holderName: null, planType,
+      closingUnits: Math.round((value / 100) * 1000) / 1000, nav: 100, navDate: "2026-09-23", marketValue: value, costValue: null, transactions: [],
+    })),
+    warnings: [],
+  };
 
-  it("creates the client by PAN, a confirmed baseline snapshot and a DRAFT plan; a second report adds a new draft", async () => {
+  it("creates the client by PAN, a confirmed baseline snapshot and the complete DRAFT plan; a second report adds a new draft", async () => {
     await scenario(async (ctx) => {
       const client = await ctx.as("advisor", (t) => ensureClientFromDocuments(t, ctx.users.advisor, { cas, report, phone: null }));
       expect(client.created).toBe(true);
@@ -152,24 +178,45 @@ describeDb("onboarding from CAS + advisory report", () => {
 
       const c = (await ctx.tx<{ pan: string; phone: string; email: string; risk_profile: string; status: string }[]>`
         select pan, phone, email, risk_profile, status from public.clients where id = ${client.id}`)[0];
-      expect(c).toEqual({ pan: "ABCPT1234Q", phone: "9800001234", email: "test.investor@example.com", risk_profile: "MODERATE", status: "ACTIVE" });
+      expect(c).toEqual({ pan: "ABCPS4321Q", phone: "9800004321", email: "sample.client@example.com", risk_profile: "AGGRESSIVE", status: "ACTIVE" });
 
       const snap = (await ctx.tx<{ review_status: string; is_baseline: boolean; holdings_count: number }[]>`
         select review_status, is_baseline, holdings_count from public.portfolio_snapshots where id = ${out.snapshotId}`)[0];
-      expect(snap).toMatchObject({ review_status: "CONFIRMED", is_baseline: true });
-      expect(snap.holdings_count).toBeGreaterThan(0);
+      expect(snap).toEqual({ review_status: "CONFIRMED", is_baseline: true, holdings_count: 11 });
 
-      const plan = (await ctx.tx<{ status: string; extraction_source: string; target_buy_value: number }[]>`
-        select status, extraction_source, target_buy_value from public.advisory_plans where id = ${out.planId}`)[0];
-      expect(plan).toMatchObject({ status: "DRAFT", extraction_source: "IMPORT" });
-      expect(Math.abs(plan.target_buy_value - (report.buyTotal ?? 0))).toBeLessThan(2);
-      const items = await ctx.tx<{ action: string; n: number; unresolved: number }[]>`
-        select action, count(*)::int as n, count(*) filter (where security_id is null)::int as unresolved
+      const plan = (await ctx.tx<{ status: string; extraction_source: string; target_exit_value: number; target_buy_value: number }[]>`
+        select status, extraction_source, target_exit_value, target_buy_value from public.advisory_plans where id = ${out.planId}`)[0];
+      expect(plan).toMatchObject({ status: "DRAFT", extraction_source: "IMPORT", target_exit_value: 3826013, target_buy_value: 3826013.13 });
+      const items = await ctx.tx<{ action: string; n: number; unresolved: number; review: number }[]>`
+        select action, count(*)::int as n, count(*) filter (where security_id is null)::int as unresolved,
+               count(*) filter (where needs_review)::int as review
         from public.advisory_plan_items where plan_id = ${out.planId} group by action order by action`;
-      const byAction = Object.fromEntries(items.map((i) => [i.action, i]));
-      expect(byAction.BUY).toMatchObject({ n: 8, unresolved: 0 }); // name-only securities created
-      expect(byAction.RETAIN.n).toBe(snap.holdings_count);        // the report's sells are not in this CAS fixture
-      expect(out.warnings.some((w) => /not found in the CAS/.test(w))).toBe(true);
+      expect(items).toEqual([
+        { action: "BUY", n: 9, unresolved: 0, review: 0 },
+        { action: "RETAIN", n: 5, unresolved: 0, review: 0 },
+        { action: "SELL", n: 6, unresolved: 0, review: 0 },
+      ]);
+      // Sells and retains use exactly the CAS securities (by ISIN).
+      const tied = await ctx.tx<{ n: number }[]>`
+        select count(*)::int as n from public.advisory_plan_items i
+        join public.security_master sm on sm.id = i.security_id
+        where i.plan_id = ${out.planId} and i.action in ('SELL', 'RETAIN') and sm.isin is not null`;
+      expect(tied[0].n).toBe(11);
+      const sips = await ctx.tx<{ action: string; n: number; unresolved: number }[]>`
+        select action, count(*)::int as n, count(*) filter (where security_id is null or needs_review)::int as unresolved
+        from public.sip_plan_items where plan_id = ${out.planId} group by action order by action`;
+      expect(sips).toEqual([
+        { action: "CHANGE", n: 1, unresolved: 0 },
+        { action: "START", n: 9, unresolved: 0 },
+        { action: "STOP", n: 8, unresolved: 0 },
+      ]);
+      // A new SIP and the buy of the same fund point to the same security.
+      const same = await ctx.tx<{ n: number }[]>`
+        select count(*)::int as n from public.sip_plan_items s
+        join public.advisory_plan_items b on b.plan_id = s.plan_id and b.action = 'BUY' and b.security_id = s.security_id
+        where s.plan_id = ${out.planId} and s.action = 'START'`;
+      expect(same[0].n).toBe(9);
+      expect(out.warnings).toEqual([]);
 
       // A new report for the same client (same PAN) -> a new DRAFT, same client.
       const again = await ctx.as("advisor", (t) => ensureClientFromDocuments(t, ctx.users.advisor, { cas, report }));
@@ -184,11 +231,23 @@ describeDb("onboarding from CAS + advisory report", () => {
     });
   });
 
-  it("refuses a report that belongs to someone else", async () => {
+  it("refuses documents that do not reconcile, and saves nothing", async () => {
     await scenario(async (ctx) => {
       const other = { ...report, clientName: "Somebody Else Entirely" };
-      const msg = await ctx.expectError("advisor", (t) => ensureClientFromDocuments(t, ctx.users.advisor, { cas, report: other }));
-      expect(msg).toMatch(/report is for/);
+      expect(await ctx.expectError("advisor", (t) => ensureClientFromDocuments(t, ctx.users.advisor, { cas, report: other }))).toMatch(/report is for/);
+
+      // Another investor's CAS (different funds) against this report.
+      const wrongCas = parseCasLines(readFileSync("tests/fixtures/cas-kfin-cams.sample.txt", "utf8").split("\n"));
+      const msg = await ctx.expectError("advisor", (t) => ensureClientFromDocuments(t, ctx.users.advisor, { cas: wrongCas, report: { ...report, clientName: wrongCas.investor.name } }));
+      expect(msg).toMatch(/nothing was saved/);
+      expect(msg).toMatch(/does not match any fund in the CAS/);
+
+      // One holding's value differs from the report.
+      const drifted = { ...cas, schemes: cas.schemes.map((x) => (x.isin === "INF200K01180" ? { ...x, marketValue: 1650000 } : x)) };
+      expect(await ctx.expectError("advisor", (t) => ensureClientFromDocuments(t, ctx.users.advisor, { cas: drifted, report }))).toMatch(/SBI Large Cap .*full exit/);
+
+      const n = await ctx.tx<{ n: number }[]>`select count(*)::int as n from public.clients where pan in ('ABCPS4321Q', ${wrongCas.investor.pan})`;
+      expect(n[0].n).toBe(0);
     });
   });
 
@@ -207,7 +266,7 @@ describeDb("onboarding from CAS + advisory report", () => {
     });
   });
 
-  it("ingestParsedCas matches the CAS to nobody else's client and refuses duplicates", async () => {
+  it("ingestParsedCas refuses duplicate files", async () => {
     await scenario(async (ctx) => {
       const client = await ctx.as("advisor", (t) => ensureClientFromDocuments(t, ctx.users.advisor, { cas, report }));
       const f = file("a.pdf");

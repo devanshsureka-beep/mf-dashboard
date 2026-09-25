@@ -188,7 +188,11 @@ export function parseCasLines(rawLines: string[]): CasParseOutput {
   const finishHeader = () => {
     if (!cur) return;
     const joined = header.join(" | ");
-    const isin = /ISIN\s*:\s*([A-Z]{2}[A-Z0-9]{9}\d)/.exec(joined)?.[1] ?? null;
+    // ISIN, also when the PDF split it across cells ("INF769K | 01101").
+    const isin =
+      /ISIN\s*:\s*([A-Z]{2}[A-Z0-9]{9}\d)/.exec(joined)?.[1] ??
+      /ISIN\s*:\s*([A-Z]{2}[A-Z0-9]{9}\d)/.exec(joined.replace(/\s*\|\s*/g, "").replace(/(ISIN:?)\s+/g, "$1"))?.[1] ??
+      null;
     const registrar = /Registrar\s*:\s*([A-Za-z]+)/.exec(joined)?.[1] ?? null;
     // First header line is the holder name when it has no scheme markers.
     const holder = header[0] && !/ISIN|Registrar|Advisor|Demat|-/.test(header[0]) ? header[0].trim() : null;

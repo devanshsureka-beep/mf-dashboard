@@ -9,6 +9,10 @@ export function tokens(name: string): string[] {
   return name
     .toLowerCase()
     .replace(/\bfof\b/g, "fund of funds")
+    // Same words, different spellings across registrars and reports.
+    .replace(/\bpru\b/g, "prudential")
+    .replace(/\b(large|mid|small|flexi|multi)cap\b/g, "$1 cap")
+    .replace(/\blow[\s-]*vol\b/g, "low volatility")
     .replace(/[^a-z0-9]+/g, " ")
     .split(" ")
     .filter((t) => t && !STOP_WORDS.has(t));

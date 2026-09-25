@@ -1,0 +1,308 @@
+SEBI Registered Investment Adviser · INA000017639
+UNIVEST WEALTH
+P O R T F O L I O R E B A L A N C I N G & E X E C U T I O N R E P O R T
+Sample Client
+Aggressive risk · Wealth creation · No SWP · No liquid-fund parking
+SIP | ₹1,20,000/month | · Redeploy | ₹38.26L | now · Phased, tax-aware exit from Regular plans
+CAS period 01-Jan-1984 to 24-Sep-2026 · Valuation date 23-Sep-2026 · Prepared 24-Sep-2026
+₹74.15L | 48% → 7% | 34% → 59% | 60% → 30%
+CURRENT PORTFOLIO VALUE | PURE LARGE-CAP & INDEX FUNDS | MID + SMALL CAP EXPOSURE | MONEY IN REGULAR PLANS
+Prepared by Univest Wealth · Private & confidential · For the named investor only
+@@PAGE_BREAK 1
+UNIVEST WEALTH | REQUIREMENT & SUMMARY
+R E Q U I R E M E N T & E X E C U T I V E S U M M A R Y
+What Sample asked for, and what we are doing
+₹51,49,865 | ₹74,15,044 | ₹22,65,179 | 44.0%
+TOTAL INVESTED (COST) | CURRENT VALUE (23-SEP-2026) | ABSOLUTE GAIN | ABSOLUTE RETURN
+Absolute return, not annualised; contributions go back to 2012.
+Your brief, mapped to the plan | What changes
+Risk profile: Aggressive | Pure large-cap and index funds cut from 48% to 7%. Mid + small cap | Sample's ₹74.15L is solid but tilted the wrong way for an aggressive investor.
+exposure rises from 34% to 59% (look-through). Three sector funds are
+48% sits in pure large-cap and index funds, and | 60% sits in three Regular
+added.
+plans | carrying about ₹18.3L of long-term gains between them.
+Goal: Wealth creation | Index, low-volatility and below-average large-cap funds are replaced
+Selling all three Regular funds at once would cost about ₹2.3L in tax, so we
+with managers whose 5-year records run 18–22%.
+phase it. Now, we sell SBI Large Cap, the two index funds, the low-volatility
+SIP: ₹1,20,000/month | Replaces today's ₹1,25,700 spread across 8 SIPs, the largest of which
+FoF and PPFAS, and trim ₹5.00L from HDFC Large Cap: | ₹38.26L | in total.
+(₹27,500) went into a Nifty 50 index fund. Routed to 10 Direct funds;
+small caps get 32%. | Estimated tax is | ₹95,400.
+No SWP | The ₹57,000/month SWP on HDFC Large Cap (first instalment 02-Sep- | The rest of HDFC Large Cap exits in April 2027 on a fresh ₹1.25L exemption.
+2026) is cancelled.
+Mirae stays by choice.
+No liquid funds | Nothing is parked in liquid or arbitrage funds. Proceeds are invested
+directly within days.
+Keep Mirae Large & Midcap | Held as instructed, with its Regular SIP stopped and no fresh money. It
+sits on ₹7.35L of long-term gain.
+Univest Wealth Portfolio Report — Sample Client — Page 2 | SEBI RIA INA000017639 · Private & confidential
+@@PAGE_BREAK 2
+UNIVEST WEALTH | KEY FINDINGS
+W H AT W E F O U N D
+Key findings
+48% in pure large cap. | SBI Large Cap, HDFC Large Cap, a Nifty 50 index fund and a | The biggest SIP is the worst performer. | ₹27,500 a month goes into UTI Nifty 50
+1 | 2
+Nifty Next 50 index fund hold ₹35.8L between them, more than double our 20% | Index, where your XIRR is −0.6% and the index is −6.6% over 1 year. Another
+ceiling for an aggressive investor. A large-cap low-volatility FoF adds another ₹3.7L | ₹20,000 went into a low-volatility FoF, which is designed to lag in rallies.
+on top.
+60% in Regular plans. | SBI Large Cap, Mirae Large & Midcap and HDFC Large Cap | An SWP is quietly running. | A ₹57,000 withdrawal from HDFC Large Cap started on
+3 | 4
+were all bought through one distributor. Trail commission on ₹44.4L costs roughly | 02-Sep-2026. It has already booked ₹32,518 of long-term gain this year, and it
+₹35,000–45,000 a year. | contradicts the no-withdrawal brief.
+Two good funds have got too big. | Kotak Mid Cap (₹67.6k Cr) and Nippon Small Cap | Valuations favour mid caps now, small caps gradually. | Nifty 50 trades at 19.7x
+5 | 6
+(₹82.6k Cr) have strong records, but size makes it harder for them to repeat the | earnings vs a 22.0x | five-year median, which is cheap. Midcap 150 is at 28.5x vs
+returns. We keep the units and route new money to leaner funds. | 29.9x, about fair. Smallcap 250 is at 34.0x vs 28.3x, 20% rich. So the lumpsum leans
+to large & mid and mid caps; small caps are built mainly through the SIP.
+How we checked. | We parsed every folio and transaction from the consolidated account statement and computed XIRR and FIFO lot-level gains per fund. HDFC Large Cap units bought before 31-Jan-2018 use the
+grandfathered cost. Each fund's latest monthly portfolio disclosure gives its market-cap mix. Return, rank, AUM and cost data are as of 22–23 Sep 2026. Index valuations are current P/E vs | five-year median.
+Univest Wealth Portfolio Report — Sample Client — Page 3 | SEBI RIA INA000017639 · Private & confidential
+@@PAGE_BREAK 3
+UNIVEST WEALTH | FUND-WISE REVIEW
+F U N D - W I S E R E V I E W
+Every holding, and what we do with it
+FUND | VALUE | YOUR XIRR | 1Y | 3Y | 5Y | VERDICT | BASIS
+SBI Large Cap Fund | ₹17,29,977 | 10.7% | -1.8% | 9.2% | 9.0% | EXIT | Regular plan, average large cap (rank 13/27, 5Y 9.0%), and the single largest large-
+SBI · Large Cap · Regular | cap block at 23% of the book. Its gains are the ones worth paying tax to release.
+Mirae Asset Large & Midcap Fund | ₹16,74,438 | 14.7% | 3.0% | 12.6% | 10.7% | HOLD | Held by choice: ₹7.35L of long-term gain makes exiting expensive. Regular SIP
+Mirae Asset · Large & Mid Cap · Regular | stops, no fresh money. Revisit in a later year using the annual exemption.
+HDFC Large Cap Fund | ₹10,37,895 | 12.0% | -3.1% | 9.2% | 10.6% | TRIM ₹5.00L | Trim ₹5.00L now (oldest units), cancel the ₹57,000/month SWP, and exit the
+HDFC · Large Cap · Regular | remaining ~₹5.38L in April 2027 on a fresh ₹1.25L exemption. Pure large cap in a
+Regular plan.
+DSP Small Cap Fund | ₹5,69,399 | 29.8% | 18.7% | 18.7% | 18.4% | HOLD + SIP | Strong small cap, your XIRR 29.8%. Keep; SIP trimmed to ₹12,000 as small-cap
+DSP · Small Cap · Direct | money spreads across three managers.
+UTI Nifty 50 Index Fund | ₹5,62,206 | -0.6% | -6.6% | 6.9% | 6.9% | EXIT | Your XIRR −0.6%. Pure Nifty 50 exposure, and your largest SIP (₹27,500) is feeding
+UTI · Large cap index · Direct | the most over-weighted part of the book.
+Kotak Mid Cap Fund | ₹4,65,737 | 18.7% | 11.5% | 20.1% | 18.4% | HOLD | Good fund (3Y 20.1%, your XIRR 18.7%), but ₹67.6k Cr is very large for mid caps.
+Kotak · Mid Cap · Direct | Keep existing units; new mid-cap money goes to Edelweiss and Invesco.
+Parag Parikh Flexi Cap Fund | ₹4,17,074 | 1.7% | -4.1% | 13.0% | 11.4% | EXIT | 1Y −4.1%, your XIRR 1.7%. 66% large cap plus 27% overseas/cash drags an
+PPFAS · Flexi Cap · Direct | aggressive book. Tiny gain, so exiting costs little tax.
+ICICI Pru Nifty Alpha Low-Vol 30 ETF FoF | ₹3,70,301 | 3.2% | -1.2% | 10.2% | 8.0% | EXIT | A low-volatility strategy is built to lag in rallies, the opposite of an aggressive
+ICICI Pru · Factor FoF · Direct | mandate. 1Y −1.2%, 5Y 8.0%, your XIRR 3.2%.
+Nippon India Small Cap Fund | ₹3,36,523 | 9.7% | 8.7% | 16.0% | 19.1% | HOLD | Long-term record is strong (5Y 19.1%), but at ₹82.6k Cr it is the largest small-cap
+Nippon · Small Cap · Direct | fund and lumpsum is closed. Keep units; SIP moves to Bandhan and BOI.
+ICICI Pru Nifty Next 50 Index Fund | ₹2,46,455 | 10.6% | 9.7% | 17.0% | — | EXIT | Large-cap index. With pure large cap at 48% of the book, every large-cap index line
+ICICI Pru · Large cap index · Direct | is surplus.
+Invesco India Mid Cap Fund | ₹5,040 | — | 9.9% | 24.6% | 19.9% | ADD ₹4,00,000 | Ranked 2 of 25 mid caps (3Y 24.6%, 5Y 20.0%) with lean ₹15.9k Cr AUM. Only ₹5k
+Invesco · Mid Cap · Direct | today; becomes a second core mid cap.
+1Y/3Y/5Y are the funds' own annualised Direct-plan returns as of 22–23 Sep 2026. Your XIRR is the money-weighted return on your actual purchases; — where the holding is under 6 months old.
+Univest Wealth Portfolio Report — Sample Client — Page 4 | SEBI RIA INA000017639 · Private & confidential
+@@PAGE_BREAK 4
+UNIVEST WEALTH | WHAT WE SELL
+L U M P S U M A C T I O N P L A N · S E L L
+What we sell now: | ₹38,26,013
+FUND | FOLIO | ACTION | VALUE (₹) | LTCG (₹) | STCG (₹) | EXIT LOAD EST. (₹)
+SBI Large Cap Fund (Reg) | 70000001 | Full exit | ₹17,29,977 | 5,11,855 | −2,824 | 90
+UTI Nifty 50 Index Fund | 70000002 / 0 | Full exit | ₹5,62,206 | 8,471 | −11,237 | Nil
+Parag Parikh Flexi Cap Fund | 70000003 | Full exit | ₹4,17,074 | 10,956 | −2,861 | 4,720
+ICICI Pru Nifty Alpha Low-Vol 30 ETF FoF | 70000004 / 71 | Full exit | ₹3,70,301 | 0 | 10,319 (slab) | Nil
+ICICI Pru Nifty Next 50 Index Fund | 70000004 / 71 | Full exit | ₹2,46,455 | 15,190 | 5,277 | Nil
+HDFC Large Cap Fund (Reg) | 70000005 / 73 | Trim, oldest units | first | ₹5,00,000 | 2,80,984 | 0 | Nil
+Total to be redeemed now | ₹38,26,013 | 8,27,456 | −1,326 | ≈ 4,810
+Later tranche and holds
+Values at 23-Sep-2026 NAV; gains are FIFO lot-level. HDFC units bought before 31-Jan-2018 use the
+FUND | VALUE | LONG-TERM GAIN | WHEN | TAX THEN
+grandfathered cost (31-Jan-2018 NAV, approximately ₹486). The HDFC trim redeems the 2012–2014
+HDFC Large Cap Fund (Reg), remainder | ₹5,37,895 | 3,05,139 | Apr-2027 | ≈ ₹23,400 | units | first. The PPFAS exit load (≈ ₹4,720) applies to units under 2 years old; the fund's weak year
+makes exiting now worth that cost.
+Mirae Asset Large & Midcap Fund (Reg) | ₹16,74,438 | 7,35,471 | Held by choice | —
+Univest Wealth Portfolio Report — Sample Client — Page 5 | SEBI RIA INA000017639 · Private & confidential
+@@PAGE_BREAK 5
+UNIVEST WEALTH | TAX IMPAC T
+TA X I M PA C T · F Y 2 0 2 6 - 2 7
+Estimated tax now: about | ₹95,400
+CAPITAL-GAINS BUILD-UP | ₹ | Why phase it this way
+All-at-once would cost about ₹2.3L. | The three Regular funds hold roughly ₹18.3L of
+LTCG already booked this year by the HDFC SWP (02-Sep-2026) | 32,518
+long-term gains. Phasing adds a fresh ₹1.25L exemption each year and lets you
+LTCG on this rebalance: SBI, UTI Nifty 50, Next 50, PPFAS, HDFC trim | 8,27,456
+choose what to sell | first.
+Short-term: equity losses (SBI, UTI, PPFAS) net of Next 50 gain | −11,645 | SBI goes | first. | It is the most average fund (5Y 9.0%) and the biggest large-cap block,
+and its gain ratio (30%) is the lowest of the three. That means the least tax per rupee
+Short-term: Alpha Low-Vol FoF gain (slab rate) | 10,319
+freed.
+Equity short-term loss set off | against the slab-rate gain | first | −10,319 | HDFC is trimmed, not exited. | ₹5.00L comes out now. The remaining ₹5.38L carries
+about ₹3.05L of gain and exits in April 2027 for about ₹23,400.
+Remaining short-term loss set off | against LTCG | −1,326
+Losses are used, not wasted. | Short-term losses in SBI, UTI Nifty 50 and PPFAS | first
+Net LTCG, FY 2026-27 | 8,58,647
+absorb the slab-rate gain in the FoF, which is the highest-taxed pocket.
+Less: annual exemption (₹1.25L, once across all equity) | −1,25,000 | Direct funds with gains stay put. | DSP Small Cap, Kotak Mid Cap and Nippon Small
+Cap hold ₹2.5L+ of gains but are good funds in Direct plans, so there's no reason to
+Taxable LTCG → tax @ 12.5% + 4% cess | 95,374
+trigger tax on them.
+Estimated tax payable, FY 2026-27 | ₹95,374
+Caveats. | The ₹1.25L exemption is shared across all equity sold this | financial year. The SWP has already used
+₹32,518 of it. Surcharge applies above ₹50L of total income, capped at 15% on these gains. The Alpha Low-
+Vol FoF gain is conservatively treated at slab rate; it is fully covered by equity losses either way.
+Univest Wealth Portfolio Report — Sample Client — Page 6 | SEBI RIA INA000017639 · Private & confidential
+@@PAGE_BREAK 6
+UNIVEST WEALTH | WHAT WE BUY
+L U M P S U M A C T I O N P L A N · B U Y
+What we buy: | ₹38,26,013, reconciled to the rupee
+₹33,26,013.13 | ₹5,00,000.00 | ₹38,26,013.13
++ | =
+PROCEEDS FROM 5 EXITS | HDFC LARGE CAP TRIM | TOTAL BUY · NO FRESH MONEY
+FUND | AMOUNT | MODE | FUNDED BY | WHY
+Motilal Oswal Large & Midcap Fund | ₹8,00,000 | Lumpsum | SBI LC ₹8.00L | New core: large and mid caps with a real small-cap tilt (33/38/26). 3Y 22.7%, 5Y
+Motilal Oswal · Large & Mid Cap · Direct · new | 19.2%. Large caps are at their cheapest in | five years and mid caps near fair value,
+so lumpsum is | fine.
+Edelweiss Mid Cap Fund | ₹7,76,013.13 | Lumpsum | SBI LC ₹7.76L | Core mid cap: 3Y 21.7%, 5Y 18.5%, TER 0.40%, strong through the 2022 and 2025
+Edelweiss · Mid Cap · Direct · new | falls. Balancing line: absorbs NAV differences so sells equal buys.
+Invesco India Mid Cap Fund | ₹4,00,000 | Lumpsum | SBI LC ₹1.54L + UTI N50 ₹2.46L | Second mid-cap manager and already held: ranked 2 of 25, 3Y 24.6%, 5Y 20.0%,
+Invesco · Mid Cap · Direct · top-up | lean ₹15.9k Cr AUM.
+HDFC Banking & Financial Services Fund | ₹4,00,000 | Lumpsum | UTI N50 ₹3.16L + PPFAS ₹0.84L | Highest-conviction sector for the next 12–18 months: rate cycle, credit growth and
+HDFC · Sectoral: Banking · Direct · new | bank valuations below their long-run average.
+DSP India T.I.G.E.R. Fund | ₹3,50,000 | Lumpsum | PPFAS ₹3.33L + Alpha LV ₹0.17L | Capex and infrastructure, actively managed: 1Y 14.3%, 3Y 21.0%, 5Y 21.7%.
+DSP · Infrastructure · Direct · new
+Nippon India Multi Asset Allocation Fund | ₹3,50,000 | Lumpsum | Alpha LV ₹3.50L | Shock-absorber for a fully aggressive book: equity plus gold/silver ETFs and global
+Nippon · Multi Asset · Direct · new | equity, 3Y 19.4%, TER 0.28%. About 5% of the book.
+Mirae Asset Healthcare Fund | ₹2,50,000 | Lumpsum | Alpha LV ₹0.04L + Next 50 | Pharma and hospitals: 1Y 20.7%, 3Y 24.0%. Its earnings move differently from
+Mirae Asset · Sectoral: Healthcare · Direct · new | ₹2.46L | banks and capex, which diversifies the book.
+Bandhan Small Cap Fund | ₹2,50,000 | Lumpsum | HDFC LC trim ₹2.50L | Best risk-adjusted small cap (3Y 25.7%, TER 0.40%). Lumpsum kept small because
+Bandhan · Small Cap · Direct · new | small caps trade 20% above median; the SIP does the rest.
+Bank of India Small Cap Fund | ₹2,50,000 | Lumpsum | HDFC LC trim ₹2.50L | Top 1-year performer (1Y 27.3%, 3Y 23.0%), lean ₹3,307 Cr AUM. Small lumpsum;
+Bank of India · Small Cap · Direct · new | builds via SIP.
+Total buy | ₹38,26,013.13
+Lumpsum and SIP are open in all nine funds; recheck on execution day. Tax (≈ ₹95,400) is paid from savings at advance-tax time, not from these proceeds. Edelweiss Mid Cap is the balancing line.
+Univest Wealth Portfolio Report — Sample Client — Page 7 | SEBI RIA INA000017639 · Private & confidential
+@@PAGE_BREAK 7
+UNIVEST WEALTH | ALLOCATION
+A L L O C AT I O N B E F O R E V S A F T E R
+Market cap and category, before vs after
+CATEGORY | BEFORE | AFTER | CHANGE
+5% | 7%
+Large & Mid Cap | 22.6% | 33.4% | +10.8 pp
+14%
+33% | Mid Cap | 6.3% | 22.2% | +15.9 pp
+26%
+Small Cap | 12.2% | 19.0% | +6.7 pp
+Before | After
+20%
+61% | Sectoral / Thematic | 0.0% | 13.5% | +13.5 pp
+Large Cap / Index | 48.2% | 7.3% | -41.0 pp
+34%
+Multi Asset | 0.0% | 4.7% | +4.7 pp
+Flexi Cap | 5.6% | 0.0% | -5.6 pp
+Large cap | 61.1% | Large cap | 33.1%
+Low-Volatility FoF | 5.0% | 0.0% | -5.0 pp
+Mid cap | 20.3% | Mid cap | 33.7%
+Small cap | 13.9% | Small cap | 25.6%
+Pure large-cap/index funds go from 48.2% to 7.3% (the HDFC remainder, which exits Apr-2027),
+Others (overseas, cash, debt) | 4.7% | Gold & silver | 0.5% | under our 20% cap.
+Others (overseas, cash, debt) | 7.0%
+Look-through split: each fund's actual holdings from its latest monthly disclosure, weighted by Sample's rupees in it. Large, mid and
+small caps are shown separately; "Others" is overseas equity, cash and debt inside funds.
+Univest Wealth Portfolio Report — Sample Client — Page 8 | SEBI RIA INA000017639 · Private & confidential
+@@PAGE_BREAK 8
+UNIVEST WEALTH | SIP PLAN
+S I P P L A N · C U R R E N T V S N E W
+SIP: | ₹1.20L a month, pointed at growth
+FUND | CURRENT | NEW | CHANGE | New | ₹1,20,000 routing
+DSP Small Cap Fund | 16,500 | 12,000 | −4,500 | Edelweiss Mid Cap | ₹20,000
+Motilal Oswal Large & Midcap | ₹18,000
+Edelweiss Mid Cap Fund | — | 20,000 | New
+Bandhan Small Cap | ₹15,000
+Motilal Oswal Large & Midcap Fund | — | 18,000 | New
+Bank of India Small Cap | ₹12,000
+Bandhan Small Cap Fund | — | 15,000 | New
+DSP Small Cap | ₹12,000
+Bank of India Small Cap Fund | — | 12,000 | New
+Invesco India Mid Cap | ₹10,000
+Invesco India Mid Cap Fund | — | 10,000 | New | HDFC Banking & Financial Services | ₹10,000
+DSP India T.I.G.E.R. | ₹9,000
+HDFC Banking & Financial Services Fund | — | 10,000 | New
+Mirae Asset Healthcare | ₹7,000
+DSP India T.I.G.E.R. Fund | — | 9,000 | New
+Nippon India Multi Asset Allocation | ₹7,000
+Mirae Asset Healthcare Fund | — | 7,000 | New
+Nippon India Multi Asset Allocation Fund | — | 7,000 | New
+Why this mix. | Small caps get 32% of the SIP, spread across three managers (Bandhan, BOI, DSP);
+the SIP buys them in pieces while they're expensive. Mid caps get 25% (Edelweiss + Invesco) and
+UTI Nifty 50 Index Fund | 27,500 | — | Stop
+Motilal Oswal Large & Midcap 15%. Three sector funds take 22% and multi-asset 6%. No SIP goes
+SBI Large Cap Fund (Reg) | 21,000 | — | Stop | into pure large cap, PPFAS or an index fund.
+Parag Parikh Flexi Cap Fund | 16,500 | — | Stop
+Kotak Mid Cap Fund | 13,200 | — | Stop
+ICICI Pru Nifty Next 50 Index Fund | 11,000 | — | Stop
+Mirae Asset Large & Midcap Fund (Reg) | 10,000 | — | Stop
+Nippon India Small Cap Fund | 10,000 | — | Stop
+ICICI Pru Nifty Alpha Low-Vol 30 ETF FoF | 20,000* | — | Stop
+Total monthly SIP | 1,25,700 | 1,20,000 | −5,700
+*Last instalment 10-Aug-2026, not included in the current total. UTI Nifty 50 ran two SIPs (₹16,500 and ₹11,000).
+Univest Wealth Portfolio Report — Sample Client — Page 9 | SEBI RIA INA000017639 · Private & confidential
+@@PAGE_BREAK 9
+UNIVEST WEALTH | RETURNS PROJEC TION
+R E T U R N S P R O J E C T I O N
+Where this can go: Bear, Base, Moonshot and as-is
+What the rebuild is worth
+Moonshot 17.5% | Base 13.0% | Bear 8.0% | As-is 8.0% | Amount invested
+₹17.5 Cr
+In the base case the portfolio reaches | ₹2.35 Cr | in 5 years and | ₹5.32 Cr | in 10.
+₹15.0 Cr
+Leaving it as it is, with today's ₹1.26L SIP, reaches ₹3.87 Cr in 10 years, about
+₹12.5 Cr | ₹1.46 Cr less. The difference comes from moving large-cap, index and
+Regular-plan money into stronger mid, small and sector funds.
+₹10.0 Cr
+₹7.5 Cr
+₹5.0 Cr
+₹2.5 Cr
+₹0.0 Cr
+Now | 1Y | 3Y | 5Y | 10Y | 15Y
+SCENARIO | 1Y | 3Y | 5Y | 10Y | 15Y
+Moonshot (17.5%) | ₹1.03 Cr | ₹1.75 Cr | ₹2.76 Cr | ₹7.28 Cr | ₹17.41 Cr
+Base (13.0%) | ₹99.03L | ₹1.59 Cr | ₹2.35 Cr | ₹5.32 Cr | ₹10.80 Cr
+Bear (8.0%) | ₹95.00L | ₹1.42 Cr | ₹1.96 Cr | ₹3.76 Cr | ₹6.40 Cr
+As-is (8.0%) | ₹95.71L | ₹1.44 Cr | ₹2.01 Cr | ₹3.87 Cr | ₹6.60 Cr
+Amount invested (₹1.2L SIP) | ₹88.55L | ₹1.17 Cr | ₹1.46 Cr | ₹2.18 Cr | ₹2.90 Cr
+How these are built. | All scenarios start from ₹74,15,044. The rebuilt plan assumes a | flat ₹1,20,000 SIP (no step-up); as-is assumes today's ₹1,25,700. Base (13.0%) is the value-weighted 5-year CAGR of the
+new book's funds cut by 3 points for caution. Bear is 5 points lower; Moonshot is 4.5 points higher. As-is (8.0%) uses the same method on today's book, less 0.8% a year of Regular-plan cost. Tax paid on the
+rebalance is not deducted. | These are illustrations, not guarantees.
+Univest Wealth Portfolio Report — Sample Client — Page 10 | SEBI RIA INA000017639 · Private & confidential
+@@PAGE_BREAK 10
+UNIVEST WEALTH | DEPLOYMENT PLAN
+I M M E D I AT E D E P L O Y M E N T P L A N
+What happens, day by day
+Day 1 · Thu 25-Sep | Cancel the SWP and old SIPs
+Cancel the HDFC Large Cap SWP before its October instalment. Cancel SIPs in UTI Nifty 50 (both), SBI Large Cap, PPFAS, ICICI Next 50, ICICI Alpha Low-Vol, Mirae
+Large & Midcap, Kotak Mid Cap and Nippon Small Cap. Change DSP Small Cap from ₹16,500 to ₹12,000.
+Day 2–3 · Fri 26 – Mon 29-Sep | Redeem the tranche
+Redeem SBI Large Cap, UTI Nifty 50, PPFAS, Alpha Low-Vol FoF and ICICI Next 50 in full, plus ₹5,00,000 from HDFC Large Cap (oldest units go out | first
+automatically). Proceeds reach the bank in 1–3 working days.
+Day 4–6 · by Fri 3-Oct | Deploy the lumpsum
+Invest ₹38,26,013 across the nine funds on the Buy page, the same day, with Edelweiss Mid Cap last. Nothing is parked in a liquid fund.
+By 10-Oct | Register the new SIPs
+Register ₹1,20,000/month across ten Direct funds, with | first instalments in October.
+Dec-2026 / Mar-2027 | Advance tax
+Set aside about ₹95,400 for capital-gains tax. Pay it in the December and March advance-tax instalments to avoid interest.
+If markets fall | Contingency
+If the Nifty Smallcap 250 falls 10% or more, add a one-off | ₹1L each to Bandhan and BOI Small Cap from surplus savings. Keep SIPs running regardless.
+Apr-2027 → Sep-2027 | Next tranche and review
+After 1-Apr-2027, redeem the rest of HDFC Large Cap (≈ ₹5.38L) into Motilal Oswal Large & Midcap and Edelweiss Mid Cap. Review Mirae Large & Midcap and the
+fund line-up in Mar-2027 and Sep-2027 with a fresh statement.
+Univest Wealth Portfolio Report — Sample Client — Page 11 | SEBI RIA INA000017639 · Private & confidential
+@@PAGE_BREAK 11
+UNIVEST WEALTH | NEW PORTFOLIO
+N E W P O R T F O L I O
+The new portfolio: 14 schemes, | ₹74.15L
+FUND | CATEGORY | STATUS | VALUE | WEIGHT | FUND | CATEGORY | STATUS | VALUE | WEIGHT
+Mirae Asset Large & Midcap | Large & Mid Cap | Hold · no fresh money | ₹16,74,438 | 22.6% | HDFC Banking & Financial Services | Sectoral / | New + SIP | ₹4,00,000 | 5.4%
+Fund | Fund | Thematic
+Motilal Oswal Large & Midcap | Large & Mid Cap | New + SIP | ₹8,00,000 | 10.8% | DSP India T.I.G.E.R. Fund | Sectoral / | New + SIP | ₹3,50,000 | 4.7%
+Fund | Thematic
+Edelweiss Mid Cap Fund | Mid Cap | New + SIP | ₹7,76,013 | 10.5% | Nippon India Multi Asset Allocation | Multi Asset | New + SIP | ₹3,50,000 | 4.7%
+Fund
+DSP Small Cap Fund | Small Cap | Hold + SIP | ₹5,69,399 | 7.7%
+Nippon India Small Cap Fund | Small Cap | Hold · SIP | ₹3,36,523 | 4.5%
+HDFC Large Cap Fund | Large Cap / | Trimmed · exit Apr- | ₹5,37,895 | 7.3% | stopped
+Index | 2027
+Mirae Asset Healthcare Fund | Sectoral / | New + SIP | ₹2,50,000 | 3.4%
+Kotak Mid Cap Fund | Mid Cap | Hold · SIP stopped | ₹4,65,737 | 6.3% | Thematic
+Invesco India Mid Cap Fund | Mid Cap | Top-up + SIP | ₹4,05,040 | 5.5% | Bandhan Small Cap Fund | Small Cap | New + SIP | ₹2,50,000 | 3.4%
+Bank of India Small Cap Fund | Small Cap | New + SIP | ₹2,50,000 | 3.4%
+Total · 14 schemes | ₹74,15,044 | 100.0%
+What changes. | Pure large cap falls from 48% to 7% and Regular plans from 60% to 30%, falling to 23% after April 2027. The largest fund house is Mirae at 26.0%, within our 35% cap. Every holding has at least
+a 3-year record. Values are at 23-Sep-2026 NAV.
+Univest Wealth Portfolio Report — Sample Client — Page 12 | SEBI RIA INA000017639 · Private & confidential
+@@PAGE_BREAK 12

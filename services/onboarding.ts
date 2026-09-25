@@ -2,7 +2,7 @@ import type { Actor, Tx } from "@/lib/db/tx";
 import { AppError } from "@/lib/errors";
 import { advisoryReportResultSchema } from "@/lib/integrations/contracts";
 import { buildPlanFromReport, type PlanHolding } from "@/lib/domain/report-plan";
-import type { CasParseOutput } from "@/lib/parsers/cas";
+import { toCasParseResult, type CasParseOutput } from "@/lib/parsers/cas";
 import { sameInvestor, type AdvisoryReportParse } from "@/lib/parsers/advisory-report";
 import { createClient } from "@/services/clients";
 import { findClientByPan, ingestParsedCas, isDuplicateCas, type StoredFile } from "@/services/cas-intake";
@@ -37,6 +37,33 @@ export function checkDocumentsBelongTogether(cas: CasParseOutput, report: Adviso
   return { investorName: cas.investor.name, reportName: report.clientName, pan: cas.investor.pan, namesMatch, existingClient: null, problem };
 }
 
+/**
+ * Everything that must hold before anything is saved: same investor, and every
+ * report line tied to the CAS (see buildPlanFromReport). Pure.
+ */
+export function onboardingProblems(cas: CasParseOutput, report: AdvisoryReportParse): string[] {
+  const check = checkDocumentsBelongTogether(cas, report);
+  if (check.problem) return [check.problem];
+  let holdings: PlanHolding[];
+  try {
+    holdings = toCasParseResult(cas, "00000000-0000-0000-0000-000000000000").holdings.map((h) => ({
+      scheme_name: h.scheme_name, isin: h.isin ?? null, folio_number: h.folio_number ?? null,
+      current_value: h.current_value, plan_type: h.plan_type ?? null,
+    }));
+  } catch (e) {
+    return [(e as Error).message];
+  }
+  return buildPlanFromReport(report, holdings, cas.valuationDate).problems;
+}
+
+export function problemsMessage(problems: string[]): string {
+  return [
+    `The report and the CAS do not fully reconcile, so nothing was saved. Please check ${problems.length === 1 ? "this point" : `these ${problems.length} points`}:`,
+    ...problems.slice(0, 12).map((p, i) => `${i + 1}. ${p}`),
+    problems.length > 12 ? `…and ${problems.length - 12} more.` : "",
+  ].filter(Boolean).join("\n");
+}
+
 export interface OnboardResult {
   clientId: string;
   clientCode: string;
@@ -53,8 +80,9 @@ export async function ensureClientFromDocuments(
   actor: Actor,
   args: { cas: CasParseOutput; report: AdvisoryReportParse; advisorId?: string | null; phone?: string | null },
 ): Promise<{ id: string; client_code: string; full_name: string; created: boolean }> {
-  const check = checkDocumentsBelongTogether(args.cas, args.report);
-  if (check.problem) throw new AppError(check.problem);
+  // Nothing is created unless every line of the report ties to the CAS.
+  const problems = onboardingProblems(args.cas, args.report);
+  if (problems.length) throw new AppError(problemsMessage(problems));
   const existing = await findClientByPan(tx, args.cas.investor.pan);
   if (existing) return { id: existing.id, client_code: existing.client_code, full_name: existing.full_name, created: false };
   const name = args.cas.investor.name ?? args.report.clientName ?? "Unknown";
@@ -98,7 +126,14 @@ export async function onboardFromDocuments(
     snapshotId = cas.snapshotId;
     if (cas.snapshotStatus === "PENDING_REVIEW") warnings.push(`The CAS snapshot needs a check before it counts: ${cas.warnings.join(" ")}`);
   } else {
-    warnings.push("This CAS was already uploaded earlier; the plan uses the latest stored snapshot.");
+    // Same file uploaded before: use the snapshot made from that very file.
+    const prior = await tx<{ id: string; review_status: string }[]>`
+      select s.id, s.review_status from public.portfolio_snapshots s
+      join public.cas_documents d on d.id = s.cas_document_id
+      where d.client_id = ${client.id} and d.file_sha256 = ${args.casFile.sha256} and s.review_status <> 'REJECTED'
+      order by s.created_at desc limit 1`;
+    snapshotId = prior[0]?.id ?? null;
+    if (prior[0]?.review_status === "PENDING_REVIEW") warnings.push("This CAS was uploaded earlier and its snapshot still needs a check before it counts.");
   }
 
   // 3) Report document.
@@ -115,17 +150,20 @@ export async function onboardFromDocuments(
   });
 
   // 4) Plan items, tied to the holdings of the latest snapshot.
-  const holdings = await tx<PlanHolding[]>`
-    select h.scheme_name, h.isin, h.folio_number, h.current_value::float8 as current_value, h.plan_type
+  const holdings = await tx<(PlanHolding & { security_id: string | null })[]>`
+    select h.scheme_name, h.isin, h.folio_number, h.current_value::float8 as current_value, h.plan_type, h.security_id
     from public.portfolio_holdings h
     where h.snapshot_id = coalesce(${snapshotId}::uuid,
       (select snapshot_id from public.v_latest_snapshot where client_id = ${client.id}))
     order by h.current_value desc`;
-  const draft = buildPlanFromReport(args.report, holdings);
+  const draft = buildPlanFromReport(args.report, holdings, args.cas.valuationDate);
+  if (draft.problems.length) throw new AppError(problemsMessage(draft.problems));
 
   // Funds to buy are usually new to the client: find them, or create a
   // name-only entry that picks up its ISIN from the first CAS that holds it.
   const securityIds: Record<string, string> = {};
+  // Lines tied to a CAS holding use exactly that holding's security.
+  for (const h of holdings) if (h.security_id) securityIds[h.scheme_name.toLowerCase()] = h.security_id;
   const pool = await tx<SecurityCandidate[]>`
     select id, scheme_name, isin, plan_type, aliases from public.security_master where is_active`;
   for (const it of [...draft.items.filter((i) => i.action === "BUY"), ...draft.sip_items.filter((s) => !s.isin)]) {
