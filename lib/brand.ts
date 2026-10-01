@@ -17,6 +17,7 @@ export const PAGES = {
   onboard: "Onboard Client",
   documentCheck: "Document Check",
   callLedger: "Call Ledger",
+  bulkCalls: "Call Many Clients",
   pendingExecutions: "Pending Executions",
   bulkCas: "Bulk CAS Upload",
   casMatching: "CAS Matching",

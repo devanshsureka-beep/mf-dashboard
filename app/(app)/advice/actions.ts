@@ -7,13 +7,15 @@ import { optStr, reqNum, reqStr, runAction, str, type ActionResult } from "@/lib
 import { AppError } from "@/lib/errors";
 import { fromISTDateTimeLocal } from "@/lib/format";
 import { actionTx, ADVISORY_ROLES } from "@/lib/server";
+import { resolveFundRef, searchFunds, type FundOption } from "@/services/fund-search";
 import { closeAdvice, issueAdvice, reviseAdvice } from "@/services/advice";
 import { addNote } from "@/services/notes";
 import { CHANNELS, type Channel } from "@/types/domain";
 
 const itemSchema = z.object({
   plan_item_id: z.uuid().nullable().optional(),
-  security_id: z.uuid({ message: "Choose a security for every call" }),
+  // A known fund (uuid / "sec:<uuid>") or an AMFI scheme picked by ISIN ("isin:<ISIN>").
+  security_id: z.string().regex(/^(sec:)?[0-9a-f-]{36}$|^isin:[A-Z]{2}[A-Z0-9]{9}[0-9]$/i, "Choose a fund for every call"),
   action: z.enum(["BUY", "SELL", "SWITCH"]),
   quantity_basis: z.enum(["AMOUNT", "UNITS"]),
   advised_amount: z.coerce.number().positive("Every call needs a rupee amount (estimate for unit calls)"),
@@ -45,14 +47,18 @@ export async function issueAdviceAction(clientId: string, _p: ActionResult | nul
     }
     const parsed = z.array(itemSchema).min(1, "Add at least one call").safeParse(raw);
     if (!parsed.success) throw new AppError(parsed.error.issues[0].message);
-    const out = await actionTx((tx, actor) => issueAdvice(tx, actor, {
-      clientId,
-      advisorId: optStr(fd, "advisor_id"),
-      communicatedAt: when(fd),
-      channel: channel(fd),
-      notes: optStr(fd, "notes"),
-      items: parsed.data,
-    }), { roles: ADVISORY_ROLES });
+    const out = await actionTx(async (tx, actor) => {
+      const items = [];
+      for (const i of parsed.data) items.push({ ...i, security_id: await resolveFundRef(tx, i.security_id, actor.id) });
+      return issueAdvice(tx, actor, {
+        clientId,
+        advisorId: optStr(fd, "advisor_id"),
+        communicatedAt: when(fd),
+        channel: channel(fd),
+        notes: optStr(fd, "notes"),
+        items,
+      });
+    }, { roles: ADVISORY_ROLES });
     batchId = out.batchId;
   });
   if (!res.ok) return res;
@@ -100,4 +106,10 @@ export async function followUpNoteAction(clientId: string, itemId: string, _p: A
     revalidatePath(`/advice/items/${itemId}`);
     return "Follow-up note added.";
   });
+}
+
+/** Fund search for the call forms (every AMFI scheme + funds already in use). */
+export async function searchFundsAction(q: string): Promise<FundOption[]> {
+  if (typeof q !== "string" || q.trim().length < 2) return [];
+  return actionTx((tx) => searchFunds(tx, q.slice(0, 80)));
 }

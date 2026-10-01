@@ -66,6 +66,13 @@ export interface ClientSummary {
   pending_total: number;
   off_plan_pending: number;
   unadvised_count: number;
+  /** Latest CAS units x latest daily NAV (falls back to the CAS value). */
+  live_portfolio_value: number | null;
+  live_nav_date: string | null;
+  /** Executed sells / buys and the money left with the client (sells − buys). */
+  sell_proceeds: number;
+  buy_spent: number;
+  money_left: number;
 }
 
 export interface TransitionNumbers {
@@ -396,6 +403,8 @@ export interface CommandCentreMetrics {
   day: string;
   total_clients: number;
   total_portfolio_value: number;
+  /** Sum of money left with clients after executed calls (sells − buys, positive only). */
+  money_left_total: number;
   active_plans: number;
   calls_issued_today: number;
   advice_items_today: number;

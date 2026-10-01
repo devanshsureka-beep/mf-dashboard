@@ -38,7 +38,12 @@ export default async function AdviceLedgerPage(props: PageProps<"/advice">) {
       <PageHeader
         title="Call ledger"
         subtitle="Every call actually communicated to a client, with exact timestamps. Revised and cancelled calls stay visible."
-        actions={actor.role !== "OPERATIONS" ? <LinkButton href="/advice/new">Issue call</LinkButton> : null}
+        actions={actor.role !== "OPERATIONS" ? (
+          <>
+            <LinkButton href="/advice/bulk" variant="outline">Call many clients</LinkButton>
+            <LinkButton href="/advice/new">Issue call</LinkButton>
+          </>
+        ) : null}
       />
       {one("issued") ? <p className="mb-3 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800">Calls recorded. They now appear below and in Pending Executions.</p> : null}
 

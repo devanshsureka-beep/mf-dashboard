@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import {
   LayoutDashboard, Users, PhoneCall, Hourglass, FileSearch, ScrollText, ShieldCheck, LogOut, UserPlus, FileStack, ClipboardCheck,
-  Menu, X,
+  Menu, X, Megaphone,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PAGES, ROLE_LABELS } from "@/lib/brand";
@@ -20,6 +20,7 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
     items: [
       { href: "/", label: PAGES.overview, icon: LayoutDashboard, exact: true },
       { href: "/advice", label: PAGES.callLedger, icon: PhoneCall },
+      { href: "/advice/bulk", label: PAGES.bulkCalls, icon: Megaphone, roles: ["ADMIN", "ADVISOR"] },
       { href: "/executions/pending", label: PAGES.pendingExecutions, icon: Hourglass },
     ],
   },
@@ -27,7 +28,7 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
     title: "Clients",
     items: [
       { href: "/clients", label: PAGES.clients, icon: Users },
-      { href: "/onboard", label: PAGES.onboard, icon: UserPlus, roles: ["ADMIN", "ADVISOR"], exact: true },
+      { href: "/onboard", label: PAGES.onboard, icon: UserPlus, exact: true },
       { href: "/onboard/check", label: PAGES.documentCheck, icon: ClipboardCheck },
     ],
   },
@@ -60,6 +61,11 @@ export function Sidebar({ name, role, signOut }: { name: string; role: AppRole; 
   const setOpen = (next: boolean | ((o: boolean) => boolean)) =>
     setOpenOn((typeof next === "function" ? next(open) : next) ? path : null);
 
+  // The most specific menu entry wins (/advice/bulk over /advice).
+  const activeHref = SECTIONS.flatMap((x) => x.items)
+    .filter((n) => (n.exact ? path === n.href : path === n.href || path.startsWith(`${n.href}/`)))
+    .sort((a, b) => b.href.length - a.href.length)[0]?.href;
+
   const nav = (
     <nav className="flex-1 space-y-5 overflow-y-auto px-3 py-4">
       {SECTIONS.map((s) => {
@@ -70,7 +76,7 @@ export function Sidebar({ name, role, signOut }: { name: string; role: AppRole; 
             <div className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-sidebar-muted">{s.title}</div>
             <div className="space-y-0.5">
               {items.map((n) => {
-                const active = n.exact ? path === n.href : path === n.href || path.startsWith(`${n.href}/`);
+                const active = n.href === activeHref;
                 const Icon = n.icon;
                 return (
                   <Link

@@ -6,6 +6,8 @@ import { Field, Input, Select, Textarea } from "@/components/ui/form";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { formatINR, formatINRCompact, toISTDateTimeLocal } from "@/lib/format";
 import type { ActionResult } from "@/lib/actions";
+import { FundPicker, type PickedFund } from "@/components/app/fund-picker";
+import type { FundOption } from "@/services/fund-search";
 import { CHANNELS } from "@/types/domain";
 
 export interface AdvisablePlanItem {
@@ -20,20 +22,19 @@ export interface AdvisablePlanItem {
   yet_to_advise_amount: number;
 }
 export interface HoldingLite { security_id: string; scheme_name: string; units: number; nav: number | null; folio: string | null }
-export interface SecurityLite { id: string; scheme_name: string }
 
 interface PlanRow { include: boolean; basis: "AMOUNT" | "UNITS"; amount: string; units: string; price: string }
-interface OffRow { key: number; security_id: string; action: "BUY" | "SELL" | "SWITCH"; basis: "AMOUNT" | "UNITS"; amount: string; units: string; price: string }
+interface OffRow { key: number; fund: PickedFund | null; action: "BUY" | "SELL" | "SWITCH"; basis: "AMOUNT" | "UNITS"; amount: string; units: string; price: string }
 
 type Action = (prev: ActionResult | null, fd: FormData) => Promise<ActionResult>;
 
 export function IssueAdviceForm({
-  action, planItems, holdings, securities, side, preselect, advisors,
+  action, planItems, holdings, searchFunds, side, preselect, advisors,
 }: {
   action: Action;
   planItems: AdvisablePlanItem[];
   holdings: HoldingLite[];
-  securities: SecurityLite[];
+  searchFunds: (q: string) => Promise<FundOption[]>;
   side: "SELL" | "BUY" | "ALL";
   preselect?: string | null;
   advisors?: { id: string; full_name: string }[];
@@ -82,7 +83,7 @@ export function IssueAdviceForm({
       }),
     ...off.map((o) => ({
       plan_item_id: null,
-      security_id: o.security_id || null,
+      security_id: o.fund?.value ?? null,
       action: o.action,
       quantity_basis: o.basis,
       advised_amount: Math.round(estimate(o.basis, o.amount, o.units, o.price) * 100) / 100,
@@ -160,18 +161,21 @@ export function IssueAdviceForm({
       <div className="rounded-lg border border-border">
         <div className="flex items-center justify-between border-b border-border bg-gray-50 px-3 py-2 text-sm font-medium">
           Off-plan calls
-          <Button type="button" size="sm" variant="outline" onClick={() => setOff((o) => [...o, { key: Date.now(), security_id: "", action: side === "BUY" ? "BUY" : "SELL", basis: "AMOUNT", amount: "", units: "", price: "" }])}>+ Add off-plan call</Button>
+          <Button type="button" size="sm" variant="outline" onClick={() => setOff((o) => [...o, { key: Date.now(), fund: null, action: side === "BUY" ? "BUY" : "SELL", basis: "AMOUNT", amount: "", units: "", price: "" }])}>+ Add off-plan call</Button>
         </div>
-        {off.length === 0 ? <p className="p-3 text-xs text-muted">Only for calls outside the approved plan. They are tracked, but not counted against plan targets.</p> : (
+        {off.length === 0 ? <p className="p-3 text-xs text-muted">For any fund outside the approved plan: search all mutual funds by name, AMC or ISIN. Tracked like every call, but not counted against plan targets.</p> : (
           <div className="space-y-2 p-3">
             {off.map((o, idx) => {
               const upd = (patch: Partial<OffRow>) => setOff((all) => all.map((x, i) => (i === idx ? { ...x, ...patch } : x)));
               return (
                 <div key={o.key} className="flex flex-wrap items-center gap-2">
-                  <Select className="h-8 w-96 text-xs" value={o.security_id} onChange={(e) => upd({ security_id: e.target.value, price: navOf.get(e.target.value) ? String(navOf.get(e.target.value)) : o.price })}>
-                    <option value="">Choose security…</option>
-                    {securities.map((s) => <option key={s.id} value={s.id}>{s.scheme_name}</option>)}
-                  </Select>
+                  <FundPicker
+                    className="w-96"
+                    search={searchFunds}
+                    value={o.fund}
+                    onChange={(f) => upd({ fund: f, price: f?.nav ? String(f.nav) : o.price })}
+                    suggestions={holdings.map((h) => ({ value: `sec:${h.security_id}`, scheme_name: h.scheme_name, nav: h.nav, note: `holds ${h.units.toFixed(3)} units${h.folio ? ` · folio ${h.folio}` : ""}` }))}
+                  />
                   <Select className="h-8 w-24 text-xs" value={o.action} onChange={(e) => upd({ action: e.target.value as OffRow["action"] })}><option>SELL</option><option>BUY</option><option>SWITCH</option></Select>
                   <Select className="h-8 w-28 text-xs" value={o.basis} onChange={(e) => upd({ basis: e.target.value as OffRow["basis"] })}><option value="AMOUNT">Amount</option><option value="UNITS">Units</option></Select>
                   <Input className="h-8 w-28 text-xs" placeholder="Amount ₹" value={o.amount} onChange={(e) => upd({ amount: e.target.value })} />

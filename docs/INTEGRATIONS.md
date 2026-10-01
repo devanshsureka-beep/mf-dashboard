@@ -187,3 +187,32 @@ curl -X POST "$APP/api/integrations/cas-parse-result" \
 ```
 
 Example files: [`docs/examples/`](examples/).
+
+## 6. Daily NAVs — `POST /api/integrations/nav-update`
+
+Every evening n8n downloads AMFI's daily NAV file and posts it unchanged. The app stores every scheme (one row per ISIN, in
+`mf_schemes`) with its latest NAV. Client portfolios are then valued as **units from the latest CAS × latest NAV**
+(`v_holding_live`); the onboarding CAS keeps its own values for ever.
+
+- **Why AMFI and not the Univest MF API:** the AMFI file is one download, is keyed by ISIN (the same key the CAS uses) and
+  covers every plan, **including Regular plans**, which many clients still hold. The Univest fund list covers Direct–Growth
+  plans only and has no ISIN.
+- **Schedule:** 18:00 IST, and again at 23:30 IST. AMFI publishes some funds' NAVs late in the evening. Re-sending is
+  harmless: a NAV only ever moves forward in time.
+- **Request:** `Authorization: Bearer <INTEGRATION_API_KEY>`, `Content-Type: text/plain`, body = the file
+  `https://www.amfiindia.com/spages/NAVAll.txt` as downloaded (about 1.5 MB). Optional `?source=<label>`.
+- **Response:** `{ ok, runId, navDate, schemes, newSchemes, navsUpdated, holdingsPriced, holdingsUnpriced, skippedLines }`.
+  `holdingsUnpriced` counts holdings still valued at their CAS NAV (no ISIN, or no NAV in the file).
+  A file with fewer than 100 schemes is rejected (422), so a broken download never wipes anything.
+- Each delivery is logged in `nav_feed_runs`; the client Portfolio tab shows the NAV date and when the feed last arrived.
+
+n8n workflow (3 nodes): **Schedule Trigger** (18:00 and 23:30, timezone Asia/Kolkata) → **HTTP Request** GET
+`https://www.amfiindia.com/spages/NAVAll.txt` (Response format: Text) → **HTTP Request** POST
+`<APP>/api/integrations/nav-update?source=n8n:amfi`, Authentication: Header Auth credential
+(`Authorization: Bearer <INTEGRATION_API_KEY>`), Body: Raw, content type `text/plain`, body `{{ $json.data }}`.
+
+```bash
+curl -s https://www.amfiindia.com/spages/NAVAll.txt -o NAVAll.txt
+curl -X POST "$APP/api/integrations/nav-update?source=manual" \
+  -H "authorization: Bearer $INTEGRATION_API_KEY" -H "content-type: text/plain" --data-binary @NAVAll.txt
+```

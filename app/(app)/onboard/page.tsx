@@ -3,7 +3,7 @@ import { PageHeader } from "@/components/app/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Field, Input, Select } from "@/components/ui/form";
 import { casPasswordTemplate } from "@/lib/cas/password";
-import { ADVISORY_ROLES, pageData } from "@/lib/server";
+import { ALL_ROLES, pageData } from "@/lib/server";
 import { listAdvisors } from "@/services/clients";
 import { onboardAction } from "./actions";
 
@@ -13,7 +13,7 @@ export const maxDuration = 120;
 export const metadata = { title: "Onboard client" };
 
 export default async function OnboardPage() {
-  const { advisors, actor } = await pageData(async (tx) => ({ advisors: await listAdvisors(tx) }), ADVISORY_ROLES);
+  const { advisors, actor } = await pageData(async (tx) => ({ advisors: await listAdvisors(tx) }), ALL_ROLES);
   const templateSet = casPasswordTemplate() !== null;
   return (
     <>
@@ -43,12 +43,19 @@ export default async function OnboardPage() {
                     {advisors.map((a) => <option key={a.id} value={a.id}>{a.full_name} ({a.role.toLowerCase()})</option>)}
                   </Select>
                 </Field>
+              ) : actor.role === "OPERATIONS" ? (
+                <Field label="Primary advisor *" hint="Used for a new client. The advisor reviews and approves the draft plan.">
+                  <Select name="advisor_id" defaultValue="" required>
+                    <option value="" disabled>Choose advisor…</option>
+                    {advisors.filter((a) => a.role !== "OPERATIONS").map((a) => <option key={a.id} value={a.id}>{a.full_name} ({a.role.toLowerCase()})</option>)}
+                  </Select>
+                </Field>
               ) : null}
             </div>
             <div className="rounded-md bg-gray-50 p-3 text-xs text-muted">
               <p>The client is identified by the PAN in the CAS. The name in the report must match the CAS.</p>
               <p className="mt-1">New client → created with contact details, risk profile and goal from the documents. Existing client → the report becomes a new draft plan; approving it replaces the current plan (the old one stays in history).</p>
-              <p className="mt-1">The plan opens as a DRAFT: check it, then approve.</p>
+              <p className="mt-1">The plan opens as a DRAFT: check it, then approve{actor.role === "OPERATIONS" ? " (an advisor or admin approves)" : ""}.</p>
             </div>
             <SubmitButton>Read documents &amp; create plan</SubmitButton>
           </ActionForm>

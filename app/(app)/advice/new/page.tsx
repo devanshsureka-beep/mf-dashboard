@@ -9,8 +9,7 @@ import { ADVISORY_ROLES, pageData } from "@/lib/server";
 import { getClientSummary, listAdvisors, listClientSummaries } from "@/services/clients";
 import { getAdvisablePlanItems } from "@/services/plans";
 import { getHoldings } from "@/services/portfolio";
-import { listAllSecurities } from "@/services/securities";
-import { issueAdviceAction } from "../actions";
+import { issueAdviceAction, searchFundsAction } from "../actions";
 
 export const metadata = { title: "Issue call" };
 
@@ -43,13 +42,12 @@ export default async function NewAdvicePage(props: PageProps<"/advice/new">) {
     );
   }
 
-  const { c, items, holdings, securities, advisors, actor } = await pageData(async (tx) => {
+  const { c, items, holdings, advisors, actor } = await pageData(async (tx) => {
     const c = await getClientSummary(tx, clientId);
     return {
       c,
       items: await getAdvisablePlanItems(tx, clientId),
       holdings: c.latest_snapshot_id ? await getHoldings(tx, c.latest_snapshot_id) : [],
-      securities: await listAllSecurities(tx),
       advisors: await listAdvisors(tx),
     };
   }, ADVISORY_ROLES);
@@ -77,7 +75,7 @@ export default async function NewAdvicePage(props: PageProps<"/advice/new">) {
           target_amount: i.target_amount, advised_amount: i.advised_amount, pending_amount: i.pending_amount, yet_to_advise_amount: i.yet_to_advise_amount,
         }))}
         holdings={holdings.filter((h) => h.security_id).map((h) => ({ security_id: h.security_id!, scheme_name: h.scheme_name, units: h.units, nav: h.latest_nav, folio: h.folio_number }))}
-        securities={securities.map((s) => ({ id: s.id, scheme_name: s.scheme_name }))}
+        searchFunds={searchFundsAction}
         advisors={actor.role === "ADMIN" ? advisors.filter((a) => a.role === "ADVISOR") : undefined}
       />
     </>

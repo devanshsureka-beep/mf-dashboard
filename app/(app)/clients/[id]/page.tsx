@@ -69,10 +69,13 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
             </div>
           </div>
           <div className="shrink-0 rounded-lg bg-slate-50 px-4 py-3 ring-1 ring-border md:text-right">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Portfolio value</div>
-            <div className="text-2xl font-semibold tracking-tight"><Money value={c.current_portfolio_value} /></div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Value today</div>
+            <div className="text-2xl font-semibold tracking-tight"><Money value={c.live_portfolio_value} /></div>
             <div className="text-xs text-muted">
-              At onboarding <Money value={c.initial_portfolio_value} />{c.baseline_date ? ` (${formatDate(c.baseline_date)})` : ""}
+              {c.live_nav_date ? `NAV ${formatDate(c.live_nav_date)}` : "CAS NAV"} · at onboarding <Money value={c.initial_portfolio_value} />
+            </div>
+            <div className={c.money_left > 0 ? "mt-1 text-xs font-medium text-amber-700" : "mt-1 text-xs text-muted"}>
+              Money left from calls <Money value={c.money_left} />
             </div>
           </div>
         </div>

@@ -227,22 +227,25 @@ DB integration tests (`tests/db`) need `TEST_DATABASE_URL` (e.g. in `.env.test.l
 - AI drafts that cannot be activated
 - reconciliation confirm without double counting, and unadvised activity
 
-## Test site vs live site
+## Local and live
 
-| | Test site (staging) | Live site (production) |
+Two setups: **Local** (your computer, test database) to try changes, and **Live** (Vercel, branch `main`, real clients) for the team.
+Nothing goes live until it is merged into `main`. Step-by-step guide: [`docs/LOCAL_AND_LIVE.md`](docs/LOCAL_AND_LIVE.md).
+
+| | Local | Live |
 |---|---|---|
-| Git branch | working branch (`claude/…`) | `main` |
-| Vercel environment | Preview | Production |
+| Git branch | any (e.g. `claude/…`) | `main` |
+| Runs on | `npm run dev` on your computer | Vercel Production |
 | Supabase project | `mn-advisory-staging` | `mn-advisory` |
 | Banner | amber "TEST SITE" (env `APP_ENV=staging`) | none |
 
-1. Every change is pushed to the working branch and appears on the test site's preview URL.
-2. Test it there with real PDFs and throw-away clients. Nothing touches live data.
-3. To go live, merge the working branch into `main` (a pull request on GitHub). Vercel deploys `main` to the live site. To undo a bad release, use Vercel → Deployments → the previous one → "Instant Rollback".
-
-Database changes follow the same path: a new migration is applied to the staging project first and to production when the change goes live.
+Database changes follow the same path: a new migration is applied to the staging project first and to production just before the merge into `main`.
 
 **Document Check** (`/onboard/check`) runs every onboarding check on a CAS + report and shows the exact plan that would be created, without saving anything. It is safe to use on the live site.
+
+## Daily NAVs
+
+An n8n workflow posts AMFI's daily NAV file to `/api/integrations/nav-update` at 18:00 and 23:30 IST. Portfolios are valued as units from the latest CAS × the latest NAV, and the onboarding values stay fixed. A new CAS is needed only to see what the client executed. See [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md), section 6.
 
 ## Deploy on Vercel
 

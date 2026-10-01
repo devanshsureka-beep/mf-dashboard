@@ -49,10 +49,11 @@ export default async function Overview() {
         }
       />
 
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <StatCard label="Premium clients" value={m.total_clients} href="/clients" />
-        <StatCard label="Assets under advice" value={formatINRCompact(m.total_portfolio_value)} hint="Latest confirmed CAS per client" />
+        <StatCard label="Assets under advice" value={formatINRCompact(m.total_portfolio_value)} hint="Latest CAS units × latest NAV" />
         <StatCard label="Active advisory plans" value={m.active_plans} hint={m.draft_plans ? `${m.draft_plans} draft awaiting approval` : undefined} />
+        <StatCard label="Money left with clients" value={formatINRCompact(m.money_left_total)} hint="Sold − bought on executed calls" href="/advice/bulk" tone={m.money_left_total > 0 ? "attention" : "default"} />
         <StatCard label="Calls today" value={m.calls_issued_today} hint={`${m.advice_items_today} fund-level instructions`} href={`/advice?from=${m.day}&to=${m.day}`} />
       </section>
 

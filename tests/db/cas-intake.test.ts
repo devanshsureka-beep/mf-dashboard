@@ -233,6 +233,26 @@ describeDb("onboarding from CAS + advisory report", () => {
     });
   });
 
+  it("operations can onboard (server-run flow): client assigned to the chosen advisor, plan stays a DRAFT", async () => {
+    await scenario(async (ctx) => {
+      // The app runs this as the trusted server for OPERATIONS (see onboard/actions.ts).
+      const client = await ctx.asSuper((t) => ensureClientFromDocuments(t, ctx.users.ops, { cas, report, advisorId: ctx.users.advisor.id, phone: null }));
+      const out = await ctx.asSuper((t) => onboardFromDocuments(t, ctx.users.ops, {
+        clientId: client.id, cas, casFile: { ...file("cas.pdf"), passwordProtected: true }, report, reportFile: file("report.pdf"),
+      }));
+      const plan = (await ctx.tx<{ status: string; created_by: string }[]>`select status, created_by from public.advisory_plans where id = ${out.planId}`)[0];
+      expect(plan).toEqual({ status: "DRAFT", created_by: ctx.users.ops.id });
+      const adv = await ctx.tx<{ advisor_id: string }[]>`
+        select advisor_id from public.client_advisor_assignments where client_id = ${client.id} and is_active and assignment_role = 'PRIMARY'`;
+      expect(adv).toEqual([{ advisor_id: ctx.users.advisor.id }]);
+      // The chosen advisor sees the client; operations cannot approve the plan.
+      expect(await ctx.as("advisor", (t) => t`select 1 from public.clients where id = ${client.id}`)).toHaveLength(1);
+      const upd = await ctx.as("ops", (t) => t`update public.advisory_plans set status = 'ACTIVE' where id = ${out.planId}`);
+      expect(upd.count).toBe(0); // row-level security: not visible for update
+      expect((await ctx.tx<{ status: string }[]>`select status from public.advisory_plans where id = ${out.planId}`)[0].status).toBe("DRAFT");
+    });
+  });
+
   it("refuses documents that do not reconcile, and saves nothing", async () => {
     await scenario(async (ctx) => {
       const other = { ...report, clientName: "Somebody Else Entirely" };
