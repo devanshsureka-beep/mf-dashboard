@@ -35,7 +35,10 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
   const { id } = await props.params;
   const sp = await props.searchParams;
   const tab = (TABS as readonly string[]).includes(String(sp.tab)) ? (sp.tab as Tab) : "overview";
-  const { c, actor } = await pageData(async (tx) => ({ c: await getClientSummary(tx, id) }));
+  const { c, fresh, actor } = await pageData(async (tx) => ({
+    c: await getClientSummary(tx, id),
+    fresh: Number((await tx<{ fresh_money: number }[]>`select fresh_money from public.v_client_cash where client_id = ${id}`)[0]?.fresh_money ?? 0),
+  }));
   const canAdvise = actor.role !== "OPERATIONS";
 
   return (
@@ -75,7 +78,8 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
               {c.live_nav_date ? `NAV ${formatDate(c.live_nav_date)}` : "CAS NAV"} · at onboarding <Money value={c.initial_portfolio_value} />
             </div>
             <div className={c.money_left > 0 ? "mt-1 text-xs font-medium text-amber-700" : "mt-1 text-xs text-muted"}>
-              Money left from calls <Money value={c.money_left} />
+              Money left <Money value={c.money_left} />
+              {fresh > 0 ? <span className="font-normal text-muted"> · incl. <Money value={fresh} /> fresh money added</span> : null}
             </div>
           </div>
         </div>

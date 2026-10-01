@@ -44,6 +44,7 @@
 | 20 | **Money left after calls.** | `v_client_cash`: executed SELL proceeds − executed BUY amounts (switches move money fund-to-fund and are excluded). Shown per client and used to filter clients for one call to many (`/advice/bulk`). Each client still gets their own batch, linked to their plan item for that fund and side when there is one. |
 | 21 | **SIPs are not listed in a CAS.** | `lib/domain/sip-status.ts` reads them from the transactions: lines marked systematic / SIP, or ≥ 3 purchases of the same amount about a month apart (broker and platform SIPs appear as plain purchases). Several SIPs in one folio are added up. A SIP is running if an instalment fell in the last 40 days. Previous CAS vs latest CAS gives started / stopped / amount changed, checked against the plan's SIP changes. |
 | 22 | **Operations onboard clients** but cannot create clients or plans under RLS. | Only the onboarding flow (fully cross-checked, deterministic) runs as the trusted server for OPERATIONS, labelled `onboarding:<email>` in the audit log. The plan stays a DRAFT that an advisor or admin approves. |
+| 23 | **Fresh money after onboarding.** A client adds money later and gets a report for that amount only; one ACTIVE plan per client. | The report is an *additional investment* (`advisory_plans.plan_kind = 'ADDITIONAL'`, chosen on upload or auto-detected for a client with an active plan). Only its own lines must tie to the CAS, and buys − sells must equal the fresh money. Approving it does not replace the plan: its lines are copied into the ACTIVE plan with `tranche_plan_id`, the fresh money goes to `client_fresh_money`, and the draft becomes `MERGED`. The five numbers cover both tranches; money left = fresh money + sells − buys. |
 
 ## 4. Counting rules (per advice item, `v_advice_items`)
 
@@ -68,7 +69,7 @@ Client and plan totals (`v_plan_transition`, `v_client_summary`) are sums over p
 
 ## 5. Status machines
 
-- **Plan:** `DRAFT → ACTIVE → COMPLETED | REPLACED | CANCELLED`, and `DRAFT → CANCELLED`. At most one ACTIVE plan per client. Closing an ACTIVE plan requires a reason.
+- **Plan:** `DRAFT → ACTIVE → COMPLETED | REPLACED | CANCELLED`, `DRAFT → CANCELLED`, and `DRAFT → MERGED` (an additional-investment plan added to the ACTIVE plan as a tranche). At most one ACTIVE plan per client. Closing an ACTIVE plan requires a reason.
 - **Advice item:** `ISSUED ⇄ PARTIALLY_EXECUTED ⇄ EXECUTED`, derived from executions. `ISSUED / PARTIALLY_EXECUTED → CANCELLED | EXPIRED | REVISED` require a reason and are terminal.
 - **Execution:** `PENDING → EXECUTED`. `→ REJECTED | CANCELLED` (voiding) requires a reason. Amounts are immutable, and CAS verification can be attached once.
 - **Snapshot:** `PENDING_REVIEW → CONFIRMED | REJECTED`. The first confirmed snapshot is the baseline. Holdings are frozen once reviewed.
@@ -100,6 +101,7 @@ Client and plan totals (`v_plan_transition`, `v_client_summary`) are sums over p
 | `reconciliation_runs` | Previous vs current snapshot, values, summary, status |
 | `reconciliation_matches` | Detected change × candidate call: units, expected, allocated, confidence, classification, decision |
 | `client_notes` | Notes, call logs, follow-ups (`follow_up_date`) |
+| `client_fresh_money` | Fresh money the client brought in (amount, date, the additional-investment plan); counted in money left |
 | `audit_logs` | Append-only: actor, actor label, client, entity, action, changed fields, old/new JSON, reason |
 
 ## 7. Future: client portal

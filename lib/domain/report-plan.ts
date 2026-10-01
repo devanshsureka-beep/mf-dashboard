@@ -47,6 +47,9 @@ export interface SipItemDraft {
 
 export interface ReportPlanDraft {
   plan_name: string;
+  plan_kind: "FULL" | "ADDITIONAL";
+  /** ADDITIONAL plans: fresh money the client brings in. */
+  fresh_money: number | null;
   plan_date: string | null;
   starting_portfolio_value: number | null;
   items: PlanItemDraft[];
@@ -154,7 +157,11 @@ export function buildPlanFromReport(
   report: AdvisoryReportParse,
   holdings: PlanHolding[],
   casValuationDate: string | null = null,
+  opts: { additional?: boolean } = {},
 ): ReportPlanDraft {
+  // ADDITIONAL: a report for fresh money on top of the active plan. Only its own
+  // lines must tie to the CAS; the rest of the portfolio stays as the active plan has it.
+  const additional = opts.additional === true;
   const problems = [...report.problems];
   const items: PlanItemDraft[] = [];
   const taken = new Set<PlanHolding>();
@@ -294,7 +301,7 @@ export function buildPlanFromReport(
         for (const h of group) holdReason.set(h, `Keep and ${r.verdictText.toLowerCase()} (see buy list)${r.note ? `: ${r.note}` : ""}`.slice(0, 300));
       }
     }
-    for (const h of live) {
+    for (const h of additional ? [] : live) {
       if (!reviewed.has(h)) problems.push(`${h.scheme_name} (folio ${h.folio_number ?? "—"}, ${inr(h.current_value)}) is in the CAS but not covered by the report.`);
     }
   }
@@ -350,7 +357,7 @@ export function buildPlanFromReport(
     // are kept as they are and flagged, as long as together they are a small part of the portfolio.
     const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
     const absent = new Set((report.notInReport ?? []).map(norm));
-    const uncovered = live.filter((h) => !covered.has(h));
+    const uncovered = additional ? [] : live.filter((h) => !covered.has(h));
     const confirmed = uncovered.filter((h) => absent.has(norm(h.scheme_name)));
     const liveTotal = live.reduce((t, h) => t + h.current_value, 0);
     const confirmedTotal = confirmed.reduce((t, h) => t + h.current_value, 0);
@@ -366,7 +373,7 @@ export function buildPlanFromReport(
     }
   }
 
-  for (const h of live) {
+  for (const h of additional ? [] : live) {
     if (taken.has(h)) continue;
     items.push({ action: "RETAIN", scheme_name: h.scheme_name, isin: h.isin, folio_number: h.folio_number, target_amount: 0, current_amount: h.current_value, reason: holdReason.get(h) ?? "Not sold in the report", priority: (priority += 10) });
   }
@@ -437,7 +444,21 @@ export function buildPlanFromReport(
     });
   }
 
+  // Fresh money must pay for the buys not funded by sells.
+  let freshMoney: number | null = null;
+  if (additional) {
+    const sells = items.filter((i) => i.action === "SELL" || i.action === "SWITCH").reduce((t, i) => t + i.target_amount, 0);
+    const buys = items.filter((i) => i.action === "BUY").reduce((t, i) => t + i.target_amount, 0);
+    const needed = Math.round((buys - sells) * 100) / 100;
+    freshMoney = report.freshMoney ?? (needed > 0 ? needed : null);
+    if (report.freshMoney != null && Math.abs(needed - report.freshMoney) > Math.max(1000, report.freshMoney * 0.01)) {
+      problems.push(`The report invests ${inr(report.freshMoney)} of fresh money, but its buys minus sells come to ${inr(needed)}.`);
+    }
+    if (!buys && !items.length && !sip_items.length) problems.push("The additional-investment report has no buy, sell or SIP line.");
+  }
+
   const notes = [
+    additional ? `Additional investment${freshMoney ? ` of ${inr(freshMoney)} fresh money` : ""}: approving adds these lines to the active plan as a new tranche.` : null,
     `Imported from the advisory report${report.preparedDate ? ` prepared ${report.preparedDate}` : ""}.`,
     report.riskProfile ? `Risk profile: ${report.riskProfile}.` : null,
     report.goal ? `Goal: ${report.goal}.` : null,
@@ -447,7 +468,9 @@ export function buildPlanFromReport(
   ].filter(Boolean).join("\n");
 
   return {
-    plan_name: `Rebalancing plan${report.preparedDate ? ` · ${report.preparedDate}` : ""}`,
+    plan_name: `${additional ? "Additional investment" : "Rebalancing plan"}${report.preparedDate ? ` · ${report.preparedDate}` : ""}`,
+    plan_kind: additional ? "ADDITIONAL" : "FULL",
+    fresh_money: freshMoney,
     plan_date: report.preparedDate,
     starting_portfolio_value: report.currentValue,
     items,

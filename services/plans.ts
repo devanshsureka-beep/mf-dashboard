@@ -184,7 +184,7 @@ export async function approvePlan(
   planId: string,
   reason?: string | null,
   approvedAt: Date = new Date(),
-): Promise<void> {
+): Promise<"ACTIVE" | "MERGED"> {
   const plan = await assertPlanStatus(tx, planId, ["DRAFT"]);
   const items = await tx<{ n: number }[]>`
     select count(*)::int as n from public.advisory_plan_items where plan_id = ${planId} and status <> 'CANCELLED'`;
@@ -192,6 +192,12 @@ export async function approvePlan(
   if (items[0].n + sips[0].n === 0) throw new AppError("A plan needs at least one item before approval.");
 
   const current = await getActivePlanId(tx, plan.client_id);
+  const meta = await tx<{ plan_kind: string; fresh_money: number | null; plan_name: string; plan_date: string }[]>`
+    select plan_kind, fresh_money, plan_name, plan_date::text from public.advisory_plans where id = ${planId}`;
+  if (meta[0]?.plan_kind === "ADDITIONAL" && current) {
+    await mergeAdditionalPlan(tx, actor, { planId, activePlanId: current, clientId: plan.client_id, ...meta[0] }, reason, approvedAt);
+    return "MERGED";
+  }
   if (current) {
     await setAuditReason(tx, reason?.trim() || "Replaced by newly approved plan");
     await tx`
@@ -202,6 +208,71 @@ export async function approvePlan(
   await tx`
     update public.advisory_plans set status = 'ACTIVE', approved_by = ${actor.id}, approved_at = ${approvedAt}
     where id = ${planId}`;
+  return "ACTIVE";
+}
+
+/** Lines of a plan that came from a merged additional-investment plan (item id -> tranche). */
+export async function getTranches(tx: Tx, planId: string): Promise<Record<string, { plan_id: string; plan_name: string; plan_date: string }>> {
+  const rows = await tx<{ id: string; plan_id: string; plan_name: string; plan_date: string }[]>`
+    select i.id, t.id as plan_id, t.plan_name, t.plan_date::text
+    from public.advisory_plan_items i join public.advisory_plans t on t.id = i.tranche_plan_id
+    where i.plan_id = ${planId}`;
+  return Object.fromEntries(rows.map((r) => [r.id, { plan_id: r.plan_id, plan_name: r.plan_name, plan_date: r.plan_date }]));
+}
+
+/**
+ * Approve an ADDITIONAL plan (fresh money on top of the active plan): its lines
+ * are added to the ACTIVE plan as a tranche (tranche_plan_id), the fresh money
+ * is recorded, and the draft becomes MERGED. The active plan and its calls stay.
+ */
+async function mergeAdditionalPlan(
+  tx: Tx,
+  actor: Actor,
+  p: { planId: string; activePlanId: string; clientId: string; plan_name: string; plan_date: string; fresh_money: number | null },
+  reason: string | null | undefined,
+  approvedAt: Date,
+): Promise<void> {
+  const blockers = await tx<{ n: number }[]>`
+    select count(*)::int as n from (
+      select id from public.advisory_plan_items
+      where plan_id = ${p.planId} and status <> 'CANCELLED'
+        and (needs_review or (action in ('SELL', 'BUY', 'SWITCH') and security_id is null))
+      union all
+      select id from public.sip_plan_items where plan_id = ${p.planId} and status <> 'CANCELLED' and needs_review
+    ) x`;
+  if (blockers[0].n > 0) throw new AppError(`Pick the fund for the ${blockers[0].n} line(s) marked "needs review" first.`);
+
+  const why = reason?.trim() || `Tranche added: ${p.plan_name}${p.fresh_money ? ` (fresh money ₹${Number(p.fresh_money).toLocaleString("en-IN")})` : ""}`;
+  await setAuditReason(tx, why);
+  await tx`
+    insert into public.advisory_plan_items
+      (plan_id, client_id, security_id, scheme_name, folio_number, action, switch_to_security_id, target_amount, target_units,
+       current_amount, target_weight, reason, priority, notes, status, needs_review, created_by, tranche_plan_id)
+    select ${p.activePlanId}, client_id, security_id, scheme_name, folio_number, action, switch_to_security_id, target_amount, target_units,
+           current_amount, target_weight, reason, priority + 10000, notes, 'OPEN', false, ${actor.id}, plan_id
+    from public.advisory_plan_items
+    where plan_id = ${p.planId} and status <> 'CANCELLED' and action <> 'RETAIN'`;
+  await tx`
+    insert into public.sip_plan_items
+      (client_id, plan_id, security_id, scheme_name, folio_number, action, old_amount, new_amount, frequency, debit_day,
+       status, notes, needs_review, created_by, tranche_plan_id)
+    select client_id, ${p.activePlanId}, security_id, scheme_name, folio_number, action, old_amount, new_amount, frequency, debit_day,
+           'PLANNED', notes, false, ${actor.id}, plan_id
+    from public.sip_plan_items
+    where plan_id = ${p.planId} and status <> 'CANCELLED'`;
+  if (p.fresh_money && Number(p.fresh_money) > 0) {
+    await tx`
+      insert into public.client_fresh_money (client_id, amount, received_on, plan_id, note, created_by)
+      values (${p.clientId}, ${p.fresh_money}, ${p.plan_date}::date, ${p.planId}, ${`Additional investment: ${p.plan_name}`}, ${actor.id})`;
+  }
+  await tx`
+    update public.advisory_plans
+    set notes = coalesce(notes || E'\n', '') || ${`Tranche added ${p.plan_date}: ${p.plan_name}${p.fresh_money ? ` · fresh money ₹${Number(p.fresh_money).toLocaleString("en-IN")}` : ""}`}
+    where id = ${p.activePlanId}`;
+  await tx`
+    update public.advisory_plans
+    set status = 'MERGED', merged_into_plan_id = ${p.activePlanId}, approved_by = ${actor.id}, approved_at = ${approvedAt}
+    where id = ${p.planId}`;
 }
 
 export async function closePlan(tx: Tx, planId: string, status: "COMPLETED" | "CANCELLED", reason: string): Promise<void> {
@@ -311,11 +382,12 @@ export async function ingestAdvisoryReport(
   const warnings = [...payload.warnings];
   const plan = await tx<{ id: string }[]>`
     insert into public.advisory_plans (client_id, plan_name, plan_date, notes, baseline_snapshot_id, starting_portfolio_value,
-                                       source_document_id, extraction_source, extraction_payload, created_by)
+                                       source_document_id, extraction_source, extraction_payload, created_by, plan_kind, fresh_money)
     values (${clientId}, ${payload.plan.plan_name}, coalesce(${payload.plan.plan_date ?? null}::date, app.today_ist()),
             ${payload.plan.notes ?? null}, ${snapshot[0]?.id ?? null},
             ${payload.plan.starting_portfolio_value ?? snapshot[0]?.total_current_value ?? null},
-            ${payload.document_id ?? null}, ${opts.extractionSource ?? "AI_EXTRACTION"}, ${tx.json(JSON.parse(JSON.stringify(payload)))}, ${createdBy})
+            ${payload.document_id ?? null}, ${opts.extractionSource ?? "AI_EXTRACTION"}, ${tx.json(JSON.parse(JSON.stringify(payload)))}, ${createdBy},
+            ${payload.plan.plan_kind ?? "FULL"}, ${payload.plan.fresh_money ?? null})
     returning id`;
   const planId = plan[0].id;
 

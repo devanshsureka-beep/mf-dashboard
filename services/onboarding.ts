@@ -10,7 +10,7 @@ import { registerDocument } from "@/services/documents";
 import { ingestAdvisoryReport } from "@/services/plans";
 import { resolveOrCreateSecurity, suggestSecurity } from "@/services/securities";
 import type { SecurityCandidate } from "@/lib/domain/securities";
-import { RISK_PROFILES } from "@/types/domain";
+import { RISK_PROFILES, type PlanKind } from "@/types/domain";
 
 /**
  * Onboarding from two documents: the client's CAS and the paid advisory
@@ -46,7 +46,7 @@ export function holdingsFromCas(cas: CasParseOutput): PlanHolding[] {
   }));
 }
 
-export function previewOnboarding(cas: CasParseOutput, report: AdvisoryReportParse): {
+export function previewOnboarding(cas: CasParseOutput, report: AdvisoryReportParse, kind: PlanKind = "FULL"): {
   problems: string[];
   draft: ReportPlanDraft | null;
   holdings: PlanHolding[];
@@ -59,8 +59,40 @@ export function previewOnboarding(cas: CasParseOutput, report: AdvisoryReportPar
   } catch (e) {
     return { problems: [(e as Error).message], draft: null, holdings: [] };
   }
-  const draft = buildPlanFromReport(report, holdings, cas.valuationDate);
+  const draft = buildPlanFromReport(report, holdings, cas.valuationDate, { additional: kind === "ADDITIONAL" });
   return { problems: draft.problems, draft, holdings };
+}
+
+export type ReportKindChoice = "AUTO" | PlanKind;
+
+/**
+ * Full rebalancing (replaces the plan) or additional investment (fresh money,
+ * added to the ACTIVE plan as a tranche). AUTO picks ADDITIONAL only for a
+ * client with an active plan whose report reads as fresh money on top of it:
+ * Claude says so, or the report does not cover the portfolio yet ties out as
+ * an addition with buys.
+ */
+export function decideReportKind(
+  cas: CasParseOutput,
+  report: AdvisoryReportParse,
+  args: { choice: ReportKindChoice; hasActivePlan: boolean },
+): { kind: PlanKind; problems: string[]; draft: ReportPlanDraft | null } {
+  const as = (kind: PlanKind) => {
+    const p = previewOnboarding(cas, report, kind);
+    const problems = kind === "ADDITIONAL" && !args.hasActivePlan
+      ? ["This client has no active plan to add to: onboard and approve a full plan first, or choose Full rebalancing.", ...p.problems]
+      : p.problems;
+    return { kind, problems, draft: p.draft };
+  };
+  if (args.choice !== "AUTO") return as(args.choice);
+  if (!args.hasActivePlan) return as("FULL");
+  if (report.reportKind === "ADDITIONAL") return as("ADDITIONAL");
+  const full = as("FULL");
+  if (!full.problems.length) return full;
+  const add = as("ADDITIONAL");
+  const buys = add.draft?.items.some((i) => i.action === "BUY") ?? false;
+  const notCovered = full.problems.some((x) => /not covered by the report/.test(x));
+  return !add.problems.length && buys && notCovered ? add : full;
 }
 
 /**
@@ -93,10 +125,10 @@ export interface OnboardResult {
 export async function ensureClientFromDocuments(
   tx: Tx,
   actor: Actor,
-  args: { cas: CasParseOutput; report: AdvisoryReportParse; advisorId?: string | null; phone?: string | null },
+  args: { cas: CasParseOutput; report: AdvisoryReportParse; advisorId?: string | null; phone?: string | null; kind?: PlanKind },
 ): Promise<{ id: string; client_code: string; full_name: string; created: boolean }> {
   // Nothing is created unless every line of the report ties to the CAS.
-  const problems = onboardingProblems(args.cas, args.report);
+  const problems = previewOnboarding(args.cas, args.report, args.kind ?? "FULL").problems;
   if (problems.length) throw new AppError(problemsMessage(problems));
   const existing = await findClientByPan(tx, args.cas.investor.pan);
   if (existing) return { id: existing.id, client_code: existing.client_code, full_name: existing.full_name, created: false };
@@ -123,8 +155,10 @@ export async function onboardFromDocuments(
     casFile: StoredFile & { passwordProtected: boolean };
     report: AdvisoryReportParse;
     reportFile: StoredFile;
+    kind?: PlanKind;
   },
 ): Promise<Omit<OnboardResult, "created">> {
+  const kind = args.kind ?? "FULL";
   const client = await findClientByPan(tx, args.cas.investor.pan);
   if (!client || client.id !== args.clientId) throw new AppError("The CAS belongs to a different client.");
 
@@ -171,7 +205,7 @@ export async function onboardFromDocuments(
     where h.snapshot_id = coalesce(${snapshotId}::uuid,
       (select snapshot_id from public.v_latest_snapshot where client_id = ${client.id}))
     order by h.current_value desc`;
-  const draft = buildPlanFromReport(args.report, holdings, args.cas.valuationDate);
+  const draft = buildPlanFromReport(args.report, holdings, args.cas.valuationDate, { additional: kind === "ADDITIONAL" });
   if (draft.problems.length) throw new AppError(problemsMessage(draft.problems));
 
   // Funds to buy are usually new to the client: find them, or create a
@@ -199,6 +233,8 @@ export async function onboardFromDocuments(
       plan_date: draft.plan_date,
       starting_portfolio_value: draft.starting_portfolio_value,
       notes: draft.notes,
+      plan_kind: draft.plan_kind,
+      fresh_money: draft.fresh_money,
     },
     items: draft.items.map((i) => ({
       action: i.action, scheme_name: i.scheme_name, isin: i.isin, folio_number: i.folio_number,

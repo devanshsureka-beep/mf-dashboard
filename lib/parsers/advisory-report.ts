@@ -95,6 +95,10 @@ export interface AdvisoryReportParse {
    * They are kept as they are, flagged for the advisor, instead of blocking.
    */
   notInReport?: string[];
+  /** "ADDITIONAL": the report invests fresh money on top of an existing plan (not a full rebalancing). */
+  reportKind?: "FULL" | "ADDITIONAL" | null;
+  /** Fresh money the report invests (rupees), when it says so. */
+  freshMoney?: number | null;
   /** Anything that does not reconcile. Callers must block on any entry. */
   problems: string[];
   /** @deprecated alias of `problems` */

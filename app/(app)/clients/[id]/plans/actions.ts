@@ -135,9 +135,11 @@ export async function resolveSipSecurityAction(clientId: string, planId: string,
 export async function approvePlanAction(clientId: string, planId: string, _p: ActionResult | null, fd: FormData): Promise<ActionResult> {
   return runAction("approvePlan", async () => {
     if (str(fd, "confirm") !== "yes") throw new AppError("Tick the confirmation box to approve.");
-    await actionTx((tx, actor) => approvePlan(tx, actor, planId, optStr(fd, "reason")), opts);
+    const outcome = await actionTx((tx, actor) => approvePlan(tx, actor, planId, optStr(fd, "reason")), opts);
     refresh(clientId, planId);
-    return "Plan approved and ACTIVE. Targets are now frozen; changes require a reason.";
+    return outcome === "MERGED"
+      ? "Added to the active plan as a new tranche; the fresh money is recorded. Open the active plan to issue the calls."
+      : "Plan approved and ACTIVE. Targets are now frozen; changes require a reason.";
   });
 }
 

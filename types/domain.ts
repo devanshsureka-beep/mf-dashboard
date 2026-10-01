@@ -11,7 +11,8 @@ export type RiskProfile =
   | "MODERATE"
   | "MODERATELY_AGGRESSIVE"
   | "AGGRESSIVE";
-export type PlanStatus = "DRAFT" | "ACTIVE" | "COMPLETED" | "REPLACED" | "CANCELLED";
+export type PlanStatus = "DRAFT" | "ACTIVE" | "COMPLETED" | "REPLACED" | "CANCELLED" | "MERGED";
+export type PlanKind = "FULL" | "ADDITIONAL";
 export type PlanAction = "SELL" | "BUY" | "RETAIN" | "SWITCH" | "STOP_SIP" | "START_SIP";
 export type AdviceAction = "BUY" | "SELL" | "SWITCH";
 export type AdviceStatus = "ISSUED" | "PARTIALLY_EXECUTED" | "EXECUTED" | "CANCELLED" | "EXPIRED" | "REVISED";
@@ -106,6 +107,9 @@ export interface PlanRow {
   closed_at: Date | null;
   created_at: Date;
   extraction_payload: unknown;
+  plan_kind: PlanKind;
+  fresh_money: number | null;
+  merged_into_plan_id: string | null;
 }
 
 export interface PlanTransition {

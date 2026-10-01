@@ -4,7 +4,7 @@ import { AppError } from "@/lib/errors";
 import { answerToReport, type ReportAiAnswer } from "@/lib/integrations/report-ai";
 import { buildPlanFromReport } from "@/lib/domain/report-plan";
 import { parseCasLines } from "@/lib/parsers/cas";
-import { holdingsFromCas } from "@/services/onboarding";
+import { decideReportKind, holdingsFromCas } from "@/services/onboarding";
 import { resolveWithClaude } from "@/services/report-resolve";
 
 const cas = parseCasLines(readFileSync("tests/fixtures/cas-kfin-cams.sample.txt", "utf8").split("\n"));
@@ -22,6 +22,7 @@ const base: ReportAiAnswer = {
     hold("360 ONE Flexicap Fund", 31823.12), hold("Aditya Birla Sun Life Consumption Fund", 21669.09),
     hold("Aditya Birla Sun Life Digital India Fund", 31962.52), hold("Axis India Manufacturing Fund", 26697.62),
   ],
+  report_kind: "FULL_REVIEW", fresh_money: null,
   cas_funds_not_in_report: [],
   corrections: ["Read the sell table."],
 };
@@ -99,5 +100,41 @@ describe("Claude resolves what the built-in reader could not, in rounds", () => 
       .toMatchObject({ status: "OPEN", problems: ["x"], error: expect.stringMatching(/in time/) });
     const other = vi.fn().mockResolvedValue(reply({ ...base, client_name: "Someone Else" }));
     expect((await resolveWithClaude({ cas, reportPdf: new Uint8Array([1]), draft: null, readerError: null, problems: ["x"], deadline: far(), ask: other })).status).toBe("WRONG_PAIR");
+  });
+});
+
+describe("additional investment report (fresh money on top of the active plan)", () => {
+  const topUp: ReportAiAnswer = {
+    ...base, sells: [], sell_total: null, holds: [],
+    buys: [
+      { fund: "Parag Parikh Flexi Cap Fund", plan_type: "DIRECT", amount: 1000000, kind: "NEW", amc: null, category: null },
+      { fund: "HDFC Defence Fund", plan_type: "DIRECT", amount: 500000, kind: "TOP_UP", amc: null, category: null },
+    ],
+    buy_total: 1500000, report_kind: null, fresh_money: 1500000,
+  };
+
+  it("needs only its own lines to tie to the CAS; buys minus sells must equal the fresh money", () => {
+    const r = answerToReport(topUp, null);
+    expect(buildPlanFromReport(r, holdingsFromCas(cas), cas.valuationDate).problems.length).toBeGreaterThan(0); // as a full report: holdings not covered
+    const add = buildPlanFromReport(r, holdingsFromCas(cas), cas.valuationDate, { additional: true });
+    expect(add.problems).toEqual([]);
+    expect(add).toMatchObject({ plan_kind: "ADDITIONAL", fresh_money: 1500000 });
+    expect(add.items.map((i) => i.action)).toEqual(["BUY", "BUY"]); // no RETAIN lines: the active plan has them
+    const off = buildPlanFromReport({ ...r, freshMoney: 2000000 }, holdingsFromCas(cas), cas.valuationDate, { additional: true });
+    expect(off.problems[0]).toMatch(/₹20,00,000 of fresh money.*₹15,00,000/);
+  });
+
+  it("AUTO picks additional only for a client with an active plan", () => {
+    const r = answerToReport(topUp, null);
+    expect(decideReportKind(cas, r, { choice: "AUTO", hasActivePlan: true })).toMatchObject({ kind: "ADDITIONAL", problems: [] });
+    expect(decideReportKind(cas, r, { choice: "AUTO", hasActivePlan: false }).kind).toBe("FULL");
+    expect(decideReportKind(cas, r, { choice: "ADDITIONAL", hasActivePlan: false }).problems[0]).toMatch(/no active plan/);
+    // A full report that ties out stays a full rebalancing even for an existing client.
+    const full = answerToReport({ ...base, cas_funds_not_in_report: ["HSBC Value Fund - Direct Growth"] }, null);
+    expect(decideReportKind(cas, full, { choice: "AUTO", hasActivePlan: true }).kind).toBe("FULL");
+    // Claude says it is an additional investment.
+    const said = answerToReport({ ...topUp, report_kind: "ADDITIONAL_INVESTMENT" }, null);
+    expect(said.reportKind).toBe("ADDITIONAL");
+    expect(decideReportKind(cas, said, { choice: "AUTO", hasActivePlan: true }).kind).toBe("ADDITIONAL");
   });
 });

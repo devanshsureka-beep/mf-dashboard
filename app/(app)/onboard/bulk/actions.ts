@@ -13,9 +13,10 @@ import { prepareUpload, type PreparedFile } from "@/lib/storage";
 import type { AdvisoryReportParse } from "@/lib/parsers/advisory-report";
 import { findClientByPan, knownClientPhones } from "@/services/cas-intake";
 import { findDuplicateDocument } from "@/services/portfolio";
-import { checkDocumentsBelongTogether, previewOnboarding } from "@/services/onboarding";
+import { checkDocumentsBelongTogether, decideReportKind } from "@/services/onboarding";
+import type { PlanKind } from "@/types/domain";
 import { resolveWithClaude } from "@/services/report-resolve";
-import { checkAdvisor, onboardingTx, saveOnboarding } from "../save";
+import { checkAdvisor, hasActivePlanForPan, onboardingTx, saveOnboarding } from "../save";
 
 /**
  * Bulk onboarding from one folder of CAS + report PDFs with no naming rule.
@@ -136,7 +137,12 @@ export async function onboardBulkPairAction(fd: FormData): Promise<BulkOnboardRo
       const together = checkDocumentsBelongTogether(cas, report);
       if (together.problem && report.clientName) return fail("FAILED", `${together.problem} Pair this CAS with the right report.`);
     }
-    const problems = report ? previewOnboarding(cas, report).problems : [`The built-in reader could not read the report: ${read.error}`];
+    // Full rebalancing, or fresh money added to the client's active plan (decided per report).
+    const hasActivePlan = await hasActivePlanForPan(actor, cas.investor.pan);
+    const check = (r: AdvisoryReportParse) => decideReportKind(cas, r, { choice: "AUTO", hasActivePlan });
+    const first = report ? check(report) : null;
+    let kind: PlanKind = first?.kind ?? "FULL";
+    const problems = first ? first.problems : [`The built-in reader could not read the report: ${read.error}`];
     let usedClaude = false;
     let corrections: string[] = [];
 
@@ -146,7 +152,7 @@ export async function onboardBulkPairAction(fd: FormData): Promise<BulkOnboardRo
       if (!reportAiConfigured()) {
         return fail("NEEDS_REVIEW", "The report does not reconcile with the CAS, and the Claude reader is not set up.", { problems });
       }
-      const r = await resolveWithClaude({ cas, reportPdf: reportUpload.bytes, draft: report, readerError: read.error, problems, deadline, reportFileName: reportUpload.fileName });
+      const r = await resolveWithClaude({ cas, reportPdf: reportUpload.bytes, draft: report, readerError: read.error, problems, deadline, reportFileName: reportUpload.fileName, check });
       usedClaude = r.rounds > 0;
       corrections = r.corrections;
       if (r.status === "WRONG_PAIR") return fail("FAILED", `${r.message} Pair this CAS with the right report.`, { usedClaude, corrections });
@@ -157,6 +163,7 @@ export async function onboardBulkPairAction(fd: FormData): Promise<BulkOnboardRo
         { problems: r.problems, usedClaude, corrections });
       }
       report = r.report;
+      kind = r.kind;
     }
     if (!report) return fail("FAILED", "The report could not be read.");
 
@@ -169,12 +176,15 @@ export async function onboardBulkPairAction(fd: FormData): Promise<BulkOnboardRo
       reportFile: storedAs(reportUpload, `Advisory report ${who}.pdf`),
       advisorId,
       phone: null,
+      kind,
     });
     revalidatePath("/clients");
     return {
       outcome: "ONBOARDED",
       message: [
-        saved.created ? "New client created." : "Existing client: the report is a new draft plan.",
+        saved.kind === "ADDITIONAL"
+          ? `Additional investment${report.freshMoney ? ` of ₹${report.freshMoney.toLocaleString("en-IN")}` : ""}: a draft tranche to add to the active plan.`
+          : saved.created ? "New client created." : "Existing client: the report is a new draft plan (approving replaces the current plan).",
         saved.itemsNeedingReview ? `${saved.itemsNeedingReview} plan line(s) need a fund picked.` : null,
         ...saved.warnings,
       ].filter(Boolean).join(" "),

@@ -37,6 +37,16 @@ export default async function OnboardPage() {
               <Field label="CAS password (only if the mobile number doesn't open it)">
                 <Input name="password" type="password" autoComplete="off" />
               </Field>
+              <Field label="Report type" hint="Auto: an existing client's report that only invests fresh money is added to the active plan.">
+                <Select name="report_kind" defaultValue="AUTO">
+                  <option value="AUTO">Auto-detect</option>
+                  <option value="FULL">Full rebalancing (replaces the current plan)</option>
+                  <option value="ADDITIONAL">Additional investment (adds to the current plan)</option>
+                </Select>
+              </Field>
+              <Field label="Fresh money (₹, additional investment)" hint="Only if the report does not say it; otherwise read from the report.">
+                <Input name="fresh_money" inputMode="numeric" placeholder="e.g. 1500000" />
+              </Field>
               {actor.role === "ADMIN" ? (
                 <Field label="Primary advisor (for a new client)">
                   <Select name="advisor_id" defaultValue={actor.id}>
@@ -54,7 +64,7 @@ export default async function OnboardPage() {
             </div>
             <div className="rounded-md bg-gray-50 p-3 text-xs text-muted">
               <p>The client is identified by the PAN in the CAS. The name in the report must match the CAS.</p>
-              <p className="mt-1">New client → created with contact details, risk profile and goal from the documents. Existing client → the report becomes a new draft plan; approving it replaces the current plan (the old one stays in history).</p>
+              <p className="mt-1">New client → created with contact details, risk profile and goal from the documents. Existing client → a full report becomes a new draft plan that replaces the current one when approved (the old one stays in history); an additional-investment report becomes a draft tranche that is added to the current plan when approved, with its fresh money counted in money left.</p>
               <p className="mt-1">The plan opens as a DRAFT: check it, then approve{actor.role === "OPERATIONS" ? " (an advisor or admin approves)" : ""}.</p>
             </div>
             <SubmitButton>Read documents &amp; create plan</SubmitButton>

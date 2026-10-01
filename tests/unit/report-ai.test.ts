@@ -23,6 +23,7 @@ const answer: ReportAiAnswer = {
     { fund: "Axis Small Cap Fund", folio: null, folio_count: 1, plan_type: "DIRECT", value: 298000, deferred: false, note: "Core small-cap" },
     { fund: "Parag Parikh Flexi Cap", folio: null, folio_count: 1, plan_type: "DIRECT", value: null, deferred: false, note: null },
   ],
+  report_kind: "FULL_REVIEW", fresh_money: null,
   cas_funds_not_in_report: [],
   corrections: ["Added the HDFC Flexi Cap exit the reader missed."],
 };

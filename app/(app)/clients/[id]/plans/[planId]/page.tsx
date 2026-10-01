@@ -15,7 +15,7 @@ import { EmptyState } from "@/components/app/page-header";
 import { formatDate, formatDateTime, humanize } from "@/lib/format";
 import { pageData } from "@/lib/server";
 import { getClientSummary } from "@/services/clients";
-import { getPlan, getPlanItems, getSipItems } from "@/services/plans";
+import { getPlan, getPlanItems, getSipItems, getTranches } from "@/services/plans";
 import { listAllSecurities } from "@/services/securities";
 import { getHoldings } from "@/services/portfolio";
 import type { PlanItemProgress } from "@/types/domain";
@@ -29,7 +29,7 @@ export const metadata = { title: "Portfolio plan" };
 
 export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[planId]">) {
   const { id, planId } = await props.params;
-  const { c, plan, items, sips, securities, heldIds, actor } = await pageData(async (tx) => {
+  const { c, plan, items, sips, securities, heldIds, tranches, actor } = await pageData(async (tx) => {
     const c = await getClientSummary(tx, id);
     const plan = await getPlan(tx, planId);
     const holdings = c.latest_snapshot_id ? await getHoldings(tx, c.latest_snapshot_id) : [];
@@ -37,6 +37,7 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
       c, plan,
       items: await getPlanItems(tx, planId),
       sips: await getSipItems(tx, planId),
+      tranches: await getTranches(tx, planId),
       securities: await listAllSecurities(tx),
       heldIds: holdings.map((h) => h.security_id).filter((x): x is string => Boolean(x)),
     };
@@ -55,11 +56,15 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
           <div className="text-xs text-muted">
             <Link href="/clients" className="hover:underline">Clients</Link> / <Link href={`/clients/${id}`} className="hover:underline">{c.full_name}</Link> / Plan
           </div>
-          <h1 className="mt-0.5 flex items-center gap-2 text-xl font-semibold">{plan.plan_name} <StatusBadge status={plan.status} /></h1>
+          <h1 className="mt-0.5 flex items-center gap-2 text-xl font-semibold">
+            {plan.plan_name} <StatusBadge status={plan.status} />
+            {plan.plan_kind === "ADDITIONAL" ? <Badge tone="info">Additional investment</Badge> : null}
+          </h1>
           <div className="mt-1 flex flex-wrap gap-x-4 text-sm text-muted">
             <span>Plan date {formatDate(plan.plan_date)}</span>
             <span>Source: {humanize(plan.extraction_source)}</span>
             <span>Starting value <Money value={plan.starting_portfolio_value} /></span>
+            {plan.fresh_money ? <span>Fresh money <Money value={plan.fresh_money} /></span> : null}
             {plan.approved_at ? <span>Approved {formatDateTime(plan.approved_at)}</span> : null}
             {plan.approved_target_exit_value != null && plan.approved_target_exit_value !== plan.target_exit_value ? (
               <span className="text-amber-700">Amended since approval (approved exit <Money value={plan.approved_target_exit_value} />)</span>
@@ -74,6 +79,18 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
         ) : null}
       </div>
 
+      {plan.status === "MERGED" && plan.merged_into_plan_id ? (
+        <div className="mb-4 rounded-lg border border-border bg-gray-50 px-4 py-3 text-sm">
+          Added to the <Link className="text-brand hover:underline" href={`/clients/${id}/plans/${plan.merged_into_plan_id}`}>active plan</Link> as a tranche
+          {plan.approved_at ? ` on ${formatDateTime(plan.approved_at)}` : ""}. Calls are issued and tracked there.
+        </div>
+      ) : null}
+      {plan.status === "DRAFT" && plan.plan_kind === "ADDITIONAL" ? (
+        <div className="mb-4 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+          <strong>Additional investment</strong>{plan.fresh_money ? <> of <Money value={plan.fresh_money} /> fresh money</> : null}. Approving adds these lines to the client&apos;s
+          {" "}{c.active_plan_id ? <Link className="underline" href={`/clients/${id}/plans/${c.active_plan_id}`}>active plan</Link> : "active plan"} as a new tranche: the current plan, its calls and its numbers stay.
+        </div>
+      ) : null}
       {plan.status === "DRAFT" ? (
         <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <strong>DRAFT</strong> — this plan is not active and does not drive any numbers yet. {plan.extraction_source === "AI_EXTRACTION" ? "It was extracted from a document: verify every line against the report before approving." : ""}
@@ -109,6 +126,11 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
                 <TR key={i.plan_item_id} className={i.item_status === "CANCELLED" ? "text-muted line-through decoration-gray-300" : undefined}>
                   <TD className="max-w-72">
                     <div className="truncate font-medium" title={i.scheme_name}>{i.scheme_name}</div>
+                    {tranches[i.plan_item_id] ? (
+                      <Link href={`/clients/${id}/plans/${tranches[i.plan_item_id].plan_id}`} title={tranches[i.plan_item_id].plan_name}>
+                        <Badge tone="info">Tranche · {formatDate(tranches[i.plan_item_id].plan_date)}</Badge>
+                      </Link>
+                    ) : null}
                     {i.needs_review ? <Badge tone="pending">needs review</Badge> : null}
                     {!i.security_id && i.side !== "NONE" ? <Badge tone="danger">no security</Badge> : null}
                     {i.reason ? <div className="truncate text-[11px] text-muted no-underline" title={i.reason}>{i.reason}</div> : null}
@@ -200,14 +222,18 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
               <p className="mb-3 text-sm text-red-700">Resolve {missingSecurity ? `${missingSecurity} item(s) without a security` : ""}{missingSecurity && reviewCount ? " and " : ""}{reviewCount ? `${reviewCount} line(s) flagged "needs review"` : ""} first. The database refuses approval otherwise.</p>
             ) : null}
             <ActionForm action={approvePlanAction.bind(null, id, planId)} className="space-y-3">
-              {c.active_plan_id && c.active_plan_id !== planId ? (
+              {c.active_plan_id && c.active_plan_id !== planId && plan.plan_kind !== "ADDITIONAL" ? (
                 <Field label="Reason for replacing the current ACTIVE plan *"><Input name="reason" required /></Field>
               ) : <input type="hidden" name="reason" value="" />}
               <label className="flex items-start gap-2 text-sm">
                 <input type="checkbox" name="confirm" value="yes" className="mt-1" />
-                <span>I have reviewed every line. Approving makes this plan ACTIVE and freezes its approved targets. It does <strong>not</strong> issue any call to the client.</span>
+                {plan.plan_kind === "ADDITIONAL" && c.active_plan_id ? (
+                  <span>I have reviewed every line. Approving adds them to the active plan as a new tranche{plan.fresh_money ? <> and records <Money value={plan.fresh_money} /> of fresh money</> : null}. It does <strong>not</strong> issue any call to the client.</span>
+                ) : (
+                  <span>I have reviewed every line. Approving makes this plan ACTIVE and freezes its approved targets. It does <strong>not</strong> issue any call to the client.</span>
+                )}
               </label>
-              <SubmitButton>Approve &amp; activate</SubmitButton>
+              <SubmitButton>{plan.plan_kind === "ADDITIONAL" && c.active_plan_id ? "Approve & add to active plan" : "Approve & activate"}</SubmitButton>
             </ActionForm>
           </CardContent>
         </Card>

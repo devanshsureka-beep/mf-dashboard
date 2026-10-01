@@ -8,11 +8,12 @@ import { AppError } from "@/lib/errors";
 import { askClaudeForReport, type ReportAiInput } from "@/lib/integrations/report-ai";
 import type { CasParseOutput } from "@/lib/parsers/cas";
 import type { AdvisoryReportParse } from "@/lib/parsers/advisory-report";
+import type { PlanKind } from "@/types/domain";
 import { nameScore } from "@/lib/domain/doc-pairing";
 import { checkDocumentsBelongTogether, holdingsFromCas, previewOnboarding } from "@/services/onboarding";
 
 export type ResolveResult =
-  | { status: "RESOLVED"; report: AdvisoryReportParse; corrections: string[]; rounds: number }
+  | { status: "RESOLVED"; report: AdvisoryReportParse; kind: PlanKind; corrections: string[]; rounds: number }
   | { status: "OPEN"; problems: string[]; corrections: string[]; rounds: number; error: string | null }
   | { status: "WRONG_PAIR"; message: string; corrections: string[]; rounds: number };
 
@@ -30,7 +31,10 @@ export async function resolveWithClaude(args: {
   maxRounds?: number;
   minRoundMs?: number;
   ask?: Ask;
+  /** Tie-out of a candidate report (default: full rebalancing). */
+  check?: (report: AdvisoryReportParse) => { kind: PlanKind; problems: string[] };
 }): Promise<ResolveResult> {
+  const check = args.check ?? ((r: AdvisoryReportParse) => ({ kind: "FULL" as PlanKind, problems: previewOnboarding(args.cas, r).problems }));
   const ask = args.ask ?? askClaudeForReport;
   const maxRounds = args.maxRounds ?? 3;
   const minRoundMs = args.minRoundMs ?? 75_000;
@@ -66,10 +70,12 @@ export async function resolveWithClaude(args: {
     const candidate = { ...ai.report, clientName: named };
     const together = checkDocumentsBelongTogether(args.cas, candidate);
     if (together.problem && ai.report.clientName) return { status: "WRONG_PAIR", message: together.problem, corrections, rounds };
-    problems = previewOnboarding(args.cas, candidate).problems;
+    const checked = check(candidate);
+    problems = checked.problems;
     if (!problems.length) {
       return {
         status: "RESOLVED",
+        kind: checked.kind,
         rounds,
         corrections,
         report: {

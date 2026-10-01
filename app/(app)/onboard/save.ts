@@ -7,8 +7,11 @@ import { AppError } from "@/lib/errors";
 import { withSystemTx, withUserTx, type Actor, type Tx } from "@/lib/db/tx";
 import type { CasParseOutput } from "@/lib/parsers/cas";
 import type { AdvisoryReportParse } from "@/lib/parsers/advisory-report";
+import type { PlanKind } from "@/types/domain";
 import { objectPath, uploadAsUser, type PreparedFile } from "@/lib/storage";
 import { ensureClientFromDocuments, onboardFromDocuments } from "@/services/onboarding";
+import { findClientByPan } from "@/services/cas-intake";
+import { getActivePlanId } from "@/services/plans";
 
 /**
  * Advisors and admins onboard under their own database permissions. Operations
@@ -35,12 +38,22 @@ export async function checkAdvisor(actor: Actor, advisorId: string | null): Prom
   if (!ok[0]) throw new AppError("Choose an active advisor.");
 }
 
+/** Does the client with this PAN already have an ACTIVE plan (an additional investment can be added to it)? */
+export async function hasActivePlanForPan(actor: Actor, pan: string | null): Promise<boolean> {
+  if (!pan) return false;
+  return onboardingTx(actor)(async (tx) => {
+    const c = await findClientByPan(tx, pan);
+    return c ? Boolean(await getActivePlanId(tx, c.id)) : false;
+  });
+}
+
 export interface SavedOnboarding {
   clientId: string;
   clientCode: string;
   clientName: string;
   created: boolean;
   planId: string;
+  kind: PlanKind;
   itemsNeedingReview: number;
   warnings: string[];
 }
@@ -55,10 +68,11 @@ export async function saveOnboarding(
     reportFile: PreparedFile;
     advisorId: string | null;
     phone: string | null;
+    kind?: PlanKind;
   },
 ): Promise<SavedOnboarding> {
   const run = onboardingTx(actor);
-  const client = await run((tx, a) => ensureClientFromDocuments(tx, a, { cas: args.cas, report: args.report, advisorId: args.advisorId, phone: args.phone }));
+  const client = await run((tx, a) => ensureClientFromDocuments(tx, a, { cas: args.cas, report: args.report, advisorId: args.advisorId, phone: args.phone, kind: args.kind }));
 
   const casPath = objectPath(client.id, "CAS", args.casFile);
   const reportPath = objectPath(client.id, "ADVISORY_REPORT", args.reportFile);
@@ -71,9 +85,10 @@ export async function saveOnboarding(
     casFile: { fileName: args.casFile.fileName, mimeType: args.casFile.mimeType, size: args.casFile.size, sha256: args.casFile.sha256, path: casPath, passwordProtected: args.passwordProtected },
     report: args.report,
     reportFile: { fileName: args.reportFile.fileName, mimeType: args.reportFile.mimeType, size: args.reportFile.size, sha256: args.reportFile.sha256, path: reportPath },
+    kind: args.kind,
   }));
   return {
     clientId: out.clientId, clientCode: out.clientCode, clientName: client.full_name, created: client.created,
-    planId: out.planId, itemsNeedingReview: out.itemsNeedingReview, warnings: out.warnings,
+    planId: out.planId, kind: args.kind ?? "FULL", itemsNeedingReview: out.itemsNeedingReview, warnings: out.warnings,
   };
 }

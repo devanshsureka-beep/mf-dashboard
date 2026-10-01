@@ -86,6 +86,11 @@ export const REPORT_AI_SCHEMA = obj({
       note: TEXT("\"\" if none"),
     }),
   },
+  report_kind: {
+    type: "string", enum: ["FULL_REVIEW", "ADDITIONAL_INVESTMENT"],
+    description: "ADDITIONAL_INVESTMENT when the report only plans fresh money the client is adding (on top of an earlier plan); FULL_REVIEW when it reviews and rebalances the whole portfolio.",
+  },
+  fresh_money: NUM("Fresh money the client is adding that the report invests (rupees); 0 if none"),
   cas_funds_not_in_report: {
     type: "array",
     description: "CAS fund names (exactly as in the CAS list) that the report does not mention anywhere, after searching every page.",
@@ -126,6 +131,7 @@ Rules:
   * "marked top-up, but no ... holding": use kind NEW unless the client holds that fund in that plan type.
   * "sell lines add up to X, but the report's sell total is Y" (same for buys): re-read every line and the printed total; a line is missing, duplicated or misread.
   * "reviews X ... not in the CAS" / "both sells it and keeps it": each fund appears once, as a sell (partial or full), a hold, or neither.
+- report_kind: ADDITIONAL_INVESTMENT when the report plans fresh money the client is adding on top of an earlier plan (it does not review every holding); then the CAS funds it does not mention are NOT listed in cas_funds_not_in_report, and fresh_money is the amount being added. FULL_REVIEW otherwise.
 - Dates as YYYY-MM-DD.`;
 
 export interface ReportAiInput {
@@ -206,6 +212,8 @@ export function answerToReport(a: ReportAiAnswer, base: AdvisoryReportParse | nu
     template: "AI_ASSISTED",
     clientName: a.client_name ?? base?.clientName ?? null,
     riskProfile: mapRisk(a.risk_profile) ?? base?.riskProfile ?? null,
+    reportKind: a.report_kind === "ADDITIONAL_INVESTMENT" ? "ADDITIONAL" : a.report_kind === "FULL_REVIEW" ? "FULL" : (base?.reportKind ?? null),
+    freshMoney: a.fresh_money ?? base?.freshMoney ?? null,
     goal: a.goal ?? base?.goal ?? null,
     casPeriod: { from: base?.casPeriod.from ?? null, to: base?.casPeriod.to ?? null },
     valuationDate: a.report_cas_date ?? base?.valuationDate ?? null,

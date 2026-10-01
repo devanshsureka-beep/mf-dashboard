@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { runAction, str, type ActionResult } from "@/lib/actions";
+import { num, runAction, str, type ActionResult } from "@/lib/actions";
 import { casPasswordTemplate, passwordCandidates } from "@/lib/cas/password";
 import { readCasPdf, readReportPdf } from "@/lib/cas/reader";
 import { AppError } from "@/lib/errors";
@@ -10,7 +10,8 @@ import { ALL_ROLES } from "@/lib/server";
 import { requireActorForAction } from "@/lib/auth/session";
 import { prepareUpload } from "@/lib/storage";
 import { knownClientPhones } from "@/services/cas-intake";
-import { checkAdvisor, onboardingTx, saveOnboarding } from "./save";
+import { decideReportKind, problemsMessage, type ReportKindChoice } from "@/services/onboarding";
+import { checkAdvisor, hasActivePlanForPan, onboardingTx, saveOnboarding } from "./save";
 
 /**
  * Onboard from the CAS + the paid advisory report. Passwords (typed or built
@@ -37,9 +38,15 @@ export async function onboardAction(_p: ActionResult | null, fd: FormData): Prom
     });
     const { parsed: cas, passwordProtected } = await readCasPdf(casFile.bytes, candidates);
 
-    const report = await readReportPdf(reportFile.bytes, candidates);
+    const read = await readReportPdf(reportFile.bytes, candidates);
+    const fresh = num(fd, "fresh_money");
+    const report = fresh && fresh > 0 ? { ...read, freshMoney: fresh } : read;
+    const choiceRaw = str(fd, "report_kind");
+    const choice: ReportKindChoice = choiceRaw === "FULL" || choiceRaw === "ADDITIONAL" ? choiceRaw : "AUTO";
+    const decided = decideReportKind(cas, report, { choice, hasActivePlan: await hasActivePlanForPan(actor, cas.investor.pan) });
+    if (decided.problems.length) throw new AppError(problemsMessage(decided.problems));
 
-    const out = await saveOnboarding(actor, { cas, casFile, passwordProtected, report, reportFile, advisorId, phone: mobile });
+    const out = await saveOnboarding(actor, { cas, casFile, passwordProtected, report, reportFile, advisorId, phone: mobile, kind: decided.kind });
     target = `/clients/${out.clientId}/plans/${out.planId}?onboarded=${out.created ? "new" : "existing"}`;
   });
   if (!res.ok) return res;

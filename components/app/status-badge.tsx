@@ -21,6 +21,7 @@ const TONES: Record<string, Tone> = {
   ACTIVE: "info",
   COMPLETED: "success",
   REPLACED: "muted",
+  MERGED: "muted",
   OPEN: "info",
   // plan item progress
   NOT_ADVISED: "neutral",

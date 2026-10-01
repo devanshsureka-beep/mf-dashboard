@@ -124,6 +124,8 @@ export const advisoryReportResultSchema = z
       plan_date: isoDate.optional().nullable(),
       starting_portfolio_value: money.optional().nullable(),
       notes: z.string().trim().max(8000).optional().nullable(),
+      plan_kind: z.enum(["FULL", "ADDITIONAL"]).optional(),
+      fresh_money: money.optional().nullable(),
     }),
     items: z.array(advisoryPlanItemSchema).max(300).default([]),
     sip_items: z.array(advisorySipItemSchema).max(100).default([]),
@@ -214,6 +216,8 @@ export const reportAiAnswerSchema = z.object({
     fund: fundZ, folio: textZ, folio_count: countZ,
     plan_type: planZ, value: optAmountZ, deferred: z.boolean(), note: textZ,
   })).max(300),
+  report_kind: z.enum(["FULL_REVIEW", "ADDITIONAL_INVESTMENT"]).nullable().default(null),
+  fresh_money: optAmountZ.default(null),
   cas_funds_not_in_report: z.array(z.string()).max(200).default([]),
   corrections: z.array(z.string()).max(100),
 });
