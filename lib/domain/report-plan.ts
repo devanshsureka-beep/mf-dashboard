@@ -20,7 +20,10 @@ export interface PlanHolding {
 }
 
 export interface PlanItemDraft {
-  action: "SELL" | "SWITCH" | "BUY" | "RETAIN";
+  /** MIGRATE: Regular -> Direct plan of the same fund (not a sell or buy; tracked as a checklist). */
+  action: "SELL" | "SWITCH" | "BUY" | "RETAIN" | "MIGRATE";
+  /** MIGRATE: the Direct plan to move to. */
+  switch_to_scheme_name?: string | null;
   scheme_name: string;
   isin: string | null;
   folio_number: string | null;
@@ -283,6 +286,11 @@ export function buildPlanFromReport(
   // A review row covers every folio of one fund + plan ("Direct · 3 folios"); the CAS lists folios separately.
   const holdReason = new Map<PlanHolding, string>();
   const unreported: string[] = [];
+  // Holdings the report moves from Regular to the Direct plan of the same fund -> Direct fund name.
+  const migrateTo = new Map<PlanHolding, string>();
+  const isMigrate = (note: string | null | undefined) => /MIGRATE TO DIRECT/i.test(note ?? "");
+  const directName = (fund: string) =>
+    withPlanType(fund.replace(/\s*[-(]?\s*\b(regular|reg)\b(\s+plan)?\s*\)?/gi, " ").replace(/\s+/g, " ").trim(), "DIRECT");
   if (report.review.length) {
     const reviewed = new Set<PlanHolding>();
     const fundKey = (h: PlanHolding) => h.isin ?? h.scheme_name.toLowerCase();
@@ -355,12 +363,14 @@ export function buildPlanFromReport(
         if (taken.has(g)) problems.push(`${g.scheme_name}: the report both sells it and keeps it.`);
         covered.add(g);
         holdReason.set(g, `Kept for now: ${hd.note || "held / deferred in the report"}`.slice(0, 300));
+        if (isMigrate(hd.note)) migrateTo.set(g, directName(hd.fund));
       }
     }
     for (const m of report.mentioned) {
       for (const g of pick(m.fund, m.folio, m.folioCount, m.planType)) {
         covered.add(g);
         if (m.note && !holdReason.has(g)) holdReason.set(g, m.note.slice(0, 300));
+        if (isMigrate(m.note)) migrateTo.set(g, directName(m.fund));
       }
     }
     for (const x of [...report.sips.filter((z) => z.change !== "START").map((z) => ({ fund: z.fund, planType: z.planType })), ...report.buys.filter((b) => b.kind === "TOP_UP").map((b) => ({ fund: b.fund, planType: b.planType }))]) {
@@ -387,8 +397,18 @@ export function buildPlanFromReport(
     }
   }
 
-  for (const h of additional ? [] : live) {
+  for (const h of live) {
     if (taken.has(h)) continue;
+    const to = migrateTo.get(h);
+    if (to && holdingPlan(h) === "REGULAR") {
+      items.push({
+        action: "MIGRATE", scheme_name: h.scheme_name, isin: h.isin, folio_number: h.folio_number,
+        target_amount: h.current_value, current_amount: h.current_value, switch_to_scheme_name: to,
+        reason: (holdReason.get(h) ?? "Migrate to Direct").replace(/^Kept for now: /, ""), priority: (priority += 10), plan_type: "DIRECT",
+      });
+      continue;
+    }
+    if (additional) continue;
     items.push({ action: "RETAIN", scheme_name: h.scheme_name, isin: h.isin, folio_number: h.folio_number, target_amount: 0, current_amount: h.current_value, reason: holdReason.get(h) ?? "Not sold in the report", priority: (priority += 10) });
   }
 

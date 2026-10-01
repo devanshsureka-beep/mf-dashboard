@@ -13,7 +13,7 @@ export type RiskProfile =
   | "AGGRESSIVE";
 export type PlanStatus = "DRAFT" | "ACTIVE" | "COMPLETED" | "REPLACED" | "CANCELLED" | "MERGED";
 export type PlanKind = "FULL" | "ADDITIONAL";
-export type PlanAction = "SELL" | "BUY" | "RETAIN" | "SWITCH" | "STOP_SIP" | "START_SIP";
+export type PlanAction = "SELL" | "BUY" | "RETAIN" | "SWITCH" | "STOP_SIP" | "START_SIP" | "MIGRATE";
 export type AdviceAction = "BUY" | "SELL" | "SWITCH";
 export type AdviceStatus = "ISSUED" | "PARTIALLY_EXECUTED" | "EXECUTED" | "CANCELLED" | "EXPIRED" | "REVISED";
 export type Channel = "PHONE" | "WHATSAPP" | "EMAIL" | "IN_PERSON" | "OTHER";

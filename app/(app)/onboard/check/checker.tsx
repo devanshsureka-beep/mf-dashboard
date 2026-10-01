@@ -17,7 +17,7 @@ const ICON = {
   WARN: <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600" />,
   FAIL: <XCircle className="h-5 w-5 shrink-0 text-red-600" />,
 };
-const ACTION_TONE = { SELL: "danger", SWITCH: "purple", BUY: "success", RETAIN: "muted" } as const;
+const ACTION_TONE = { SELL: "danger", SWITCH: "purple", BUY: "success", RETAIN: "muted", MIGRATE: "info" } as const;
 const SIP_TONE = { START: "success", STOP: "danger", CHANGE: "info" } as const;
 
 export function Checker() {

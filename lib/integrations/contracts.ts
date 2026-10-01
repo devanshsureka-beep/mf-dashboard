@@ -87,7 +87,7 @@ export type CasTransactionInput = z.infer<typeof casTransactionSchema>;
 // Advisory report extraction -> DRAFT plan (never ACTIVE)
 // -----------------------------------------------------------------------------
 export const advisoryPlanItemSchema = z.object({
-  action: z.enum(["SELL", "BUY", "RETAIN", "SWITCH"]),
+  action: z.enum(["SELL", "BUY", "RETAIN", "SWITCH", "MIGRATE"]),
   scheme_name: z.string().trim().min(1),
   isin: isin.optional().nullable(),
   folio_number: optionalText,

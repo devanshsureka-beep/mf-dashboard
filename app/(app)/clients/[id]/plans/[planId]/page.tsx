@@ -12,16 +12,17 @@ import { TransitionSummary } from "@/components/app/transition-summary";
 import { SecuritySelect } from "@/components/app/security-select";
 import { SipTable } from "@/components/app/sip-table";
 import { EmptyState } from "@/components/app/page-header";
-import { formatDate, formatDateTime, humanize } from "@/lib/format";
+import { formatDate, formatDateTime, humanize, toISTDateTimeLocal } from "@/lib/format";
 import { pageData } from "@/lib/server";
 import { getClientSummary } from "@/services/clients";
 import { getPlan, getPlanItems, getSipItems, getTranches } from "@/services/plans";
+import { getMigrations, type MigrationRow } from "@/services/migrations";
 import { listAllSecurities } from "@/services/securities";
 import { getHoldings } from "@/services/portfolio";
 import type { PlanItemProgress } from "@/types/domain";
 import {
   addPlanItemAction, addSipAction, approvePlanAction, cancelPlanItemAction, closePlanAction, deletePlanItemAction,
-  deleteSipAction, resolveSipSecurityAction, updatePlanItemAction,
+  deleteSipAction, issueMigrationCallsAction, resolveSipSecurityAction, updatePlanItemAction,
 } from "../actions";
 import { setSipStatusAction } from "../../actions";
 
@@ -29,7 +30,7 @@ export const metadata = { title: "Portfolio plan" };
 
 export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[planId]">) {
   const { id, planId } = await props.params;
-  const { c, plan, items, sips, securities, heldIds, tranches, actor } = await pageData(async (tx) => {
+  const { c, plan, items: allItems, sips, securities, heldIds, tranches, migrations, actor } = await pageData(async (tx) => {
     const c = await getClientSummary(tx, id);
     const plan = await getPlan(tx, planId);
     const holdings = c.latest_snapshot_id ? await getHoldings(tx, c.latest_snapshot_id) : [];
@@ -38,11 +39,14 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
       items: await getPlanItems(tx, planId),
       sips: await getSipItems(tx, planId),
       tranches: await getTranches(tx, planId),
+      migrations: await getMigrations(tx, planId),
       securities: await listAllSecurities(tx),
       heldIds: holdings.map((h) => h.security_id).filter((x): x is string => Boolean(x)),
     };
   });
   const canAdvise = actor.role !== "OPERATIONS";
+  // Migrations have their own checklist below.
+  const items = allItems.filter((i) => i.action !== "MIGRATE");
   const editable = canAdvise && (plan.status === "DRAFT" || plan.status === "ACTIVE");
   const isActive = plan.status === "ACTIVE";
   const actionable = items.filter((i) => i.side !== "NONE" && i.item_status !== "CANCELLED");
@@ -108,6 +112,10 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
         <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {actionable.map((i) => <ItemCard key={i.plan_item_id} i={i} clientId={id} canAdvise={canAdvise} />)}
         </div>
+      ) : null}
+
+      {migrations.length ? (
+        <MigrationCard rows={migrations} clientId={id} planId={planId} canIssue={isActive && canAdvise} />
       ) : null}
 
       <Card className="mt-4">
@@ -324,5 +332,73 @@ function ItemEditor({ i, clientId, planId, isActive, securities, heldIds }: {
         </div>
       </div>
     </details>
+  );
+}
+
+const MIGRATION_LABEL: Record<MigrationRow["migration_status"], { label: string; tone: "neutral" | "pending" | "success" | "muted" }> = {
+  TO_DO: { label: "To do", tone: "neutral" },
+  CALL_ISSUED: { label: "Switch call issued", tone: "pending" },
+  DONE: { label: "Done", tone: "success" },
+  DONE_IN_CAS: { label: "Done (seen in CAS)", tone: "success" },
+  CANCELLED: { label: "Cancelled", tone: "muted" },
+};
+
+function MigrationCard({ rows, clientId, planId, canIssue }: { rows: MigrationRow[]; clientId: string; planId: string; canIssue: boolean }) {
+  const done = rows.filter((r) => r.migration_status === "DONE" || r.migration_status === "DONE_IN_CAS");
+  const total = rows.reduce((t, r) => t + r.current_value, 0);
+  const todo = rows.filter((r) => r.migration_status === "TO_DO");
+  const table = (
+    <Table className="text-[13px] [&_td]:px-2 [&_th]:px-2">
+      <THead><TR>{canIssue ? <TH /> : null}<TH>Regular holding</TH><TH>Move to</TH><TH className="text-right">Value</TH><TH>Status</TH></TR></THead>
+      <TBody>
+        {rows.map((r) => (
+          <TR key={r.plan_item_id}>
+            {canIssue ? (
+              <TD>{r.migration_status === "TO_DO" ? <input type="checkbox" name="item" value={r.plan_item_id} defaultChecked aria-label={`Migrate ${r.scheme_name}`} /> : null}</TD>
+            ) : null}
+            <TD className="max-w-72">
+              <div className="truncate font-medium" title={r.scheme_name}>{r.scheme_name}</div>
+              <div className="text-[11px] text-muted">Folio {r.folio_number ?? "—"}{r.reason ? ` · ${r.reason}` : ""}</div>
+            </TD>
+            <TD className="max-w-64 truncate text-xs" title={r.switch_to_scheme_name ?? ""}>{r.switch_to_scheme_name ?? <span className="text-amber-700">Direct plan of the same fund</span>}</TD>
+            <TD className="text-right"><Money value={r.current_value} /></TD>
+            <TD>
+              <Badge tone={MIGRATION_LABEL[r.migration_status].tone}>{MIGRATION_LABEL[r.migration_status].label}</Badge>
+              {r.migration_status === "CALL_ISSUED" ? <div className="text-[11px] text-muted">Advised <Money value={r.advised_amount} /></div> : null}
+            </TD>
+          </TR>
+        ))}
+      </TBody>
+    </Table>
+  );
+  return (
+    <Card className="mt-4">
+      <CardHeader>
+        <CardTitle>Migrate to Direct</CardTitle>
+        <span className="text-xs text-muted">
+          {done.length} of {rows.length} done · <Money value={total} /> in Regular plans. Not part of the sell/buy targets: the money stays in the same fund.
+        </span>
+      </CardHeader>
+      {canIssue && todo.length ? (
+        <ActionForm action={issueMigrationCallsAction.bind(null, clientId, planId)} className="space-y-3">
+          {table}
+          <div className="flex flex-wrap items-end gap-3 px-4 pb-4">
+            <Field label="Told the client by">
+              <Select name="channel" defaultValue="PHONE">
+                <option value="PHONE">Phone</option><option value="WHATSAPP">WhatsApp</option><option value="EMAIL">Email</option>
+                <option value="IN_PERSON">In person</option><option value="OTHER">Other</option>
+              </Select>
+            </Field>
+            <Field label="When"><Input type="datetime-local" name="communicated_at" defaultValue={toISTDateTimeLocal()} /></Field>
+            <SubmitButton>Issue switch calls for ticked funds</SubmitButton>
+          </div>
+        </ActionForm>
+      ) : (
+        <>
+          {table}
+          {!canIssue ? <p className="px-4 pb-4 text-xs text-muted">Switch calls can be issued once the plan is active.</p> : null}
+        </>
+      )}
+    </Card>
   );
 }

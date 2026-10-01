@@ -10,6 +10,9 @@ import {
   deleteDraftSipItem, updatePlanItem, type PlanItemInput,
 } from "@/services/plans";
 import type { Tx } from "@/lib/db/tx";
+import { fromISTDateTimeLocal } from "@/lib/format";
+import { issueMigrationCalls } from "@/services/migrations";
+import type { Channel } from "@/types/domain";
 
 const opts = { roles: ADVISORY_ROLES };
 
@@ -149,5 +152,22 @@ export async function closePlanAction(clientId: string, planId: string, _p: Acti
     await actionTx((tx) => closePlan(tx, planId, status, reqStr(fd, "reason", "Reason")), opts);
     refresh(clientId, planId);
     return `Plan marked ${status}.`;
+  });
+}
+
+const CHANNELS: Channel[] = ["PHONE", "WHATSAPP", "EMAIL", "IN_PERSON", "OTHER"];
+
+/** Switch calls (Regular -> Direct) for the ticked migration lines, in one batch. */
+export async function issueMigrationCallsAction(clientId: string, planId: string, _p: ActionResult | null, fd: FormData): Promise<ActionResult> {
+  return runAction("issueMigrationCalls", async () => {
+    const ids = fd.getAll("item").map(String).filter((x) => /^[0-9a-f-]{36}$/i.test(x));
+    if (!ids.length) throw new AppError("Tick at least one fund to migrate.");
+    const channel = str(fd, "channel") as Channel;
+    if (!CHANNELS.includes(channel)) throw new AppError("Choose how the client was told.");
+    const at = str(fd, "communicated_at");
+    const communicatedAt = at ? fromISTDateTimeLocal(at) : new Date();
+    const r = await actionTx((tx, actor) => issueMigrationCalls(tx, actor, { clientId, planId, planItemIds: ids, channel, communicatedAt }), opts);
+    refresh(clientId, planId);
+    return `${r.count} switch call(s) issued (${r.batchCode}). They complete when the client's CAS shows the switch, or when execution is recorded.`;
   });
 }

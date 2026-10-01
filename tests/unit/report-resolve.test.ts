@@ -138,3 +138,24 @@ describe("additional investment report (fresh money on top of the active plan)",
     expect(decideReportKind(cas, said, { choice: "AUTO", hasActivePlan: true }).kind).toBe("ADDITIONAL");
   });
 });
+
+describe("Migrate to Direct", () => {
+  it("a Regular holding the report migrates becomes a MIGRATE line to the Direct plan; an already-Direct one stays Keep", () => {
+    const hs = holdingsFromCas(cas).map((h) => (/360 ONE/.test(h.scheme_name) ? { ...h, scheme_name: "360 ONE Flexicap Fund Regular Plan Growth", plan_type: "REGULAR" as const } : h));
+    const a: ReportAiAnswer = {
+      ...base,
+      holds: base.holds.map((h, i) => (i < 2 ? { ...h, note: "MIGRATE TO DIRECT; Hold", plan_type: i === 0 ? null : h.plan_type } : h)),
+      cas_funds_not_in_report: ["HSBC Value Fund - Direct Growth"],
+    };
+    const plan = buildPlanFromReport(answerToReport(a, null), hs, cas.valuationDate);
+    expect(plan.problems).toEqual([]);
+    const mig = plan.items.filter((i) => i.action === "MIGRATE");
+    expect(mig).toHaveLength(1);
+    expect(mig[0]).toMatchObject({ scheme_name: expect.stringMatching(/360 ONE .*Regular/), switch_to_scheme_name: "360 ONE Flexicap Fund (Direct)", target_amount: 31823.12 });
+    expect(mig[0].reason).toMatch(/^MIGRATE TO DIRECT; Hold/);
+    // The Consumption fund is already Direct: nothing to migrate.
+    expect(plan.items.find((i) => /Consumption/.test(i.scheme_name))?.action).toBe("RETAIN");
+    // Not part of the sell / buy totals.
+    expect(plan.declared_totals.exit_value).toBe(227651.49);
+  });
+});

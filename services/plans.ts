@@ -404,7 +404,14 @@ export async function ingestAdvisoryReport(
     const sug = known(it.scheme_name) ?? (await suggestSecurity(tx, it.scheme_name, it.isin, pool));
     const flag = !sug.confident && it.action !== "RETAIN";
     if (flag) needsReview++;
+    // MIGRATE / SWITCH: the fund to move to (resolved by the caller, or a confident match).
+    let switchTo: string | null = null;
+    if (it.switch_to_scheme_name) {
+      const to = known(it.switch_to_scheme_name) ?? (await suggestSecurity(tx, it.switch_to_scheme_name, null, pool));
+      switchTo = to.confident ? to.id : null;
+    }
     itemRows.push({
+      switch_to_security_id: switchTo,
       plan_id: planId, client_id: clientId, security_id: sug.id, scheme_name: it.scheme_name, folio_number: it.folio_number ?? null,
       action: it.action, target_amount: it.target_amount, target_units: it.target_units ?? null, current_amount: it.current_amount ?? null,
       target_weight: it.target_weight ?? null, reason: it.reason ?? null, priority: it.priority ?? priority, needs_review: flag,

@@ -215,7 +215,10 @@ export async function onboardFromDocuments(
   for (const h of holdings) if (h.security_id) securityIds[h.scheme_name.toLowerCase()] = h.security_id;
   const pool = await tx<SecurityCandidate[]>`
     select id, scheme_name, isin, plan_type, aliases from public.security_master where is_active`;
-  for (const it of [...draft.items.filter((i) => i.action === "BUY"), ...draft.sip_items.filter((s) => !s.isin)]) {
+  const migrations = draft.items
+    .filter((i) => i.action === "MIGRATE" && i.switch_to_scheme_name)
+    .map((i) => ({ scheme_name: i.switch_to_scheme_name as string, plan_type: "DIRECT" as const, amc: null }));
+  for (const it of [...draft.items.filter((i) => i.action === "BUY"), ...draft.sip_items.filter((s) => !s.isin), ...migrations]) {
     const key = it.scheme_name.toLowerCase();
     if (securityIds[key]) continue;
     const sug = await suggestSecurity(tx, it.scheme_name, null, pool);
@@ -239,6 +242,7 @@ export async function onboardFromDocuments(
     items: draft.items.map((i) => ({
       action: i.action, scheme_name: i.scheme_name, isin: i.isin, folio_number: i.folio_number,
       target_amount: i.target_amount, current_amount: i.current_amount, reason: i.reason, priority: i.priority,
+      switch_to_scheme_name: i.switch_to_scheme_name ?? null,
     })),
     sip_items: draft.sip_items.map((s) => ({
       action: s.action, scheme_name: s.scheme_name, isin: s.isin, folio_number: s.folio_number,
