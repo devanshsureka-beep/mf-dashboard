@@ -227,6 +227,10 @@ Advisory reports come in many layouts. The built-in readers (`lib/parsers/*`) ru
 
 **Safety:** Claude's answer is validated with zod and then goes through exactly the same tie-out as any report (`buildPlanFromReport`): every sell and kept fund must match a CAS holding and value, totals must add up, every CAS fund must be covered. Anything that does not tie out is shown as **Needs review** and nothing is saved. A clean result is saved as a **DRAFT** plan whose notes list Claude's corrections; an advisor approves it.
 
+**Rounds:** points still open after Claude's answer go back to Claude with that answer as the draft and per-point instructions (`services/report-resolve.ts`), up to 3 rounds within 240 s of the request (the rest of the 300 s is for saving).
+
+**Funds the report never mentions:** Claude lists them (exact CAS names) in `cas_funds_not_in_report`. They are kept as RETAIN with "Not mentioned in the advisory report… Advisor to confirm" and listed in the plan notes, as long as together they are at most 25% of the portfolio (`NOT_IN_REPORT_LIMIT`); above that the client stays in Needs review. Claude-read plans are stored with source AI_EXTRACTION, and a report that prints no client name must have the client's name in its file name.
+
 **Settings:** `REPORT_AI_URL` (the webhook's production URL) and `REPORT_AI_KEY` (also stored in the n8n Header Auth credential, header name `X-Desk-Key`). Without them the page still works and lists unreconciled reports for review.
 
 **Passwords:** bulk onboarding also tries parts of each CAS file name as the password (`fileNamePasswords` in `lib/cas/password.ts`). Passwords are only used in memory; stored copies are renamed (`CAS <name> <date>.pdf`, `Advisory report <name>.pdf`), so a password in a file name never reaches storage or the database.

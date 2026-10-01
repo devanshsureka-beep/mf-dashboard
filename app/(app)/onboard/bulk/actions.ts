@@ -2,15 +2,17 @@
 
 import { revalidatePath } from "next/cache";
 import { str } from "@/lib/actions";
-import { casPasswordTemplate, passwordCandidates } from "@/lib/cas/password";
+import { casPasswordTemplate, fileNamePasswords, passwordCandidates } from "@/lib/cas/password";
 import { identifyPdf, readCasPdf, readReportDetailed } from "@/lib/cas/reader";
 import { AppError, logServerError, toUserMessage } from "@/lib/errors";
 import { reportAiConfigured } from "@/lib/integrations/report-ai";
 import { requireActorForAction } from "@/lib/auth/session";
 import { ALL_ROLES } from "@/lib/server";
+import { maskPan } from "@/lib/format";
 import { prepareUpload, type PreparedFile } from "@/lib/storage";
 import type { AdvisoryReportParse } from "@/lib/parsers/advisory-report";
 import { findClientByPan, knownClientPhones } from "@/services/cas-intake";
+import { findDuplicateDocument } from "@/services/portfolio";
 import { checkDocumentsBelongTogether, previewOnboarding } from "@/services/onboarding";
 import { resolveWithClaude } from "@/services/report-resolve";
 import { checkAdvisor, onboardingTx, saveOnboarding } from "../save";
@@ -35,7 +37,6 @@ export interface BulkFileInfo {
   message: string;
 }
 
-const maskPan = (pan: string | null) => (pan ? `${pan.slice(0, 2)}XXX${pan.slice(5, 9).replace(/\d/g, "X")}${pan.slice(9)}` : null);
 
 async function candidatesFor(actorRun: ReturnType<typeof onboardingTx>, fileName: string): Promise<string[]> {
   const phones = await actorRun((tx) => knownClientPhones(tx));
@@ -98,11 +99,11 @@ const fail = (outcome: BulkOnboardRow["outcome"], message: string, extra: Partia
 /** Stored names carry no password (file names may hold one). */
 const storedAs = (f: PreparedFile, name: string): PreparedFile => ({ ...f, fileName: name.replace(/[^\w .()-]+/g, " ").replace(/\s+/g, " ").trim() });
 
-/** The page allows 300 s per request: Claude rounds must finish inside that. */
-const REQUEST_BUDGET_MS = 285_000;
+/** The page allows 300 s per request: Claude rounds end by 240 s, the rest is for saving. */
+const CLAUDE_BUDGET_MS = 240_000; // leaves time to save the client, files and plan
 
 export async function onboardBulkPairAction(fd: FormData): Promise<BulkOnboardRow> {
-  const deadline = Date.now() + REQUEST_BUDGET_MS;
+  const deadline = Date.now() + CLAUDE_BUDGET_MS;
   try {
     const actor = await requireActorForAction(ALL_ROLES);
     const run = onboardingTx(actor);
@@ -113,17 +114,15 @@ export async function onboardBulkPairAction(fd: FormData): Promise<BulkOnboardRo
     const reportUpload = await prepareUpload(fd.get("report") as File | null);
     if (casUpload.mimeType !== "application/pdf" || reportUpload.mimeType !== "application/pdf") return fail("FAILED", "Both files must be PDFs.");
 
-    const { parsed: cas, passwordProtected } = await readCasPdf(casUpload.bytes, await candidatesFor(run, casUpload.fileName));
+    const casCandidates = await candidatesFor(run, casUpload.fileName);
+    const { parsed: cas, passwordProtected } = await readCasPdf(casUpload.bytes, casCandidates);
     if (!cas.investor.pan) return fail("FAILED", "The CAS shows no PAN, so the client cannot be identified.");
 
     // Same report already onboarded for this client: nothing to do.
     const existing = await run((tx) => findClientByPan(tx, cas.investor.pan));
     if (existing) {
-      const dup = await run((tx) => tx<{ id: string }[]>`
-        select id from public.documents
-        where client_id = ${existing.id} and document_type = 'ADVISORY_REPORT' and sha256 = ${reportUpload.sha256} and deleted_at is null
-        limit 1`);
-      if (dup[0]) {
+      const dup = await run((tx) => findDuplicateDocument(tx, existing.id, "ADVISORY_REPORT", reportUpload.sha256));
+      if (dup) {
         return fail("ALREADY", "This report was already onboarded for this client.", {
           clientId: existing.id, clientName: existing.full_name, clientCode: existing.client_code,
         });
@@ -131,7 +130,7 @@ export async function onboardBulkPairAction(fd: FormData): Promise<BulkOnboardRo
     }
 
     // 1) Built-in readers.
-    const read = await readReportDetailed(reportUpload.bytes, []);
+    const read = await readReportDetailed(reportUpload.bytes, [...fileNamePasswords(reportUpload.fileName), ...casCandidates]);
     let report: AdvisoryReportParse | null = read.report;
     if (report) {
       const together = checkDocumentsBelongTogether(cas, report);
@@ -147,7 +146,7 @@ export async function onboardBulkPairAction(fd: FormData): Promise<BulkOnboardRo
       if (!reportAiConfigured()) {
         return fail("NEEDS_REVIEW", "The report does not reconcile with the CAS, and the Claude reader is not set up.", { problems });
       }
-      const r = await resolveWithClaude({ cas, reportPdf: reportUpload.bytes, draft: report, readerError: read.error, problems, deadline });
+      const r = await resolveWithClaude({ cas, reportPdf: reportUpload.bytes, draft: report, readerError: read.error, problems, deadline, reportFileName: reportUpload.fileName });
       usedClaude = r.rounds > 0;
       corrections = r.corrections;
       if (r.status === "WRONG_PAIR") return fail("FAILED", `${r.message} Pair this CAS with the right report.`, { usedClaude, corrections });

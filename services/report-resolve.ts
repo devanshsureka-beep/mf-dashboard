@@ -8,6 +8,7 @@ import { AppError } from "@/lib/errors";
 import { askClaudeForReport, type ReportAiInput } from "@/lib/integrations/report-ai";
 import type { CasParseOutput } from "@/lib/parsers/cas";
 import type { AdvisoryReportParse } from "@/lib/parsers/advisory-report";
+import { nameScore } from "@/lib/domain/doc-pairing";
 import { checkDocumentsBelongTogether, holdingsFromCas, previewOnboarding } from "@/services/onboarding";
 
 export type ResolveResult =
@@ -24,6 +25,8 @@ export async function resolveWithClaude(args: {
   readerError: string | null;
   problems: string[];
   deadline: number;
+  /** Original report file name: proves the client when the report prints no name. */
+  reportFileName?: string | null;
   maxRounds?: number;
   minRoundMs?: number;
   ask?: Ask;
@@ -57,7 +60,10 @@ export async function resolveWithClaude(args: {
     }
     rounds = round;
     corrections = [...corrections, ...ai.corrections.map((c) => (round > 1 ? `(round ${round}) ${c}` : c))];
-    const candidate = { ...ai.report, clientName: ai.report.clientName ?? args.cas.investor.name };
+    // Never borrow the CAS name: a report with no printed name must at least be named after the client.
+    const named = ai.report.clientName
+      ?? (args.reportFileName && nameScore(args.cas.investor.name, args.reportFileName) >= 1 ? args.cas.investor.name : null);
+    const candidate = { ...ai.report, clientName: named };
     const together = checkDocumentsBelongTogether(args.cas, candidate);
     if (together.problem && ai.report.clientName) return { status: "WRONG_PAIR", message: together.problem, corrections, rounds };
     problems = previewOnboarding(args.cas, candidate).problems;

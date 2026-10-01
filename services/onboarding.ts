@@ -10,6 +10,7 @@ import { registerDocument } from "@/services/documents";
 import { ingestAdvisoryReport } from "@/services/plans";
 import { resolveOrCreateSecurity, suggestSecurity } from "@/services/securities";
 import type { SecurityCandidate } from "@/lib/domain/securities";
+import { RISK_PROFILES } from "@/types/domain";
 
 /**
  * Onboarding from two documents: the client's CAS and the paid advisory
@@ -18,8 +19,6 @@ import type { SecurityCandidate } from "@/lib/domain/securities";
  * advisor to review and approve. For an existing client, the new report
  * becomes a new DRAFT; approving it replaces the current plan (history kept).
  */
-
-const RISK_PROFILES = ["CONSERVATIVE", "MODERATELY_CONSERVATIVE", "MODERATE", "MODERATELY_AGGRESSIVE", "AGGRESSIVE"];
 
 export interface OnboardingPreview {
   investorName: string | null;
@@ -107,7 +106,7 @@ export async function ensureClientFromDocuments(
     email: args.cas.investor.email?.toLowerCase() ?? null,
     phone: args.phone || args.cas.investor.mobile,
     pan: args.cas.investor.pan,
-    risk_profile: RISK_PROFILES.includes(args.report.riskProfile ?? "") ? args.report.riskProfile : null,
+    risk_profile: (RISK_PROFILES as string[]).includes(args.report.riskProfile ?? "") ? args.report.riskProfile : null,
     goal: args.report.goal,
     status: "ACTIVE",
     advisor_id: args.advisorId || actor.id,
@@ -212,7 +211,7 @@ export async function onboardFromDocuments(
     declared_totals: { exit_value: draft.declared_totals.exit_value, buy_value: draft.declared_totals.buy_value },
     warnings: draft.warnings,
   });
-  const plan = await ingestAdvisoryReport(tx, payload, actor.id, { extractionSource: "IMPORT", securityIds });
+  const plan = await ingestAdvisoryReport(tx, payload, actor.id, { extractionSource: args.report.template === "AI_ASSISTED" ? "AI_EXTRACTION" : "IMPORT", securityIds });
   if (!plan.planId) throw new AppError("The plan could not be created from the report.");
 
   return {

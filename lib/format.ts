@@ -108,3 +108,8 @@ export function humanize(value: string | null | undefined): string {
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(" ");
 }
+
+/** PAN shown with the middle hidden (ABCXX1234X -> ABCXXXXXXX keeps the first 3 and the last letter). */
+export function maskPan(pan: string | null | undefined): string | null {
+  return pan ? `${pan.slice(0, 3)}XX${pan.slice(5, 9).replace(/\d/g, "X")}${pan.slice(9)}` : null;
+}

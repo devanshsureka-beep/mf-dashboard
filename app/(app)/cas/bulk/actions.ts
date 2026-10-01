@@ -6,6 +6,7 @@ import { casPasswordTemplate, passwordCandidates } from "@/lib/cas/password";
 import { readCasPdf } from "@/lib/cas/reader";
 import { AppError, logServerError, toUserMessage } from "@/lib/errors";
 import { actionTx } from "@/lib/server";
+import { maskPan } from "@/lib/format";
 import { objectPath, prepareUpload, uploadAsUser } from "@/lib/storage";
 import { findClientByPan, ingestParsedCas, isDuplicateCas, knownClientPhones } from "@/services/cas-intake";
 
@@ -23,7 +24,6 @@ export interface BulkCasRow {
   summary?: Record<string, number> | null;
 }
 
-const maskPan = (pan: string | null) => (pan ? `${pan.slice(0, 3)}XX${pan.slice(5, 9).replace(/\d/g, "X")}${pan.slice(9)}` : "unknown");
 
 /**
  * One CAS file per call (the page loops over the dropped files). The PDF is
@@ -51,7 +51,7 @@ export async function processCasFileAction(fd: FormData): Promise<BulkCasRow> {
     if (!client) {
       return {
         ok: false, fileName, outcome: "NO_CLIENT",
-        message: `No client with PAN ${maskPan(parsed.investor.pan)} (${parsed.investor.name ?? "unknown investor"}). Onboard the client first.`,
+        message: `No client with PAN ${maskPan(parsed.investor.pan) ?? "unknown"} (${parsed.investor.name ?? "unknown investor"}). Onboard the client first.`,
       };
     }
     const clientInfo = { clientId: client.id, clientName: client.full_name, clientCode: client.client_code };

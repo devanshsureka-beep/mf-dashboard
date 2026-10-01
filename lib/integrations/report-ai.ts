@@ -9,7 +9,7 @@
  * tie-out as every other report (buildPlanFromReport), and the plan is still
  * a DRAFT for the advisor. No Next.js imports (tests and scripts use this).
  */
-import { z } from "zod";
+import { reportAiAnswerSchema, type ReportAiAnswer } from "@/lib/integrations/contracts";
 import { AppError } from "@/lib/errors";
 import type { PlanHolding } from "@/lib/domain/report-plan";
 import { mapRisk, type AdvisoryReportParse } from "@/lib/parsers/advisory-report";
@@ -98,43 +98,7 @@ export const REPORT_AI_SCHEMA = obj({
   },
 });
 
-// Accepts Claude's "" / 0 / "UNKNOWN" (and plain nulls) and normalises them to null.
-const textZ = z.string().nullable().transform((v) => (v && v.trim() ? v.trim() : null));
-const dateZ = z.string().nullable().transform((v) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v.trim()) ? v.trim() : null));
-const planZ = z.enum(["DIRECT", "REGULAR", "UNKNOWN"]).nullable().transform((v) => (v === "UNKNOWN" ? null : v));
-const amountZ = z.number().finite().nonnegative();
-const countZ = z.number().finite().transform((n) => Math.min(20, Math.max(1, Math.round(n))));
-const fundZ = z.string().transform((v) => v.trim());
-const optAmountZ = amountZ.nullable().transform((v) => (v ? v : null));
-export const reportAiAnswerSchema = z.object({
-  client_name: textZ,
-  report_cas_date: dateZ,
-  prepared_date: dateZ,
-  portfolio_value: optAmountZ,
-  risk_profile: textZ,
-  goal: textZ,
-  sells: z.array(z.object({
-    fund: fundZ, folio: textZ, folio_count: countZ,
-    plan_type: planZ, partial: z.boolean(), value: amountZ,
-  })).max(200),
-  sell_total: optAmountZ,
-  buys: z.array(z.object({
-    fund: fundZ, plan_type: planZ, amount: amountZ, kind: z.enum(["NEW", "TOP_UP"]),
-    amc: textZ, category: textZ,
-  })).max(200),
-  buy_total: optAmountZ,
-  sips: z.array(z.object({
-    fund: fundZ, plan_type: planZ, change: z.enum(["START", "STOP", "CHANGE"]),
-    current: optAmountZ, next: optAmountZ,
-  })).max(200),
-  holds: z.array(z.object({
-    fund: fundZ, folio: textZ, folio_count: countZ,
-    plan_type: planZ, value: optAmountZ, deferred: z.boolean(), note: textZ,
-  })).max(300),
-  cas_funds_not_in_report: z.array(z.string()).max(200).default([]),
-  corrections: z.array(z.string()).max(100),
-});
-export type ReportAiAnswer = z.output<typeof reportAiAnswerSchema>;
+export { reportAiAnswerSchema, type ReportAiAnswer };
 
 // ---------------------------------------------------------------------------
 // Request

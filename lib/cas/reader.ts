@@ -92,7 +92,8 @@ export async function identifyPdf(bytes: Uint8Array, candidates: string[]): Prom
     casError = e instanceof CasParseError ? e.message : "The CAS could not be read.";
   }
   const r = await readReportDetailed(bytes, password === null ? [] : [password]);
-  if (!r.report && looksLikeCas(lines.slice(0, 40).join("\n")) && !/advis|rebalanc|recommend/i.test(lines.slice(0, 60).join("\n"))) {
+  // A statement the CAS reader failed on still has folio / unit-balance lines; a report does not.
+  if (!r.report && looksLikeCas(lines.slice(0, 40).join("\n")) && /folio no|closing unit balance/i.test(lines.join("\n"))) {
     return { kind: "CAS_UNREADABLE", error: casError };
   }
   return { kind: "REPORT", report: r.report, error: r.error, nameGuess: r.report?.clientName ?? guessClientName(lines) };

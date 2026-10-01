@@ -33,7 +33,8 @@ export interface PairCas { id: string; investorName: string | null; fileName: st
 export interface PairReport { id: string; clientName: string | null; fileName: string }
 export interface Pairing { casId: string; reportId: string | null; score: number }
 
-export const PAIR_THRESHOLD = 0.5;
+/** A shared surname alone (1 of 2 words) is not enough to pair. */
+export const PAIR_THRESHOLD = 0.6;
 
 /** Best pairs first; each file is used once. */
 export function pairDocuments(cas: PairCas[], reports: PairReport[]): Pairing[] {

@@ -39,6 +39,27 @@ describe("Claude resolves what the built-in reader could not, in rounds", () => 
     expect(plan2.notes).toMatch(/Not mentioned in the report \(kept as they are; please confirm\):\n• HSBC Value Fund/);
   });
 
+  it("only exact CAS names count, and only up to a quarter of the portfolio", () => {
+    const loose = answerToReport({ ...base, cas_funds_not_in_report: ["HSBC Value Fund"] }, null);
+    expect(buildPlanFromReport(loose, holdingsFromCas(cas), cas.valuationDate).problems).toHaveLength(1);
+    // HDFC Defence (65% of the portfolio) not in the report: too big to keep without the advisor.
+    const big = answerToReport({
+      ...base, sells: [], sell_total: null, buys: [], buy_total: null,
+      holds: [...base.holds, hold("HSBC Value Fund", 10475.67)],
+      cas_funds_not_in_report: ["HDFC Defence Fund Direct Growth"],
+    }, null);
+    const p = buildPlanFromReport(big, holdingsFromCas(cas), cas.valuationDate).problems;
+    expect(p).toEqual([expect.stringMatching(/HDFC Defence .* \d+% of the portfolio .* advisor must decide/)]);
+  });
+
+  it("never borrows the CAS name: a report with no printed name must be named after the client in its file name", async () => {
+    const ask = vi.fn().mockResolvedValue(reply({ ...base, client_name: null, cas_funds_not_in_report: ["HSBC Value Fund - Direct Growth"] }));
+    const args = { cas, reportPdf: new Uint8Array([1]), draft: null, readerError: null, problems: ["x"], deadline: far(), ask, maxRounds: 1 };
+    const noName = await resolveWithClaude({ ...args, reportFileName: "report final.pdf" });
+    expect(noName).toMatchObject({ status: "OPEN", problems: [expect.stringMatching(/report is for "unknown"/)] });
+    expect((await resolveWithClaude({ ...args, reportFileName: "Advisory report - Test Investor.pdf" })).status).toBe("RESOLVED");
+  });
+
   it("sends the points still open back to Claude with its own answer as the draft", async () => {
     const ask = vi.fn()
       .mockResolvedValueOnce(reply(base))

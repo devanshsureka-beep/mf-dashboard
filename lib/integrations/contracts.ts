@@ -177,3 +177,44 @@ export interface NotificationEvent {
   actor?: { id: string; name: string } | null;
   data: Record<string, unknown>;
 }
+
+// ---------------------------------------------------------------------------
+// Claude's report reading (lib/integrations/report-ai.ts): the JSON schema sent to
+// Claude has no optional fields, so "" / 0 / "UNKNOWN" mean "not shown".
+// Accepts Claude's "" / 0 / "UNKNOWN" (and plain nulls) and normalises them to null.
+const textZ = z.string().nullable().transform((v) => (v && v.trim() ? v.trim() : null));
+const dateZ = z.string().nullable().transform((v) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v.trim()) ? v.trim() : null));
+const planZ = z.enum(["DIRECT", "REGULAR", "UNKNOWN"]).nullable().transform((v) => (v === "UNKNOWN" ? null : v));
+const aiAmountZ = z.number().finite().nonnegative();
+const countZ = z.number().finite().transform((n) => Math.min(20, Math.max(1, Math.round(n))));
+const fundZ = z.string().transform((v) => v.trim());
+const optAmountZ = aiAmountZ.nullable().transform((v) => (v ? v : null));
+export const reportAiAnswerSchema = z.object({
+  client_name: textZ,
+  report_cas_date: dateZ,
+  prepared_date: dateZ,
+  portfolio_value: optAmountZ,
+  risk_profile: textZ,
+  goal: textZ,
+  sells: z.array(z.object({
+    fund: fundZ, folio: textZ, folio_count: countZ,
+    plan_type: planZ, partial: z.boolean(), value: aiAmountZ,
+  })).max(200),
+  sell_total: optAmountZ,
+  buys: z.array(z.object({
+    fund: fundZ, plan_type: planZ, amount: aiAmountZ, kind: z.enum(["NEW", "TOP_UP"]),
+    amc: textZ, category: textZ,
+  })).max(200),
+  buy_total: optAmountZ,
+  sips: z.array(z.object({
+    fund: fundZ, plan_type: planZ, change: z.enum(["START", "STOP", "CHANGE"]),
+    current: optAmountZ, next: optAmountZ,
+  })).max(200),
+  holds: z.array(z.object({
+    fund: fundZ, folio: textZ, folio_count: countZ,
+    plan_type: planZ, value: optAmountZ, deferred: z.boolean(), note: textZ,
+  })).max(300),
+  cas_funds_not_in_report: z.array(z.string()).max(200).default([]),
+  corrections: z.array(z.string()).max(100),
+});
+export type ReportAiAnswer = z.output<typeof reportAiAnswerSchema>;

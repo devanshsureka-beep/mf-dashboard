@@ -9,6 +9,10 @@ describe("pairing CAS and reports from one folder", () => {
     expect(nameScore("A K Gupta", "A K Verma")).toBe(0);
   });
 
+  it("does not pair family members on the surname alone", () => {
+    expect(pairDocuments([{ id: "c", investorName: "AMIT SHAH", fileName: "a.pdf" }], [{ id: "r", clientName: "Rina Shah", fileName: "b.pdf" }])[0].reportId).toBeNull();
+  });
+
   it("pairs by the name inside the report, else by the report's file name; each file once", () => {
     const pairs = pairDocuments(
       [

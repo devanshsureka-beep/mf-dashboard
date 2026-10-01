@@ -142,6 +142,9 @@ const sameValue = (a: number, b: number) => Math.abs(a - b) <= Math.max(2, Math.
  */
 export const NAV_DRIFT_LIMIT = 0.15;
 
+/** CAS funds the report never mentions are kept (flagged) only up to this share of the portfolio. */
+export const NOT_IN_REPORT_LIMIT = 0.25;
+
 /**
  * Turn the report into plan items, tied to the CAS holdings. Every line must
  * tie to the CAS without doubt; anything that does not is returned in
@@ -338,15 +341,23 @@ export function buildPlanFromReport(
       const pt = x.planType ?? detectPlanType(x.fund);
       for (const g of [...viaAlias(x.fund, pt), ...sameFundHoldings(x.fund, live, pt)]) covered.add(g);
     }
-    for (const h of live) {
-      if (covered.has(h)) continue;
-      // Confirmed absent from the whole report: kept as it is, flagged for the advisor.
-      if ((report.notInReport ?? []).some((f) => nameSimilarity(f, h.scheme_name) >= 0.6)) {
+    // Funds a second reader confirmed the report never mentions (named exactly as in the CAS)
+    // are kept as they are and flagged, as long as together they are a small part of the portfolio.
+    const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const absent = new Set((report.notInReport ?? []).map(norm));
+    const uncovered = live.filter((h) => !covered.has(h));
+    const confirmed = uncovered.filter((h) => absent.has(norm(h.scheme_name)));
+    const liveTotal = live.reduce((t, h) => t + h.current_value, 0);
+    const confirmedTotal = confirmed.reduce((t, h) => t + h.current_value, 0);
+    const keepConfirmed = confirmed.length > 0 && confirmedTotal <= liveTotal * NOT_IN_REPORT_LIMIT;
+    for (const h of uncovered) {
+      if (keepConfirmed && confirmed.includes(h)) {
         unreported.push(`${h.scheme_name} (folio ${h.folio_number ?? "—"}, ${inr(h.current_value)})`);
         holdReason.set(h, "Not mentioned in the advisory report: kept as it is. Advisor to confirm.");
         continue;
       }
-      problems.push(`${h.scheme_name} (folio ${h.folio_number ?? "—"}, ${inr(h.current_value)}) is in the CAS but not covered by the report.`);
+      problems.push(`${h.scheme_name} (folio ${h.folio_number ?? "—"}, ${inr(h.current_value)}) is in the CAS but not covered by the report.${
+        confirmed.includes(h) ? ` The report does not mention it, but such funds are ${Math.round((confirmedTotal / Math.max(1, liveTotal)) * 100)}% of the portfolio (over ${NOT_IN_REPORT_LIMIT * 100}%): the advisor must decide.` : ""}`);
     }
   }
 
