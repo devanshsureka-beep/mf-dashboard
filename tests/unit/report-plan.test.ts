@@ -148,3 +148,14 @@ describe("report made from an earlier CAS (NAVs moved since)", () => {
     expect(p.problems.length).toBeGreaterThan(0);
   });
 });
+
+describe("a CAS older than the report's own CAS", () => {
+  it("is named as the one problem instead of a list of value mismatches", () => {
+    const later = { ...report, valuationDate: "2026-10-05", preparedDate: "2026-10-06" };
+    const p = buildPlanFromReport(later, holdings, "2026-09-23");
+    expect(p.problems).toEqual([expect.stringMatching(/CAS is of 2026-09-23, but the report was made from a CAS of 2026-10-05 \(12 days later\).*Upload the client's CAS of 2026-10-05 or later/)]);
+    // A few days apart is NAV movement, not a stale CAS; the preparation date alone proves nothing.
+    expect(buildPlanFromReport({ ...report, valuationDate: "2026-09-26" }, holdings, "2026-09-23").problems.some((x) => /Upload the client's CAS/.test(x))).toBe(false);
+    expect(buildPlanFromReport({ ...report, valuationDate: "2026-10-05", preparedDate: "2026-10-05" }, holdings, "2026-09-23").problems.some((x) => /Upload the client's CAS/.test(x))).toBe(false);
+  });
+});

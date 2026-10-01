@@ -15,6 +15,7 @@ import { findClientByPan, knownClientPhones } from "@/services/cas-intake";
 import { findDuplicateDocument } from "@/services/portfolio";
 import { checkDocumentsBelongTogether, decideReportKind } from "@/services/onboarding";
 import type { PlanKind } from "@/types/domain";
+import { isStaleCasProblem } from "@/lib/domain/report-plan";
 import { resolveWithClaude } from "@/services/report-resolve";
 import { checkAdvisor, hasActivePlanForPan, onboardingTx, saveOnboarding } from "../save";
 
@@ -156,6 +157,9 @@ export async function onboardBulkPairAction(fd: FormData): Promise<BulkOnboardRo
       usedClaude = r.rounds > 0;
       corrections = r.corrections;
       if (r.status === "WRONG_PAIR") return fail("FAILED", `${r.message} Pair this CAS with the right report.`, { usedClaude, corrections });
+      if (r.status === "OPEN" && r.problems.some(isStaleCasProblem)) {
+        return fail("NEEDS_REVIEW", "The CAS is older than the one the report was made from. Upload the client's newer CAS with this report.", { problems: r.problems, usedClaude, corrections });
+      }
       if (r.status === "OPEN") {
         return fail("NEEDS_REVIEW", r.error && !usedClaude
           ? `The report does not reconcile, and Claude could not help: ${r.error}`

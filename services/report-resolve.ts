@@ -10,6 +10,7 @@ import type { CasParseOutput } from "@/lib/parsers/cas";
 import type { AdvisoryReportParse } from "@/lib/parsers/advisory-report";
 import type { PlanKind } from "@/types/domain";
 import { nameScore } from "@/lib/domain/doc-pairing";
+import { isStaleCasProblem } from "@/lib/domain/report-plan";
 import { checkDocumentsBelongTogether, holdingsFromCas, previewOnboarding } from "@/services/onboarding";
 
 export type ResolveResult =
@@ -44,6 +45,8 @@ export async function resolveWithClaude(args: {
   } catch (e) {
     return { status: "OPEN", problems: [`The CAS does not reconcile: ${(e as Error).message}`], corrections: [], rounds: 0, error: null };
   }
+  // A CAS older than the report cannot be fixed by reading the report again.
+  if (args.problems.some(isStaleCasProblem)) return { status: "OPEN", problems: args.problems, corrections: [], rounds: 0, error: null };
   let draft = args.draft;
   let problems = args.problems;
   let corrections: string[] = [];
@@ -87,6 +90,7 @@ export async function resolveWithClaude(args: {
         },
       };
     }
+    if (problems.some(isStaleCasProblem)) break;
     draft = candidate;
   }
   return { status: "OPEN", problems, corrections, rounds, error: rounds ? null : "Not enough time left for Claude in this request." };

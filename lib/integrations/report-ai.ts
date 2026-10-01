@@ -35,7 +35,7 @@ const obj = (properties: Record<string, unknown>) => ({
 
 export const REPORT_AI_SCHEMA = obj({
   client_name: TEXT("\"\" if not shown"),
-  report_cas_date: TEXT("Valuation / statement date of the CAS the report was made from, YYYY-MM-DD; \"\" if not shown"),
+  report_cas_date: TEXT("Valuation / statement date of the CAS the report was made from (\"values as on\", \"statement period to\"), YYYY-MM-DD; \"\" if the report does not print one. Never the date the report was prepared."),
   prepared_date: TEXT("Date the report was prepared, YYYY-MM-DD; \"\" if not shown"),
   portfolio_value: NUM("0 if not shown"),
   risk_profile: TEXT("\"\" if not shown"),

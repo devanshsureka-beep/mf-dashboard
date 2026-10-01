@@ -145,6 +145,14 @@ const sameValue = (a: number, b: number) => Math.abs(a - b) <= Math.max(2, Math.
  */
 export const NAV_DRIFT_LIMIT = 0.15;
 
+/**
+ * A CAS older than the report's own CAS by more than this cannot back the report:
+ * the client bought / sold in between, so the values are not NAV movement.
+ */
+export const CAS_OLDER_THAN_REPORT_DAYS = 7;
+const STALE_CAS = "Upload the client's CAS of";
+export const isStaleCasProblem = (p: string) => p.includes(STALE_CAS);
+
 /** CAS funds the report never mentions are kept (flagged) only up to this share of the portfolio. */
 export const NOT_IN_REPORT_LIMIT = 0.25;
 
@@ -177,6 +185,12 @@ export function buildPlanFromReport(
   // No CAS date to compare (never the case for a real CAS): stay strict.
   const sameStatement = !casValuationDate || Boolean(reportDate && (reportDate === casValuationDate ||
     (!report.valuationDate && daysApart(reportDate, casValuationDate) <= 3)));
+  // (A date equal to the report's preparation date is not evidence of which CAS it used.)
+  const casTooOld = Boolean(reportDate && casValuationDate && reportDate !== report.preparedDate &&
+    Date.parse(reportDate) - Date.parse(casValuationDate) > CAS_OLDER_THAN_REPORT_DAYS * 86_400_000);
+  const staleCas = casTooOld
+    ? `The uploaded CAS is of ${casValuationDate}, but the report was made from a CAS of ${reportDate} (${Math.round(daysApart(reportDate!, casValuationDate!))} days later), so the holdings have changed in between. ${STALE_CAS} ${reportDate} or later.`
+    : null;
   const drift: string[] = [];
   if (!sameStatement) {
     drift.push(reportDate && casValuationDate
@@ -477,8 +491,9 @@ export function buildPlanFromReport(
     sip_items,
     declared_totals: { exit_value: report.sellTotal, buy_value: report.buyTotal },
     notes,
-    problems,
+    // An older CAS explains every other difference: say that one thing.
+    problems: staleCas ? [staleCas] : problems,
     drift,
-    warnings: problems,
+    warnings: staleCas ? [staleCas] : problems,
   };
 }
