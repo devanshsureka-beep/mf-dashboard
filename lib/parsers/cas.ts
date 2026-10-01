@@ -398,7 +398,7 @@ export function toCasParseResult(p: CasParseOutput, casDocumentId: string): CasP
       plan_type: s.planType,
       category: null,
       units: round4(s.closingUnits ?? 0),
-      nav: s.nav,
+      nav: s.nav && s.nav > 0 ? s.nav : null,
       nav_date: s.navDate,
       current_value: round2(s.marketValue ?? (s.closingUnits ?? 0) * (s.nav ?? 0)),
       cost_value: s.costValue,
@@ -411,7 +411,8 @@ export function toCasParseResult(p: CasParseOutput, casDocumentId: string): CasP
       isin: s.isin,
       folio_number: s.folio,
       units: t.units,
-      nav: t.nav,
+      // Bonus, merger, stamp-duty and segregation lines print a NAV of 0: no price, not an error.
+      nav: t.nav && t.nav > 0 ? t.nav : null,
       amount: t.amount,
       balance_units: t.balanceUnits,
       description: t.description,

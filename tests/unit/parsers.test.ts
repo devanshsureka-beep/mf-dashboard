@@ -222,3 +222,15 @@ describe("ISIN reading", () => {
     expect(findIsin(["X Fund - Direct | (Demat) (Advisor:INZ000031633) - ISIN:INF917K01HD4 | Registrar : CAMS"])).toBe("INF917K01HD4");
   });
 });
+
+describe("CAS lines with a NAV of 0", () => {
+  it("bonus / merger / stamp-duty lines with NAV 0 are kept, without a price", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { casParseResultSchema } = await import("@/lib/integrations/contracts");
+    const p = parseCasLines(readFileSync("tests/fixtures/cas-kfin-cams.sample.txt", "utf8").split("\n"));
+    const withZero = { ...p, schemes: p.schemes.map((sc, i) => (i === 0 ? { ...sc, transactions: sc.transactions.map((t, j) => (j === 0 ? { ...t, nav: 0 } : t)) } : sc)) };
+    const r = toCasParseResult(withZero, "11111111-1111-4111-8111-111111111111");
+    expect(casParseResultSchema.safeParse(r).success).toBe(true);
+    expect(r.transactions.some((t) => t.nav === null)).toBe(true);
+  });
+});
