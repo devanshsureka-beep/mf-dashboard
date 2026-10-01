@@ -116,6 +116,7 @@ Rules:
 - Amounts are rupees as plain numbers: "₹5.2L" = 520000, "₹1.15 Cr" = 11500000, "16,500/mo" = 16500.
 - sells: every fund the report sells / exits / redeems / switches out NOW. partial = true when only part is sold ("trim ₹5L", "sell 50%"); value = the rupees sold now. A switch is a sell here plus a buy of the target fund.
 - A fund marked TRIM / REDUCE / RIGHT-SIZE without a rupee amount or percentage: put it in sells with partial = true and value 0 (the adviser sets the amount). Never guess an amount.
+- "Migrate to Direct" / "switch to the Direct plan" of the SAME fund (Regular -> Direct, money stays in that fund): not a sell and not a buy. Put the fund in holds with its value and a note that starts with "MIGRATE TO DIRECT" followed by the rest of the action (e.g. "MIGRATE TO DIRECT; Hold", "MIGRATE TO DIRECT; Consolidate"). If the same row also says Trim / Exit, apply that rule instead and mention the migration in the note.
 - holds: every fund the report keeps, holds, continues, or defers ("exit later", "next tranche", "after 1 year") with the value the report shows for it (null if none). deferred = true for anything to be sold later, not now.
 - buys: lump-sum purchases. kind = TOP_UP when the client already holds that fund (see the CAS list), else NEW.
 - sips: START (new), STOP, or CHANGE (amount changes) with the monthly amount before (current) and after (next).
@@ -198,7 +199,8 @@ export function answerToReport(a: ReportAiAnswer, base: AdvisoryReportParse | nu
   const sum = (xs: number[]) => Math.round(xs.reduce((t, x) => t + x, 0) * 100) / 100;
   const sells = sum(a.sells.map((s) => s.value));
   const buys = sum(a.buys.map((b) => b.amount));
-  if (a.sell_total !== null && !near(sells, a.sell_total)) problems.push(`The sell lines add up to ${inr(sells)}, but the report's sell total is ${inr(a.sell_total)}.`);
+  // A printed total that includes trims without per-fund amounts cannot be checked line by line.
+  if (a.sell_total !== null && !a.sells.some((x) => x.partial && !x.value) && !near(sells, a.sell_total)) problems.push(`The sell lines add up to ${inr(sells)}, but the report's sell total is ${inr(a.sell_total)}.`);
   if (a.buy_total !== null && !near(buys, a.buy_total)) problems.push(`The buy lines add up to ${inr(buys)}, but the report's buy total is ${inr(a.buy_total)}.`);
   for (const s of a.sips) {
     if (s.change !== "STOP" && !s.next) problems.push(`SIP ${s.change.toLowerCase()} in ${s.fund} has no new amount.`);
