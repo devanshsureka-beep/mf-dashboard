@@ -25,3 +25,16 @@ describe("CAS password candidates", () => {
     expect(digitsFromFileName("CAS_98xxxx4917_19092026.pdf")).toEqual(["4917", "2026"]);
   });
 });
+
+describe("passwords written in file names (bulk onboarding)", () => {
+  it("finds the password after a marker, as a name part, or the parts joined", async () => {
+    const { fileNamePasswords, passwordCandidates } = await import("@/lib/cas/password");
+    expect(fileNamePasswords("Rahul Sharma CAS pwd- Rahul@123.pdf")[0]).toBe("Rahul@123");
+    expect(fileNamePasswords("CAS_ABCDE1234F.pdf")).toContain("ABCDE1234F");
+    expect(fileNamePasswords("cas abcde1234f 01011990.pdf")).toEqual(expect.arrayContaining(["ABCDE1234F", "abcde1234f01011990"]));
+    expect(fileNamePasswords("Copy of CAS (1).pdf")).toEqual([]);
+    // Only when asked: the single-client form does not try file-name parts.
+    expect(passwordCandidates({ template: null, fileName: "CAS_secret99.pdf" })).toEqual([]);
+    expect(passwordCandidates({ template: null, fileName: "CAS_secret99.pdf", fileNameParts: true })).toContain("secret99");
+  });
+});

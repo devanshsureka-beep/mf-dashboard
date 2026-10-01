@@ -15,6 +15,7 @@ export const PAGES = {
   overview: "Overview",
   clients: "Premium Clients",
   onboard: "Onboard Client",
+  bulkOnboard: "Bulk Onboarding",
   documentCheck: "Document Check",
   callLedger: "Call Ledger",
   bulkCalls: "Call Many Clients",

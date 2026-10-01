@@ -216,3 +216,17 @@ curl -s https://www.amfiindia.com/spages/NAVAll.txt -o NAVAll.txt
 curl -X POST "$APP/api/integrations/nav-update?source=manual" \
   -H "authorization: Bearer $INTEGRATION_API_KEY" -H "content-type: text/plain" --data-binary @NAVAll.txt
 ```
+
+## 7. Claude report reader (Bulk Onboarding)
+
+Advisory reports come in many layouts. The built-in readers (`lib/parsers/*`) run first; when a report does not fully tie out to the CAS, the **Bulk Onboarding** page (`/onboard/bulk`) asks Claude to read it through n8n, so the Anthropic key stays in n8n.
+
+**n8n workflow:** "Univest MF Desk - Report reader (Claude)": Webhook (POST, Header Auth) → HTTP Request to `https://api.anthropic.com/v1/messages` (Anthropic credential) → Respond to Webhook with `{ status, body }`. Executions are not saved (the request holds client documents).
+
+**Request** (built in `lib/integrations/report-ai.ts`): model `claude-opus-5-5`, effort `high`, structured JSON output (`output_config.format`, schema `REPORT_AI_SCHEMA`). The message carries the report PDF, the CAS fund list (name, folio, plan type, value), the built-in reader's draft and the exact points that did not reconcile. Claude returns sells, buys, SIP changes, kept/deferred funds and totals, plus a list of what it corrected.
+
+**Safety:** Claude's answer is validated with zod and then goes through exactly the same tie-out as any report (`buildPlanFromReport`): every sell and kept fund must match a CAS holding and value, totals must add up, every CAS fund must be covered. Anything that does not tie out is shown as **Needs review** and nothing is saved. A clean result is saved as a **DRAFT** plan whose notes list Claude's corrections; an advisor approves it.
+
+**Settings:** `REPORT_AI_URL` (the webhook's production URL) and `REPORT_AI_KEY` (also stored in the n8n Header Auth credential, header name `X-Desk-Key`). Without them the page still works and lists unreconciled reports for review.
+
+**Passwords:** bulk onboarding also tries parts of each CAS file name as the password (`fileNamePasswords` in `lib/cas/password.ts`). Passwords are only used in memory; stored copies are renamed (`CAS <name> <date>.pdf`, `Advisory report <name>.pdf`), so a password in a file name never reaches storage or the database.

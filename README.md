@@ -143,6 +143,8 @@ Copy `.env.example` to `.env.local` (local) or set them in Vercel → Project �
 | `N8N_NOTIFICATION_WEBHOOK_URL` | n8n Webhook URL receiving business events (optional) | server |
 | `N8N_WEBHOOK_TOKEN` | Token the app sends to n8n webhooks as `Authorization: Bearer …` | **server only** |
 | `CAS_PASSWORD_TEMPLATE` | Your CAS password pattern with `{last4}` where the client's last 4 mobile digits go, e.g. `Prefix{last4}$`. Used only in memory to open CAS PDFs | **server only** (mark as Sensitive) |
+| `REPORT_AI_URL` | Production URL of the n8n workflow "Univest MF Desk - Report reader (Claude)" (Webhook node) | server |
+| `REPORT_AI_KEY` | Generate: `openssl rand -hex 32`. Same value in that workflow's Header Auth credential (header `X-Desk-Key`) | **server only** (mark as Sensitive) |
 | `SEED_DEMO_PASSWORD` | Any strong password, only for demo users created by `npm run seed` | dev only |
 
 ## Run locally
@@ -242,6 +244,10 @@ Nothing goes live until it is merged into `main`. Step-by-step guide: [`docs/LOC
 Database changes follow the same path: a new migration is applied to the staging project first and to production just before the merge into `main`.
 
 **Document Check** (`/onboard/check`) runs every onboarding check on a CAS + report and shows the exact plan that would be created, without saving anything. It is safe to use on the live site.
+
+## Bulk onboarding
+
+**Bulk Onboarding** (`/onboard/bulk`) takes a whole folder of CAS and advisory-report PDFs with any file names. Each file is recognised by its content (a CAS password is looked for in the file name, then the house template), each CAS is paired with the report carrying the same client name, and each pair is onboarded. Report lines the built-in readers cannot tie to the CAS are sent, with the CAS fund list and the exact failing points, to Claude through an n8n workflow; Claude's answer must pass the same CAS tie-out, and the plan is still a DRAFT. See [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md), section 7.
 
 ## Daily NAVs
 

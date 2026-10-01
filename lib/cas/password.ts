@@ -35,6 +35,8 @@ export function passwordCandidates(opts: {
   explicit?: (string | null | undefined)[];
   fileName?: string;
   phones?: (string | null | undefined)[];
+  /** Also try parts of the file name itself as the password (bulk onboarding). */
+  fileNameParts?: boolean;
 }): string[] {
   const out: string[] = [];
   const add = (p: string | null | undefined) => {
@@ -46,6 +48,7 @@ export function passwordCandidates(opts: {
     const l4 = /^\+?[\d\s-]{10,15}$/.test(p ?? "") ? last4(p) : null;
     if (l4 && opts.template?.includes(LAST4_PLACEHOLDER)) add(fillTemplate(opts.template, l4));
   }
+  if (opts.fileNameParts && opts.fileName) for (const p of fileNamePasswords(opts.fileName)) add(p);
   const t = opts.template;
   if (t && t.includes(LAST4_PLACEHOLDER)) {
     for (const d of digitsFromFileName(opts.fileName ?? "")) add(fillTemplate(t, d));
@@ -60,4 +63,29 @@ export function passwordCandidates(opts: {
 export function casPasswordTemplate(): string | null {
   const t = process.env.CAS_PASSWORD_TEMPLATE?.trim();
   return t && t.includes(LAST4_PLACEHOLDER) ? t : null;
+}
+
+const NOISE = /^(cas|pdf|copy|of|final|statement|consolidated|account|detailed|summary|kfin|kfintech|cams|mf|new|latest|password|pwd|pass|pw)$/i;
+
+/**
+ * Passwords hidden in a file name with no fixed format, e.g.
+ * "Rahul CAS pwd ABCDE1234F.pdf", "CAS_rahul@123.pdf", "ABCDE1234F01011990 cas.pdf".
+ * Tried in order: text after a "password/pwd/pass" marker, each part of the
+ * name (as written, upper and lower case), neighbouring parts joined, and
+ * the whole name. Pure; candidates live only in memory.
+ */
+export function fileNamePasswords(fileName: string): string[] {
+  const base = fileName.replace(/\.pdf$/i, "").replace(/\s*\(\d+\)$/, "").trim();
+  const out: string[] = [];
+  const add = (p: string | undefined) => {
+    const v = (p ?? "").trim();
+    if (v.length >= 4 && v.length <= 40 && !out.includes(v)) out.push(v);
+  };
+  for (const m of base.matchAll(/(?:password|passwd|pwd|pass|pw)\s*[:=\-_ ]\s*([^\s_,;]+)/gi)) add(m[1]);
+  const parts = base.split(/[\s_,;()[\]{}]+|(?<=\w)-(?=\w{4,})/).filter(Boolean);
+  const useful = parts.filter((x) => !NOISE.test(x));
+  for (const x of useful) for (const v of [x, x.toUpperCase(), x.toLowerCase()]) add(v);
+  for (let i = 0; i + 1 < useful.length; i++) add(useful[i] + useful[i + 1]);
+  if (useful.length) add(base);
+  return out.slice(0, 60);
 }

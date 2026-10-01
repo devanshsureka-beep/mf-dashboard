@@ -37,6 +37,14 @@ export function checkDocumentsBelongTogether(cas: CasParseOutput, report: Adviso
   return { investorName: cas.investor.name, reportName: report.clientName, pan: cas.investor.pan, namesMatch, existingClient: null, problem };
 }
 
+/** The CAS holdings in the shape the report tie-out uses (throws on a CAS that does not reconcile). */
+export function holdingsFromCas(cas: CasParseOutput): PlanHolding[] {
+  return toCasParseResult(cas, "00000000-0000-0000-0000-000000000000").holdings.map((h) => ({
+    scheme_name: h.scheme_name, isin: h.isin ?? null, folio_number: h.folio_number ?? null,
+    current_value: h.current_value, plan_type: h.plan_type ?? null,
+  }));
+}
+
 export function previewOnboarding(cas: CasParseOutput, report: AdvisoryReportParse): {
   problems: string[];
   draft: ReportPlanDraft | null;
@@ -46,10 +54,7 @@ export function previewOnboarding(cas: CasParseOutput, report: AdvisoryReportPar
   if (check.problem) return { problems: [check.problem], draft: null, holdings: [] };
   let holdings: PlanHolding[];
   try {
-    holdings = toCasParseResult(cas, "00000000-0000-0000-0000-000000000000").holdings.map((h) => ({
-      scheme_name: h.scheme_name, isin: h.isin ?? null, folio_number: h.folio_number ?? null,
-      current_value: h.current_value, plan_type: h.plan_type ?? null,
-    }));
+    holdings = holdingsFromCas(cas);
   } catch (e) {
     return { problems: [(e as Error).message], draft: null, holdings: [] };
   }

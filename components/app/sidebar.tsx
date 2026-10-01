@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import {
   LayoutDashboard, Users, PhoneCall, Hourglass, FileSearch, ScrollText, ShieldCheck, LogOut, UserPlus, FileStack, ClipboardCheck,
-  Menu, X, Megaphone,
+  Menu, X, Megaphone, FolderInput,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PAGES, ROLE_LABELS } from "@/lib/brand";
@@ -29,6 +29,7 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
     items: [
       { href: "/clients", label: PAGES.clients, icon: Users },
       { href: "/onboard", label: PAGES.onboard, icon: UserPlus, exact: true },
+      { href: "/onboard/bulk", label: PAGES.bulkOnboard, icon: FolderInput },
       { href: "/onboard/check", label: PAGES.documentCheck, icon: ClipboardCheck },
     ],
   },

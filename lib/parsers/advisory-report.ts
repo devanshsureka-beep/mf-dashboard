@@ -69,7 +69,7 @@ export interface ReportReviewRow {
 }
 
 export interface AdvisoryReportParse {
-  template: "UNIVEST_REBALANCING_V1" | "GENERIC_TABLES";
+  template: "UNIVEST_REBALANCING_V1" | "GENERIC_TABLES" | "AI_ASSISTED";
   clientName: string | null;
   riskProfile: string | null;
   goal: string | null;

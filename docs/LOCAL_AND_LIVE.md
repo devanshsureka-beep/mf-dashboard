@@ -51,6 +51,7 @@ Never put live (production) keys in it, and never commit it (Git already ignores
 | `APP_ENV` | `staging` (shows the amber TEST banner) |
 | `CAS_PASSWORD_TEMPLATE` | the same template the team uses (ask the admin; it is a secret) |
 | `INTEGRATION_API_KEY` | any long random string (only needed to test the n8n endpoints locally) |
+| `REPORT_AI_URL` / `REPORT_AI_KEY` | the same values as live (Claude report reader for Bulk Onboarding; see `docs/INTEGRATIONS.md`, section 7) |
 
 Then start it:
 
