@@ -73,7 +73,7 @@ describe("advisory report in another layout", () => {
     const sells = plan.items.filter((i) => i.action === "SELL");
     expect(sells).toHaveLength(15); // 14 rows, one of them two folios
     expect(sells.filter((i) => /Digital India/.test(i.scheme_name)).map((i) => i.target_amount)).toEqual([31000, 20495]);
-    expect(sells.find((i) => i.folio_number === "81000001/12")?.target_amount).toBe(64670); // the right HDFC folio
+    expect(sells.find((i) => i.folio_number === "81000001/12")?.target_amount).toBe(64670.2); // the right HDFC folio, full exit = CAS value
     const retain = plan.items.filter((i) => i.action === "RETAIN");
     expect(retain).toHaveLength(10);
     expect(retain.find((i) => i.folio_number === "81000005/44")?.reason).toMatch(/Kept for now/);

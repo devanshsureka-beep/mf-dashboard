@@ -13,7 +13,7 @@
  * Nothing is guessed: anything that does not reconcile is a problem.
  */
 import type { PdfPage } from "@/lib/pdf/text";
-import { detectPlanType } from "@/lib/domain/securities";
+import { detectPlanType, nameSimilarity } from "@/lib/domain/securities";
 import { parseNumber, toIsoDate } from "./cas";
 import { findTables, type ReportTable, type TableColumn } from "./report-tables";
 import type { AdvisoryReportParse, ReportBuyRow, ReportSellRow, ReportSipRow } from "./advisory-report";
@@ -22,7 +22,7 @@ import { ReportParseError, mapRisk } from "./advisory-report";
 const inr = (n: number) => `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 const amount = (s: string | undefined) => {
   if (!s) return null;
-  const t = s.replace(/Rs\.?|₹|\s|\*/gi, "").replace(/[−–]/g, "-");
+  const t = s.replace(/\/\s?(mo|month|m)\b|p\.?m\.?$/gi, "").replace(/Rs\.?|₹|\s|\*|^[~≈+]+/gi, "").replace(/[−–]/g, "-");
   if (/^[—-]$/.test(t) || /^n\/a$/i.test(t)) return 0;
   return /^-?[\d,]+(\.\d+)?$/.test(t) ? parseNumber(t) : null;
 };
@@ -60,10 +60,14 @@ const labelled = (f: ParsedFundCell) => (f.planType ? `${f.name} (${f.planType =
 const col = (cols: TableColumn[], re: RegExp, not?: RegExp) => cols.find((c) => re.test(c.label) && !(not && not.test(c.label)))?.label ?? null;
 const amountCol = (cols: TableColumn[]) => col(cols, /amount|value|\bmv\b|invest|redeem/i, /gain|loss|tax/i);
 
-type Kind = "SIP" | "SELL" | "HOLD" | "BUY" | "LIST" | "UNKNOWN";
+type Kind = "SIP" | "SELL" | "HOLD" | "BUY" | "LIST" | "REVIEW" | "UNKNOWN";
+/** Value column of a fund-by-fund review ("Value", "Before", "Current value"). */
+const reviewValueCol = (cols: TableColumn[]) => col(cols, /^value|before|current value/i, /after|gain|loss|tax/i);
 function classify(t: ReportTable): Kind {
   const labels = t.columns.map((c) => c.label).join(" | ");
   if (col(t.columns, /current/i) && col(t.columns, /\bnew\b/i) && /sip/i.test(`${labels} ${t.title}`)) return "SIP";
+  // One verdict / action per fund, with its value: a review of the whole portfolio.
+  if (col(t.columns, /verdict|^action$/i) && reviewValueCol(t.columns)) return "REVIEW";
   if (!amountCol(t.columns)) return "LIST";
   const ctx = `${t.title} | ${labels}`;
   if (/defer|held as-is|\bhold\b|later tranche|phase 2|next financial|retain|not sold/i.test(ctx)) return "HOLD";
@@ -82,7 +86,7 @@ export function parseAdvisoryReportGeneric(pages: PdfPage[]): AdvisoryReportPars
   const problems: string[] = [];
 
   const tables = findTables(pages, (cols) =>
-    cols.map((c, i) => (/amount|value|\bmv\b|current|\bnew\b|invest/i.test(c.label) && !/gain|loss|tax/i.test(c.label) ? i : -1)).filter((i) => i >= 0),
+    cols.map((c, i) => (/amount|value|\bmv\b|current|\bnew\b|invest|before/i.test(c.label) && !/gain|loss|tax/i.test(c.label) ? i : -1)).filter((i) => i >= 0),
   );
   if (!tables.length) throw new ReportParseError("No fund tables (with a \"Fund\" column and amounts) were found in this report.");
 
@@ -135,6 +139,29 @@ export function parseAdvisoryReportGeneric(pages: PdfPage[]): AdvisoryReportPars
       checkTotal("New SIP", nextVals, sipNext, t.page);
       continue;
     }
+    if (kind === "REVIEW") {
+      const vcol = reviewValueCol(t.columns)!;
+      const verdictCol = col(t.columns, /verdict|^action$/i)!;
+      for (const r of t.rows) {
+        // The detail line under a fund ("Mirae Asset · ELSS") repeats its AMC: harmless for name matching.
+        const f = parseFundCell(r.fund.replace(/\s·\s/g, " "), planCol ? r.cells[planCol] : undefined);
+        const value = amount(r.cells[vcol]);
+        const verdict = (r.cells[verdictCol] ?? "").trim();
+        if (!f.name || value === null || value <= 0) continue; // new funds have no value yet
+        // The same fund listed in two review tables (with or without its detail line).
+        const same = (x: { fund: string; planType: string | null; value?: number }) =>
+          x.planType === f.planType && (nameSimilarity(x.fund, labelled(f)) >= 0.9 || (x.value !== undefined && Math.abs(x.value - value) <= 1 && nameSimilarity(x.fund, labelled(f)) >= 0.5));
+        if (/^(hold|keep|retain|continue|no change|unchanged)/i.test(verdict)) {
+          const dup = holds.find(same);
+          // Prefer the cleaner name (a row without the "AMC · Category" detail line).
+          if (dup && !/·/.test(r.fund) && dup.value === value) dup.fund = labelled(f);
+          if (!dup) holds.push({ fund: labelled(f), folio: f.folio, folioCount: f.folioCount, planType: f.planType, value, note: verdict.slice(0, 200) });
+        } else if (!mentioned.some(same)) {
+          mentioned.push({ fund: labelled(f), planType: f.planType, folio: f.folio, folioCount: f.folioCount });
+        }
+      }
+      continue;
+    }
     if (kind === "LIST") {
       for (const r of t.rows) {
         const f = parseFundCell(r.fund, planCol ? r.cells[planCol] : undefined);
@@ -184,7 +211,7 @@ export function parseAdvisoryReportGeneric(pages: PdfPage[]): AdvisoryReportPars
   const clientName = /Portfolio Report\s*[—-]\s*(.+?)\s*[—-]\s*Page \d+/i.exec(text)?.[1]?.trim() ?? /Client\s*:\s*([A-Za-z][A-Za-z .'-]+?)\s*(?:\||$|\n)/i.exec(text)?.[1]?.trim() ?? null;
   if (!clientName) problems.push("Client name not found in the report.");
   const date = (re: RegExp) => { const m = re.exec(text); return m ? toIsoDate(m[1]) : null; };
-  const period = /statement period\s*(\d{2}-[A-Za-z]{3}-\d{4})\s*to\s*(\d{2}-[A-Za-z]{3}-\d{4})/i.exec(text);
+  const period = /statement period:?\s*(\d{2}-[A-Za-z]{3}-\d{4})\s*to\s*(\d{2}-[A-Za-z]{3}-\d{4})/i.exec(text);
   const riskText = /\b(moderately aggressive|moderately conservative|aggressive|conservative|moderate)\b[^.\n]{0,40}\b(mandate|risk|profile|investor|tilt)/i.exec(text)?.[0] ?? null;
 
   let currentValue: number | null = null;

@@ -55,6 +55,8 @@ export interface ReportPlanDraft {
   notes: string;
   /** Anything that does not tie out. The plan must not be created while any remain. */
   problems: string[];
+  /** Differences explained by NAV movement between the report's CAS and the uploaded one (not blocking). */
+  drift: string[];
   /** @deprecated alias of `problems` */
   warnings: string[];
 }
@@ -134,6 +136,11 @@ function sameFundHoldings(fund: string, holdings: PlanHolding[], planType: "DIRE
 const inr = (n: number) => `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 /** Report values are rounded to the rupee; CAS values carry paise. */
 const sameValue = (a: number, b: number) => Math.abs(a - b) <= Math.max(2, Math.abs(b) * 0.002);
+/**
+ * When the report was made from an earlier (or undated) CAS, NAVs have moved in
+ * between: values may differ by market movement, never by more than this.
+ */
+export const NAV_DRIFT_LIMIT = 0.15;
 
 /**
  * Turn the report into plan items, tied to the CAS holdings. Every line must
@@ -151,11 +158,30 @@ export function buildPlanFromReport(
   let priority = 10;
   const live = holdings.filter((h) => h.current_value > 0);
 
-  // The report must be built on this very CAS, or its amounts do not apply.
-  const sameStatement = !report.valuationDate || !casValuationDate || report.valuationDate === casValuationDate;
+  // Same statement (both dated, same day): values must agree to ±0.2%. Otherwise
+  // (a later CAS, or a report without a date) NAVs moved in between: differences
+  // up to NAV_DRIFT_LIMIT are market movement and are listed, not blocked.
+  const reportDate = report.valuationDate ?? report.casPeriod?.to ?? null;
+  const daysApart = (a: string, b: string) => Math.abs(Date.parse(a) - Date.parse(b)) / 86_400_000;
+  // A statement "to 11-Aug" values holdings at the last NAV (e.g. 10-Aug): same statement.
+  // No CAS date to compare (never the case for a real CAS): stay strict.
+  const sameStatement = !casValuationDate || Boolean(reportDate && (reportDate === casValuationDate ||
+    (!report.valuationDate && daysApart(reportDate, casValuationDate) <= 3)));
+  const drift: string[] = [];
   if (!sameStatement) {
-    problems.push(`The report was made from a CAS valued on ${report.valuationDate}, but the uploaded CAS is valued on ${casValuationDate}. Upload the same CAS the report was made from.`);
+    drift.push(reportDate && casValuationDate
+      ? `The report was made from a CAS of ${reportDate}; the uploaded CAS is of ${casValuationDate}. Values differ by NAV movement; full exits sell every unit at today's value.`
+      : `The report does not say which CAS date it used; values are compared allowing for NAV movement.`);
   }
+  /** Do a report value and a CAS value agree? Records NAV-movement differences; false = real mismatch. */
+  const valueOk = (reportValue: number, casValue: number, label: string): boolean => {
+    if (sameValue(reportValue, casValue)) return true;
+    if (sameStatement) return false;
+    const gap = Math.abs(reportValue - casValue) / Math.max(1, Math.abs(casValue));
+    if (gap > NAV_DRIFT_LIMIT) return false;
+    drift.push(`${label}: report ${inr(reportValue)}, CAS ${inr(Math.round(casValue * 100) / 100)} (${casValue >= reportValue ? "+" : "−"}${(gap * 100).toFixed(1)}%).`);
+    return true;
+  };
 
   // Report fund name -> CAS holdings it was tied to (a report may call a fund by
   // another name than the CAS, e.g. "Aggressive Hybrid" for "Equity & Debt").
@@ -168,15 +194,21 @@ export function buildPlanFromReport(
   // ---- Sells: each tied to one holding (folio + name), values checked. ----
   for (const s of report.sells) {
     const planType = detectPlanType(s.fund);
-    if ((s.folioCount ?? 1) > 1) {
+    // A row without a folio for a fund held in several folios (reports that list funds, not folios):
+    // a full exit sells every folio of that fund.
+    const allFolios = !s.folio && (s.folioCount ?? 1) === 1 && !s.partial
+      ? sameFundHoldings(s.fund, live.filter((x) => !taken.has(x)), planType)
+      : [];
+    const wholeFund = allFolios.length > 1 && !allFolios.some((x) => sameValue(s.value, x.current_value));
+    if ((s.folioCount ?? 1) > 1 || wholeFund) {
       // One row for several folios of the same fund ("x2 folios"): all of them, values summed.
-      const group = sameFundHoldings(s.fund, live.filter((x) => !taken.has(x)), planType);
+      const group = wholeFund ? allFolios : sameFundHoldings(s.fund, live.filter((x) => !taken.has(x)), planType);
       const total = group.reduce((t, x) => t + x.current_value, 0);
-      if (group.length !== s.folioCount) {
+      if (!wholeFund && group.length !== s.folioCount) {
         problems.push(`Sell row "${s.fund}" covers ${s.folioCount} folios, but the CAS has ${group.length} matching folio(s).`);
         continue;
       }
-      if (sameStatement && !s.partial && !sameValue(s.value, total)) {
+      if (!s.partial && !valueOk(s.value, total, group[0].scheme_name)) {
         problems.push(`${group[0].scheme_name}: the report sells ${inr(s.value)} across ${group.length} folios, but the CAS holds ${inr(total)}.`);
       }
       alias.push({ fund: s.fund, holdings: group });
@@ -204,20 +236,19 @@ export function buildPlanFromReport(
     }
     taken.add(h);
     alias.push({ fund: s.fund, holdings: [h] });
-    if (sameStatement) {
-      if (!s.partial && !sameValue(s.value, h.current_value)) {
-        problems.push(`${h.scheme_name}: the report sells ${inr(s.value)} as a full exit, but the CAS holding is ${inr(h.current_value)}.`);
-      }
-      if (s.partial && s.value >= h.current_value) {
-        problems.push(`${h.scheme_name}: the report trims ${inr(s.value)}, but the CAS holding is only ${inr(h.current_value)}.`);
-      }
+    if (!s.partial && !valueOk(s.value, h.current_value, h.scheme_name)) {
+      problems.push(`${h.scheme_name}: the report sells ${inr(s.value)} as a full exit, but the CAS holding is ${inr(h.current_value)}${sameStatement ? "" : ` (more than ${NAV_DRIFT_LIMIT * 100}% apart, too much for NAV movement)`}.`);
+    }
+    if (s.partial && s.value >= h.current_value) {
+      problems.push(`${h.scheme_name}: the report trims ${inr(s.value)}, but the CAS holding is only ${inr(h.current_value)}.`);
     }
     items.push({
       action: s.action === "SWITCH" ? "SWITCH" : "SELL",
       scheme_name: h.scheme_name,
       isin: h.isin,
       folio_number: h.folio_number,
-      target_amount: s.value,
+      // A full exit sells every unit: its value is the CAS holding, whatever the NAV did since the report.
+      target_amount: s.partial ? s.value : h.current_value,
       current_amount: h.current_value,
       reason: s.actionText || null,
       priority: (priority += 10),
@@ -225,22 +256,39 @@ export function buildPlanFromReport(
   }
 
   // ---- Fund-wise review ↔ CAS: every holding has exactly one verdict. ----
+  // A review row covers every folio of one fund + plan ("Direct · 3 folios"); the CAS lists folios separately.
+  const holdReason = new Map<PlanHolding, string>();
   if (report.review.length) {
     const reviewed = new Set<PlanHolding>();
+    const fundKey = (h: PlanHolding) => h.isin ?? h.scheme_name.toLowerCase();
     for (const r of report.review) {
-      const cands = live
-        .filter((h) => !reviewed.has(h) && nameSimilarity(r.fund, h.scheme_name) >= 0.6)
-        .sort((a, b) => Math.abs(a.current_value - r.value) - Math.abs(b.current_value - r.value));
-      const h = cands[0];
-      if (!h) {
+      const cands = live.filter((h) =>
+        !reviewed.has(h) && nameSimilarity(r.fund, h.scheme_name) >= 0.6 &&
+        (!r.planType || !holdingPlan(h) || holdingPlan(h) === r.planType));
+      const groups = new Map<string, PlanHolding[]>();
+      for (const h of cands) groups.set(fundKey(h), [...(groups.get(fundKey(h)) ?? []), h]);
+      const total = (g: PlanHolding[]) => g.reduce((t, h) => t + h.current_value, 0);
+      // Options: all folios of a fund together, or one folio alone (reports that review folio by folio).
+      const options = [...groups.values(), ...cands.filter((h) => (groups.get(fundKey(h))?.length ?? 0) > 1).map((h) => [h])];
+      const group = options.sort((a, b) =>
+        Math.abs(total(a) - r.value) - Math.abs(total(b) - r.value) ||
+        (r.folioCount ? Number(b.length === r.folioCount) - Number(a.length === r.folioCount) : 0) ||
+        nameSimilarity(r.fund, b[0].scheme_name) - nameSimilarity(r.fund, a[0].scheme_name))[0];
+      if (!group) {
         problems.push(`The report reviews ${r.fund} (${inr(r.value)}), but that fund is not in the CAS.`);
         continue;
       }
-      reviewed.add(h);
-      if (sameStatement && !sameValue(r.value, h.current_value)) {
-        problems.push(`${h.scheme_name}: the report values it at ${inr(r.value)}, the CAS at ${inr(h.current_value)}.`);
+      group.forEach((h) => reviewed.add(h));
+      if (!valueOk(r.value, total(group), group[0].scheme_name)) {
+        problems.push(`${group[0].scheme_name}: the report values it at ${inr(r.value)}, the CAS at ${inr(Math.round(total(group) * 100) / 100)}.`);
       }
-      if (r.verdict === "HOLD" && taken.has(h)) problems.push(`${h.scheme_name}: the review says HOLD but it is in the sell list.`);
+      if (r.verdict === "HOLD") {
+        if (group.some((h) => taken.has(h))) problems.push(`${group[0].scheme_name}: the review says ${r.deferred ? r.verdictText : "HOLD"} but it is in the sell list.`);
+        const why = r.note ? `: ${r.note}` : "";
+        for (const h of group) holdReason.set(h, (r.deferred ? `Exit later (not now)${why}` : `Keep${why}`).slice(0, 300));
+      } else if (r.verdict === "ADD") {
+        for (const h of group) holdReason.set(h, `Keep and ${r.verdictText.toLowerCase()} (see buy list)${r.note ? `: ${r.note}` : ""}`.slice(0, 300));
+      }
     }
     for (const h of live) {
       if (!reviewed.has(h)) problems.push(`${h.scheme_name} (folio ${h.folio_number ?? "—"}, ${inr(h.current_value)}) is in the CAS but not covered by the report.`);
@@ -248,10 +296,9 @@ export function buildPlanFromReport(
   }
 
   // ---- Other layouts: held/deferred funds (with values) and fund lists prove coverage. ----
-  const holdReason = new Map<PlanHolding, string>();
   if (!report.review.length) {
     const covered = new Set<PlanHolding>(taken);
-    const pick = (fund: string, folio: string | null, count: number, planType: "DIRECT" | "REGULAR" | null): PlanHolding[] => {
+    const pick = (fund: string, folio: string | null, count: number, planType: "DIRECT" | "REGULAR" | null, value?: number): PlanHolding[] => {
       const known = viaAlias(fund, planType);
       if (known.length && (!folio || known.some((k) => normFolio(k.folio_number).startsWith(normFolio(folio))))) return known;
       if (folio) {
@@ -260,19 +307,25 @@ export function buildPlanFromReport(
         if (named.length === 1) return named;
       }
       const group = sameFundHoldings(fund, live, planType);
-      return count > 1 || group.length === 1 ? group : group.filter((x) => !covered.has(x)).slice(0, 1);
+      if (count > 1 || group.length === 1) return group;
+      // No folio named: the whole fund, unless the report's value is one folio's.
+      if (!folio && value !== undefined) {
+        const one = group.filter((x) => !covered.has(x) && sameValue(value, x.current_value));
+        return one.length === 1 ? one : group;
+      }
+      return group.filter((x) => !covered.has(x)).slice(0, 1);
     };
     for (const hd of report.holds) {
       const byValue = hd.folioCount === 1 && sameStatement
         ? live.filter((x) => !covered.has(x) && samePlan(hd.planType, x) && sameValue(hd.value, x.current_value) && nameSimilarity(hd.fund, x.scheme_name) >= 0.4)
         : [];
-      const group = byValue.length === 1 ? byValue : pick(hd.fund, hd.folio, hd.folioCount, hd.planType);
+      const group = byValue.length === 1 ? byValue : pick(hd.fund, hd.folio, hd.folioCount, hd.planType, hd.value);
       if (!group.length) {
         problems.push(`The report keeps "${hd.fund}"${hd.folio ? ` (folio ${hd.folio})` : ""} (${inr(hd.value)}), but that fund is not in the CAS.`);
         continue;
       }
       const total = group.reduce((t, x) => t + x.current_value, 0);
-      if (sameStatement && !sameValue(hd.value, total)) problems.push(`${group[0].scheme_name}: the report values it at ${inr(hd.value)}, the CAS at ${inr(total)}.`);
+      if (!valueOk(hd.value, total, group[0].scheme_name)) problems.push(`${group[0].scheme_name}: the report values it at ${inr(hd.value)}, the CAS at ${inr(total)}.`);
       for (const g of group) {
         if (taken.has(g)) problems.push(`${g.scheme_name}: the report both sells it and keeps it.`);
         covered.add(g);
@@ -296,8 +349,13 @@ export function buildPlanFromReport(
 
   // ---- Buys: new funds by name; a top-up must be a fund already held. ----
   for (const b of report.buys) {
-    const planType = b.planType ?? detectPlanType(b.fund);
+    let planType = b.planType ?? detectPlanType(b.fund);
     const held = matchFund(b.fund, live, planType);
+    if (!planType) {
+      // Not stated: a top-up is the plan already held; a new fund is Direct (Univest is a SEBI RIA and advises Direct plans).
+      planType = held ? holdingPlan(held) : "DIRECT";
+      if (!held) drift.push(`${b.fund}: the report does not say Direct or Regular, so Direct is assumed (new money is advised in Direct plans).`);
+    }
     if (b.kind === "TOP_UP" && !held) problems.push(`Buy row "${b.fund}" is marked top-up, but no ${planType ?? ""} holding of it is in the CAS.`.replace("  ", " "));
     items.push({
       action: "BUY",
@@ -322,9 +380,14 @@ export function buildPlanFromReport(
     const buy = s.change === "START"
       ? buyItems.find((b) => nameSimilarity(s.fund, b.scheme_name) >= 0.85 && (!s.planType || !b.plan_type || b.plan_type === s.planType))
       : undefined;
-    const planType = s.planType ?? detectPlanType(s.fund) ?? buy?.plan_type ?? null;
+    let planType = s.planType ?? detectPlanType(s.fund) ?? buy?.plan_type ?? null;
     const known = viaAlias(s.fund, planType);
     const h = matchFund(s.fund, live, planType) ?? (known.length ? { ...known[0], folio_number: known.length === 1 ? known[0].folio_number : null } : null);
+    if (!planType && h) planType = holdingPlan(h);
+    if (!planType && s.change === "START") {
+      planType = "DIRECT";
+      drift.push(`New SIP in ${s.fund}: the report does not say Direct or Regular, so Direct is assumed.`);
+    }
     if (s.change !== "START" && !h) {
       problems.push(`SIP ${s.change === "STOP" ? "stop" : "change"} for "${s.fund}" does not match any fund in the CAS.`);
       continue;
@@ -355,6 +418,7 @@ export function buildPlanFromReport(
     report.riskProfile ? `Risk profile: ${report.riskProfile}.` : null,
     report.goal ? `Goal: ${report.goal}.` : null,
     ...report.deploymentNotes.map((n) => `• ${n}`),
+    ...(drift.length ? ["NAV movement since the report:", ...drift.map((d) => `• ${d}`)] : []),
   ].filter(Boolean).join("\n");
 
   return {
@@ -366,6 +430,7 @@ export function buildPlanFromReport(
     declared_totals: { exit_value: report.sellTotal, buy_value: report.buyTotal },
     notes,
     problems,
+    drift,
     warnings: problems,
   };
 }

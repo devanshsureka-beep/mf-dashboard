@@ -113,10 +113,38 @@ describe("advisory report (second layout) -> plan items, checked against the CAS
     const pm = buildPlanFromReport(report2, missing, "2026-09-23").problems;
     expect(pm.some((x) => /UTI Nifty 50 .* does not match any fund in the CAS/.test(x))).toBe(true);
 
-    expect(buildPlanFromReport(report2, holdings2, "2026-09-30").problems[0]).toMatch(/Upload the same CAS/);
+    // A later CAS is fine: values moved with NAVs, which is noted, not blocked.
+    const later = buildPlanFromReport(report2, holdings2, "2026-09-30");
+    expect(later.problems).toEqual([]);
+    expect(later.drift[0]).toMatch(/CAS of 2026-09-23; the uploaded CAS is of 2026-09-30/);
 
     // Direct and Regular never mix: a Regular-only holding does not satisfy a Direct top-up.
     const regular = holdings2.map((h) => (h.isin === "INF205K01MV6" ? { ...h, scheme_name: "Invesco India Mid Cap Fund - Regular Plan Growth", plan_type: "REGULAR" as const } : h));
     expect(buildPlanFromReport(report2, regular, "2026-09-23").problems.some((x) => /top-up/.test(x))).toBe(true);
+  });
+});
+
+describe("report made from an earlier CAS (NAVs moved since)", () => {
+  const later = holdings.map((h) => ({ ...h, current_value: Math.round(h.current_value * 1.012 * 100) / 100 }));
+
+  it("accepts market movement: full exits sell every unit at the CAS value, differences are listed, not blocked", () => {
+    const p = buildPlanFromReport(report, later, "2026-10-01");
+    expect(p.problems).toEqual([]);
+    expect(p.drift[0]).toMatch(/CAS of 2026-09-23.*2026-10-01/);
+    expect(p.drift.some((d) => /report ₹2,02,538, CAS ₹2,04,968\.46 \(\+1\.2%\)/.test(d))).toBe(true);
+    const nippon = p.items.find((i) => i.action === "SELL" && i.folio_number === "9002/2");
+    expect(nippon?.target_amount).toBe(204968.46);
+    expect(p.notes).toMatch(/NAV movement since the report/);
+  });
+
+  it("still blocks a gap too large for NAV movement", () => {
+    const off = later.map((h) => (h.folio_number === "9003/3" ? { ...h, current_value: 250000 } : h));
+    const p = buildPlanFromReport(report, off, "2026-10-01");
+    expect(p.problems.some((x) => /Mahindra Manulife Multi Cap.*too much for NAV movement/.test(x))).toBe(true);
+  });
+
+  it("the same statement stays strict (±0.2%)", () => {
+    const p = buildPlanFromReport(report, later, "2026-09-23");
+    expect(p.problems.length).toBeGreaterThan(0);
   });
 });

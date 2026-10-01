@@ -33,7 +33,8 @@ export interface ReportTable {
 }
 
 const ROW_TOLERANCE = 2.5;
-const NUMERIC = /^(?:[-−–]?\s?(?:Rs\.?\s?|₹\s?)?[\d,]+(?:\.\d+)?\*?|[—–-]|n\/a)$/i;
+// Amounts: "₹1,91,022", "-₹6,561", "~₹1,01,000/mo", "15,500 pm", "—".
+const NUMERIC = /^(?:[~≈+]?[-−–]?\s?(?:Rs\.?\s?|₹\s?)?[\d,]+(?:\.\d+)?\*?(?:\s?\/\s?(?:mo|month|m)|\s?p\.?m\.?)?|[—–-]|n\/a)$/i;
 export const isNumericCell = (s: string) => NUMERIC.test(s.trim());
 
 interface Line {
@@ -57,6 +58,9 @@ const isFooter = (l: Line) => /Portfolio Report\s*[—-].*Page \d+|SEBI RIA/i.te
 
 function columnOf(it: PdfItem, cols: TableColumn[]): number {
   if (isNumericCell(it.s)) {
+    // Left-aligned numbers start exactly under their header.
+    const left = cols.findIndex((c) => Math.abs(c.x - it.x) <= 3);
+    if (left >= 0) return left;
     // Right-aligned numbers: the column whose header ends near the number's end.
     let best = -1;
     let dist = Infinity;

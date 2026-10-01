@@ -27,6 +27,8 @@ export interface ReportSellRow {
   value: number;
   /** One row covering several folios of the same fund ("x2 folios"). */
   folioCount?: number;
+  /** "(Reg)" / "(Direct)" in the fund cell. */
+  planType?: "DIRECT" | "REGULAR" | null;
 }
 export interface ReportBuyRow {
   fund: string;
@@ -57,6 +59,13 @@ export interface ReportReviewRow {
   verdictText: string;
   verdict: ReviewVerdict | null;
   amount: number | null;
+  /** From the detail line under the fund ("PPFAS · Flexi Cap · Direct · 3 folios"). */
+  planType?: "DIRECT" | "REGULAR" | null;
+  folioCount?: number | null;
+  /** The BASIS text (why), first part. */
+  note?: string | null;
+  /** "EXIT LATER": kept now, sold in a later tranche. */
+  deferred?: boolean;
 }
 
 export interface AdvisoryReportParse {
@@ -118,6 +127,11 @@ const isRupeeCell = (c: string) => /^₹\s?[\d,]+(\.\d+)?$/.test(c);
 const isDash = (c: string) => /^[—–-]$/.test(c.trim());
 const isSipNumber = (c: string) => isDash(c) || /^[\d,]+(\.\d+)?\*?$/.test(c);
 const isFolio = (c: string) => /^[0-9A-Z]{4,}(\s*\/\s*[0-9A-Z]+)?$/.test(c);
+/** "2 folios" / "x2 folios" in the folio column: one row for several folios of a fund. */
+const folioCountCell = (c: string) => {
+  const m = /^x?\s*(\d+)\s*folios?$/i.exec(c.trim());
+  return m ? Number(m[1]) : null;
+};
 
 function planTypeOf(s: string): "DIRECT" | "REGULAR" | null {
   if (/\bdirect\b|\(dir\)/i.test(s)) return "DIRECT";
@@ -145,9 +159,11 @@ export function mapRisk(text: string | null): string | null {
 }
 
 const VERDICT_RE = /^(EXIT|SELL|HOLD|KEEP|RETAIN|TRIM|REDUCE|ADD|TOP[- ]?UP|BUY|SWITCH)\b/;
-function mapVerdict(text: string): { verdict: ReviewVerdict | null; amount: number | null } {
+function mapVerdict(text: string): { verdict: ReviewVerdict | null; amount: number | null; deferred?: boolean } {
   const word = VERDICT_RE.exec(text)?.[1] ?? "";
   const amount = money(/₹\s?[\d,.]+\s*(L|Cr|k)?/i.exec(text)?.[0]);
+  // "EXIT LATER" / "EXIT 2027" / "EXIT AFTER …": kept now, sold in a later tranche.
+  if (/^(EXIT|SELL)\s+(LATER|AFTER|IN|\d{4}|NEXT)/i.test(text)) return { verdict: "HOLD", amount: null, deferred: true };
   if (/^(EXIT|SELL)$/.test(word)) return { verdict: "EXIT", amount: null };
   if (/^(HOLD|KEEP|RETAIN)$/.test(word)) return { verdict: "HOLD", amount: null };
   if (/^(TRIM|REDUCE)$/.test(word)) return { verdict: "TRIM", amount };
@@ -214,7 +230,8 @@ export function parseAdvisoryReportLines(rawLines: string[]): AdvisoryReportPars
         break;
       }
       if (isPageEnd(lines[i])) break;
-      if (c.length >= 3 && isFolio(c[1])) {
+      const multi = c.length >= 3 ? folioCountCell(c[1]) : null;
+      if (c.length >= 3 && (isFolio(c[1]) || multi)) {
         const vIdx = c.findIndex((x, j) => j >= 2 && isRupeeCell(x));
         if (vIdx < 0) {
           problems.push(`Sell row "${c[0]}": the ₹ value could not be found.`);
@@ -225,7 +242,9 @@ export function parseAdvisoryReportLines(rawLines: string[]): AdvisoryReportPars
         if (action === "UNKNOWN" || action === "RETAIN") problems.push(`Sell row "${c[0]}": unclear action "${actionText}".`);
         sells.push({
           fund: c[0],
-          folio: c[1].replace(/\s+/g, ""),
+          folio: multi ? null : c[1].replace(/\s+/g, ""),
+          ...(multi ? { folioCount: multi } : {}),
+          planType: planTypeOf(c[0]),
           actionText,
           action,
           partial: /trim|partial|reduce|part of|₹/i.test(actionText) && !/full/i.test(actionText),
@@ -327,12 +346,16 @@ export function parseAdvisoryReportLines(rawLines: string[]): AdvisoryReportPars
   }
 
   // ---------------- Fund-wise review: one verdict per holding ----------------
+  // The review can run over several tables ("Funds we keep…", "Funds we exit…").
   const review: ReportReviewRow[] = [];
-  const rh = findHeader(lines, "FUND", "VALUE", "VERDICT");
-  if (rh >= 0) {
+  const reviewHeaders = lines
+    .map((l, i) => ({ c: cellsOf(l).map((x) => x.toUpperCase()), i }))
+    .filter(({ c }) => c[0] === "FUND" && c.some((x) => x.startsWith("VALUE")) && c.some((x) => x.startsWith("VERDICT")))
+    .map(({ i }) => i);
+  for (const rh of reviewHeaders) {
     const vCol = cellsOf(lines[rh]).findIndex((x) => x.toUpperCase().startsWith("VERDICT"));
     for (let i = rh + 1; i < lines.length; i++) {
-      if (isPageEnd(lines[i]) || /^1Y\b/.test(lines[i])) break;
+      if (isPageEnd(lines[i]) || /^1Y\b/.test(lines[i]) || reviewHeaders.includes(i)) break;
       const c = cellsOf(lines[i]);
       if (c.length < 3 || !isRupeeCell(c[1])) continue;
       const vText = VERDICT_RE.test(c[vCol] ?? "") ? c[vCol] : c.find((x, j) => j > 1 && VERDICT_RE.test(x));
@@ -342,9 +365,24 @@ export function parseAdvisoryReportLines(rawLines: string[]): AdvisoryReportPars
       }
       const v = mapVerdict(vText);
       if (!v.verdict) problems.push(`Fund-wise review: unknown verdict "${vText}" for ${c[0]}.`);
-      review.push({ fund: c[0], value: money(c[1])!, verdictText: vText, verdict: v.verdict, amount: v.amount });
+      // Detail line under the fund: "AMC · Category · Direct · 3 folios | …basis continued".
+      const meta = cellsOf(lines[i + 1] ?? "")[0] ?? "";
+      const hasMeta = meta.includes("·") && !isRupeeCell(meta);
+      const vIdx = c.indexOf(vText);
+      review.push({
+        fund: c[0],
+        value: money(c[1])!,
+        verdictText: vText,
+        verdict: v.verdict,
+        amount: v.amount,
+        planType: hasMeta ? planTypeOf(meta) : planTypeOf(c[0]),
+        folioCount: hasMeta ? Number(/(\d+)\s*folios?/i.exec(meta)?.[1] ?? 0) || null : null,
+        note: c.slice(vIdx + 1).join(" ").trim() || null,
+        deferred: v.deferred ?? false,
+      });
     }
-  } else {
+  }
+  if (!reviewHeaders.length) {
     problems.push("Fund-wise review table (FUND | VALUE | … | VERDICT) not found, so the sell list cannot be double-checked.");
   }
 
@@ -407,13 +445,15 @@ export function parseAdvisoryReportLines(rawLines: string[]): AdvisoryReportPars
   // 3) Sell list vs fund-wise review verdicts (each holding has exactly one verdict).
   if (review.length) {
     const claimed = new Set<ReportSellRow>();
+    // Direct and Regular plans of one fund are different holdings: never pair them.
+    const samePlan = (s: ReportSellRow, r: ReportReviewRow) => !s.planType || !r.planType || s.planType === r.planType;
     const bestSell = (r: ReportReviewRow) =>
       sells
-        .filter((s) => !claimed.has(s) && nameSimilarity(s.fund, r.fund) >= 0.7)
+        .filter((s) => !claimed.has(s) && samePlan(s, r) && nameSimilarity(s.fund, r.fund) >= 0.7)
         .sort((a, b) => nameSimilarity(b.fund, r.fund) - nameSimilarity(a.fund, r.fund) || Math.abs(a.value - r.value) - Math.abs(b.value - r.value))[0];
     for (const r of review) {
       if (r.verdict === "EXIT" || r.verdict === "SWITCH") {
-        const s = sells.filter((x) => !claimed.has(x) && nameSimilarity(x.fund, r.fund) >= 0.7).find((x) => close(x.value, r.value)) ?? bestSell(r);
+        const s = sells.filter((x) => !claimed.has(x) && samePlan(x, r) && nameSimilarity(x.fund, r.fund) >= 0.7).find((x) => close(x.value, r.value)) ?? bestSell(r);
         if (!s) problems.push(`Review says ${r.verdictText} for ${r.fund} (${inr(r.value)}) but the sell table has no row for it.`);
         else {
           claimed.add(s);
@@ -431,8 +471,8 @@ export function parseAdvisoryReportLines(rawLines: string[]): AdvisoryReportPars
           s.partial = true;
         }
       } else if (r.verdict === "HOLD") {
-        const s = sells.find((x) => !claimed.has(x) && nameSimilarity(x.fund, r.fund) >= 0.85 && close(x.value, r.value));
-        if (s) problems.push(`Review says HOLD for ${r.fund} but the sell table sells it.`);
+        const s = sells.find((x) => !claimed.has(x) && samePlan(x, r) && nameSimilarity(x.fund, r.fund) >= 0.85 && close(x.value, r.value));
+        if (s) problems.push(`Review says ${r.deferred ? r.verdictText : "HOLD"} for ${r.fund} but the sell table sells it now.`);
       } else if (r.verdict === "ADD") {
         const b = buys.find((x) => nameSimilarity(x.fund, r.fund) >= 0.7);
         if (!b) problems.push(`Review says ${r.verdictText} for ${r.fund} but the buy table has no row for it.`);
@@ -440,7 +480,7 @@ export function parseAdvisoryReportLines(rawLines: string[]): AdvisoryReportPars
       }
     }
     for (const s of sells) {
-      if (!claimed.has(s)) problems.push(`Sell row "${s.fund}" (folio ${s.folio}) has no EXIT/TRIM/SWITCH verdict in the fund-wise review.`);
+      if (!claimed.has(s)) problems.push(`Sell row "${s.fund}" (${s.folio ? `folio ${s.folio}` : `${s.folioCount ?? "several"} folios`}) has no EXIT/TRIM/SWITCH verdict in the fund-wise review.`);
     }
     if (currentValue !== null) {
       const reviewSum = sum(review.map((r) => r.value));

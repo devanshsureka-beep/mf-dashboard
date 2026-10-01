@@ -9,7 +9,14 @@ import { looksLikeAdvisoryReport, parseAdvisoryReportGeneric } from "./report-ge
 
 export function parseAdvisoryReportPages(pages: PdfPage[]): AdvisoryReportParse {
   const lines = pagesToLines(pages);
-  if (isUnivestV1(lines)) return parseAdvisoryReportLines(lines);
+  if (isUnivestV1(lines)) {
+    try {
+      return parseAdvisoryReportLines(lines);
+    } catch (e) {
+      // Same branding, different layout: fall through to the layout-independent reader.
+      if (!(e instanceof ReportParseError)) throw e;
+    }
+  }
   if (!looksLikeAdvisoryReport(pages)) throw new ReportParseError("This does not look like an advisory / portfolio report.");
   return parseAdvisoryReportGeneric(pages);
 }

@@ -4,7 +4,7 @@
  */
 
 // Plan words (direct / regular) are compared separately (plan type), never as name evidence.
-const STOP_WORDS = new Set(["fund", "the", "of", "and", "plan", "option", "scheme", "growth", "india", "ltd", "mf", "direct", "regular", "dir", "reg"]);
+const STOP_WORDS = new Set(["fund", "the", "of", "and", "plan", "option", "scheme", "growth", "india", "ltd", "mf", "direct", "regular", "dir", "reg", "non", "demat", "physical"]);
 
 export function tokens(name: string): string[] {
   return name

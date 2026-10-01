@@ -188,7 +188,7 @@ describeDb("onboarding from CAS + advisory report", () => {
 
       const plan = (await ctx.tx<{ status: string; extraction_source: string; target_exit_value: number; target_buy_value: number }[]>`
         select status, extraction_source, target_exit_value, target_buy_value from public.advisory_plans where id = ${out.planId}`)[0];
-      expect(plan).toMatchObject({ status: "DRAFT", extraction_source: "IMPORT", target_exit_value: 3826013, target_buy_value: 3826013.13 });
+      expect(plan).toMatchObject({ status: "DRAFT", extraction_source: "IMPORT", target_exit_value: 3826013.13, target_buy_value: 3826013.13 });
       const items = await ctx.tx<{ action: string; n: number; unresolved: number; review: number }[]>`
         select action, count(*)::int as n, count(*) filter (where security_id is null)::int as unresolved,
                count(*) filter (where needs_review)::int as review
