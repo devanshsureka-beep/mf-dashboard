@@ -264,7 +264,7 @@ export async function askClaudeForReport(input: ReportAiInput, timeoutMs = 280_0
     throw new AppError("Could not reach the Claude reader (n8n) in time. Try this client again.");
   }
   if (res.status === 401 || res.status === 403) throw new AppError("The n8n Claude reader refused the key (REPORT_AI_KEY does not match the n8n credential).");
-  if (res.status === 404) throw new AppError("The n8n Claude reader is not switched on (publish the workflow in n8n).");
+  if (res.status === 404) throw new AppError("n8n says this webhook address does not exist (404): REPORT_AI_URL must be exactly the Production URL shown in the n8n Webhook node, and the workflow must be published.");
   if (!res.ok) throw new AppError(`The n8n Claude reader failed (HTTP ${res.status}).`);
   const wrapped = (await res.json().catch(() => null)) as { status?: number; body?: MessageBody } | null;
   const msg = wrapped?.body;
