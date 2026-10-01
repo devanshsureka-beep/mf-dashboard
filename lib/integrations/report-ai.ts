@@ -23,63 +23,67 @@ export function reportAiConfigured(): boolean {
 // ---------------------------------------------------------------------------
 // Answer shape (JSON schema for Claude, zod for us)
 // ---------------------------------------------------------------------------
-const nullable = (t: Record<string, unknown>) => ({ anyOf: [t, { type: "null" }] });
-const PLAN = nullable({ type: "string", enum: ["DIRECT", "REGULAR"] });
+// Claude's structured output allows few optional (union) fields, so the schema
+// has none: "" / 0 / "UNKNOWN" mean "not in the report" and are turned back
+// into null below.
+const PLAN = { type: "string", enum: ["DIRECT", "REGULAR", "UNKNOWN"] };
+const TEXT = (description?: string) => ({ type: "string", ...(description ? { description } : {}) });
+const NUM = (description?: string) => ({ type: "number", ...(description ? { description } : {}) });
 const obj = (properties: Record<string, unknown>) => ({
   type: "object", additionalProperties: false, properties, required: Object.keys(properties),
 });
 
 export const REPORT_AI_SCHEMA = obj({
-  client_name: nullable({ type: "string" }),
-  report_cas_date: nullable({ type: "string", description: "Valuation / statement date of the CAS the report was made from, YYYY-MM-DD" }),
-  prepared_date: nullable({ type: "string", description: "Date the report was prepared, YYYY-MM-DD" }),
-  portfolio_value: nullable({ type: "number" }),
-  risk_profile: nullable({ type: "string" }),
-  goal: nullable({ type: "string" }),
+  client_name: TEXT("\"\" if not shown"),
+  report_cas_date: TEXT("Valuation / statement date of the CAS the report was made from, YYYY-MM-DD; \"\" if not shown"),
+  prepared_date: TEXT("Date the report was prepared, YYYY-MM-DD; \"\" if not shown"),
+  portfolio_value: NUM("0 if not shown"),
+  risk_profile: TEXT("\"\" if not shown"),
+  goal: TEXT("\"\" if not shown"),
   sells: {
     type: "array",
     items: obj({
-      fund: { type: "string" },
-      folio: nullable({ type: "string" }),
+      fund: TEXT(),
+      folio: TEXT("\"\" unless the report prints it"),
       folio_count: { type: "integer", description: "Folios this one row covers (1 unless the report says e.g. '2 folios')" },
       plan_type: PLAN,
       partial: { type: "boolean", description: "true when only part of the holding is sold now" },
-      value: { type: "number", description: "Rupees sold now (for a full exit: the value the report shows)" },
+      value: NUM("Rupees sold now (for a full exit: the value the report shows)"),
     }),
   },
-  sell_total: nullable({ type: "number" }),
+  sell_total: NUM("0 if the report prints no sell total"),
   buys: {
     type: "array",
     items: obj({
-      fund: { type: "string" },
+      fund: TEXT(),
       plan_type: PLAN,
-      amount: { type: "number" },
+      amount: NUM(),
       kind: { type: "string", enum: ["NEW", "TOP_UP"] },
-      amc: nullable({ type: "string" }),
-      category: nullable({ type: "string" }),
+      amc: TEXT("\"\" if not shown"),
+      category: TEXT("\"\" if not shown"),
     }),
   },
-  buy_total: nullable({ type: "number" }),
+  buy_total: NUM("0 if the report prints no buy total"),
   sips: {
     type: "array",
     items: obj({
-      fund: { type: "string" },
+      fund: TEXT(),
       plan_type: PLAN,
       change: { type: "string", enum: ["START", "STOP", "CHANGE"] },
-      current: nullable({ type: "number", description: "Monthly amount before" }),
-      next: nullable({ type: "number", description: "Monthly amount after" }),
+      current: NUM("Monthly amount before (0 for a new SIP)"),
+      next: NUM("Monthly amount after (0 when stopped)"),
     }),
   },
   holds: {
     type: "array",
     items: obj({
-      fund: { type: "string" },
-      folio: nullable({ type: "string" }),
+      fund: TEXT(),
+      folio: TEXT("\"\" unless the report prints it"),
       folio_count: { type: "integer" },
       plan_type: PLAN,
-      value: nullable({ type: "number", description: "Value the report shows; null if it shows none" }),
+      value: NUM("Value the report shows; 0 if it shows none"),
       deferred: { type: "boolean", description: "true for 'exit later' / sell in a later tranche" },
-      note: nullable({ type: "string" }),
+      note: TEXT("\"\" if none"),
     }),
   },
   corrections: {
@@ -89,36 +93,40 @@ export const REPORT_AI_SCHEMA = obj({
   },
 });
 
-const planZ = z.enum(["DIRECT", "REGULAR"]).nullable();
+// Accepts Claude's "" / 0 / "UNKNOWN" (and plain nulls) and normalises them to null.
+const textZ = z.string().nullable().transform((v) => (v && v.trim() ? v.trim() : null));
+const dateZ = z.string().nullable().transform((v) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v.trim()) ? v.trim() : null));
+const planZ = z.enum(["DIRECT", "REGULAR", "UNKNOWN"]).nullable().transform((v) => (v === "UNKNOWN" ? null : v));
 const amountZ = z.number().finite().nonnegative();
+const optAmountZ = amountZ.nullable().transform((v) => (v ? v : null));
 export const reportAiAnswerSchema = z.object({
-  client_name: z.string().nullable(),
-  report_cas_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().catch(null),
-  prepared_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().catch(null),
-  portfolio_value: amountZ.nullable(),
-  risk_profile: z.string().nullable(),
-  goal: z.string().nullable(),
+  client_name: textZ,
+  report_cas_date: dateZ,
+  prepared_date: dateZ,
+  portfolio_value: optAmountZ,
+  risk_profile: textZ,
+  goal: textZ,
   sells: z.array(z.object({
-    fund: z.string().min(2), folio: z.string().nullable(), folio_count: z.number().int().min(1).max(20),
+    fund: z.string().min(2), folio: textZ, folio_count: z.number().int().min(1).max(20),
     plan_type: planZ, partial: z.boolean(), value: amountZ.positive(),
   })).max(200),
-  sell_total: amountZ.nullable(),
+  sell_total: optAmountZ,
   buys: z.array(z.object({
     fund: z.string().min(2), plan_type: planZ, amount: amountZ.positive(), kind: z.enum(["NEW", "TOP_UP"]),
-    amc: z.string().nullable(), category: z.string().nullable(),
+    amc: textZ, category: textZ,
   })).max(200),
-  buy_total: amountZ.nullable(),
+  buy_total: optAmountZ,
   sips: z.array(z.object({
     fund: z.string().min(2), plan_type: planZ, change: z.enum(["START", "STOP", "CHANGE"]),
-    current: amountZ.nullable(), next: amountZ.nullable(),
+    current: optAmountZ, next: optAmountZ,
   })).max(200),
   holds: z.array(z.object({
-    fund: z.string().min(2), folio: z.string().nullable(), folio_count: z.number().int().min(1).max(20),
-    plan_type: planZ, value: amountZ.nullable(), deferred: z.boolean(), note: z.string().nullable(),
+    fund: z.string().min(2), folio: textZ, folio_count: z.number().int().min(1).max(20),
+    plan_type: planZ, value: optAmountZ, deferred: z.boolean(), note: textZ,
   })).max(300),
   corrections: z.array(z.string()).max(100),
 });
-export type ReportAiAnswer = z.infer<typeof reportAiAnswerSchema>;
+export type ReportAiAnswer = z.output<typeof reportAiAnswerSchema>;
 
 // ---------------------------------------------------------------------------
 // Request
@@ -127,14 +135,15 @@ const SYSTEM = `You read Indian mutual-fund advisory (rebalancing) reports for a
 Return the report's own recommendations in the given JSON shape. Your answer is checked line by line against the client's CAS by software, and an adviser reviews the result.
 
 Rules:
-- Report only what the report says. Never invent a line, an amount or a total. If the report does not print a total, use null.
+- Report only what the report says. Never invent a line, an amount or a total. If the report does not print a total, use 0.
 - Amounts are rupees as plain numbers: "₹5.2L" = 520000, "₹1.15 Cr" = 11500000, "16,500/mo" = 16500.
 - sells: every fund the report sells / exits / redeems / switches out NOW. partial = true when only part is sold ("trim ₹5L", "sell 50%"); value = the rupees sold now. A switch is a sell here plus a buy of the target fund.
 - holds: every fund the report keeps, holds, continues, or defers ("exit later", "next tranche", "after 1 year") with the value the report shows for it (null if none). deferred = true for anything to be sold later, not now.
 - buys: lump-sum purchases. kind = TOP_UP when the client already holds that fund (see the CAS list), else NEW.
 - sips: START (new), STOP, or CHANGE (amount changes) with the monthly amount before (current) and after (next).
-- plan_type: DIRECT or REGULAR when the report or the matching CAS fund shows it; otherwise null.
-- folio: only when the report prints it. folio_count: how many folios one row covers (1 unless the report says otherwise).
+- plan_type: DIRECT or REGULAR when the report or the matching CAS fund shows it; otherwise UNKNOWN.
+- folio: only when the report prints it, else "". folio_count: how many folios one row covers (1 unless the report says otherwise).
+- Anything the report does not show: "" for text, 0 for amounts.
 - Use the CAS fund list only to identify which fund / folio a report line means and to write the fund name precisely. A CAS fund the report never mentions must NOT appear in your answer.
 - You also get the built-in reader's draft and the points it could not reconcile. Keep its lines that are right, fix the ones that are wrong or missing, and list what you changed in corrections (one short line each).
 - Dates as YYYY-MM-DD.`;

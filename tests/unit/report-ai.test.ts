@@ -61,6 +61,8 @@ describe("Claude's answer goes through the same CAS tie-out", () => {
       if (s.anyOf) (s.anyOf as Record<string, unknown>[]).forEach(walk);
     };
     walk(REPORT_AI_SCHEMA as Record<string, unknown>);
+    // Claude allows at most 16 union-typed fields: use none.
+    expect(JSON.stringify(REPORT_AI_SCHEMA)).not.toMatch(/anyOf|"type":\[/);
     const req = buildReportAiRequest({ pdf: new Uint8Array([37, 80, 68, 70]), holdings, casValuationDate: "2026-09-23", draft: null, readerError: "unknown layout", problems: [] });
     expect(req.model).toBe("claude-sonnet-5-5");
     expect(req.messages[0].content[0]).toMatchObject({ type: "document", source: { media_type: "application/pdf", data: "JVBERg==" } });
@@ -81,6 +83,23 @@ describe("calling Claude through n8n", () => {
     expect(out.report.sells).toHaveLength(1);
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect((init.headers as Record<string, string>)["x-desk-key"]).toBe("k");
+  });
+
+  it("reads \"\" / 0 / UNKNOWN as not shown", async () => {
+    vi.stubEnv("REPORT_AI_URL", "https://n8n.example/webhook/x");
+    vi.stubEnv("REPORT_AI_KEY", "k");
+    const raw = {
+      ...answer, goal: "", report_cas_date: "", sell_total: 0,
+      sells: [{ ...answer.sells[0], folio: "", plan_type: "UNKNOWN" }],
+      holds: [{ ...answer.holds[0], value: 0, note: "" }],
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ status: 200, body: { stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify(raw) }] } }))));
+    const { report } = await askClaudeForReport(input);
+    expect(report.sellTotal).toBeNull();
+    expect(report.valuationDate).toBeNull();
+    expect(report.sells[0]).toMatchObject({ folio: null, planType: null });
+    expect(report.holds).toHaveLength(0);
+    expect(report.mentioned[0]).toMatchObject({ fund: "Axis Small Cap Fund" });
   });
 
   it("explains failures in plain words", async () => {
