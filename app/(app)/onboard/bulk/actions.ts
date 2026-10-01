@@ -5,13 +5,14 @@ import { str } from "@/lib/actions";
 import { casPasswordTemplate, passwordCandidates } from "@/lib/cas/password";
 import { identifyPdf, readCasPdf, readReportDetailed } from "@/lib/cas/reader";
 import { AppError, logServerError, toUserMessage } from "@/lib/errors";
-import { askClaudeForReport, reportAiConfigured } from "@/lib/integrations/report-ai";
+import { reportAiConfigured } from "@/lib/integrations/report-ai";
 import { requireActorForAction } from "@/lib/auth/session";
 import { ALL_ROLES } from "@/lib/server";
 import { prepareUpload, type PreparedFile } from "@/lib/storage";
 import type { AdvisoryReportParse } from "@/lib/parsers/advisory-report";
 import { findClientByPan, knownClientPhones } from "@/services/cas-intake";
-import { checkDocumentsBelongTogether, holdingsFromCas, previewOnboarding } from "@/services/onboarding";
+import { checkDocumentsBelongTogether, previewOnboarding } from "@/services/onboarding";
+import { resolveWithClaude } from "@/services/report-resolve";
 import { checkAdvisor, onboardingTx, saveOnboarding } from "../save";
 
 /**
@@ -97,7 +98,11 @@ const fail = (outcome: BulkOnboardRow["outcome"], message: string, extra: Partia
 /** Stored names carry no password (file names may hold one). */
 const storedAs = (f: PreparedFile, name: string): PreparedFile => ({ ...f, fileName: name.replace(/[^\w .()-]+/g, " ").replace(/\s+/g, " ").trim() });
 
+/** The page allows 300 s per request: Claude rounds must finish inside that. */
+const REQUEST_BUDGET_MS = 285_000;
+
 export async function onboardBulkPairAction(fd: FormData): Promise<BulkOnboardRow> {
+  const deadline = Date.now() + REQUEST_BUDGET_MS;
   try {
     const actor = await requireActorForAction(ALL_ROLES);
     const run = onboardingTx(actor);
@@ -132,40 +137,27 @@ export async function onboardBulkPairAction(fd: FormData): Promise<BulkOnboardRo
       const together = checkDocumentsBelongTogether(cas, report);
       if (together.problem && report.clientName) return fail("FAILED", `${together.problem} Pair this CAS with the right report.`);
     }
-    let problems = report ? previewOnboarding(cas, report).problems : [`The built-in reader could not read the report: ${read.error}`];
+    const problems = report ? previewOnboarding(cas, report).problems : [`The built-in reader could not read the report: ${read.error}`];
     let usedClaude = false;
     let corrections: string[] = [];
 
-    // 2) Claude for what did not reconcile; its answer is checked the same way.
+    // 2) Claude for what did not reconcile (points still open go back to Claude);
+    //    every answer passes the same CAS tie-out.
     if (problems.length) {
       if (!reportAiConfigured()) {
         return fail("NEEDS_REVIEW", "The report does not reconcile with the CAS, and the Claude reader is not set up.", { problems });
       }
-      let holdings;
-      try {
-        holdings = holdingsFromCas(cas);
-      } catch (e) {
-        return fail("FAILED", `The CAS does not reconcile: ${(e as Error).message}`);
+      const r = await resolveWithClaude({ cas, reportPdf: reportUpload.bytes, draft: report, readerError: read.error, problems, deadline });
+      usedClaude = r.rounds > 0;
+      corrections = r.corrections;
+      if (r.status === "WRONG_PAIR") return fail("FAILED", `${r.message} Pair this CAS with the right report.`, { usedClaude, corrections });
+      if (r.status === "OPEN") {
+        return fail("NEEDS_REVIEW", r.error && !usedClaude
+          ? `The report does not reconcile, and Claude could not help: ${r.error}`
+          : `Even after Claude re-read the report${r.rounds > 1 ? ` (${r.rounds} rounds)` : ""}, these points do not reconcile with the CAS.${r.error ? ` (${r.error})` : ""}`,
+        { problems: r.problems, usedClaude, corrections });
       }
-      try {
-        const ai = await askClaudeForReport({
-          pdf: reportUpload.bytes, holdings, casValuationDate: cas.valuationDate,
-          draft: report, readerError: read.error, problems,
-        });
-        usedClaude = true;
-        corrections = ai.corrections;
-        const together = checkDocumentsBelongTogether(cas, ai.report);
-        if (together.problem && ai.report.clientName) return fail("FAILED", `${together.problem} Pair this CAS with the right report.`, { usedClaude, corrections });
-        const after = previewOnboarding(cas, { ...ai.report, clientName: ai.report.clientName ?? cas.investor.name }).problems;
-        if (after.length) {
-          return fail("NEEDS_REVIEW", "Even after Claude read the report, these points do not reconcile with the CAS.", { problems: after, usedClaude, corrections });
-        }
-        report = { ...ai.report, clientName: ai.report.clientName ?? cas.investor.name };
-        problems = [];
-      } catch (e) {
-        if (!(e instanceof AppError)) logServerError("bulk-onboard:claude", e);
-        return fail("NEEDS_REVIEW", `The report does not reconcile, and Claude could not help: ${toUserMessage(e)}`, { problems });
-      }
+      report = r.report;
     }
     if (!report) return fail("FAILED", "The report could not be read.");
 

@@ -258,6 +258,7 @@ export function buildPlanFromReport(
   // ---- Fund-wise review ↔ CAS: every holding has exactly one verdict. ----
   // A review row covers every folio of one fund + plan ("Direct · 3 folios"); the CAS lists folios separately.
   const holdReason = new Map<PlanHolding, string>();
+  const unreported: string[] = [];
   if (report.review.length) {
     const reviewed = new Set<PlanHolding>();
     const fundKey = (h: PlanHolding) => h.isin ?? h.scheme_name.toLowerCase();
@@ -338,7 +339,14 @@ export function buildPlanFromReport(
       for (const g of [...viaAlias(x.fund, pt), ...sameFundHoldings(x.fund, live, pt)]) covered.add(g);
     }
     for (const h of live) {
-      if (!covered.has(h)) problems.push(`${h.scheme_name} (folio ${h.folio_number ?? "—"}, ${inr(h.current_value)}) is in the CAS but not covered by the report.`);
+      if (covered.has(h)) continue;
+      // Confirmed absent from the whole report: kept as it is, flagged for the advisor.
+      if ((report.notInReport ?? []).some((f) => nameSimilarity(f, h.scheme_name) >= 0.6)) {
+        unreported.push(`${h.scheme_name} (folio ${h.folio_number ?? "—"}, ${inr(h.current_value)})`);
+        holdReason.set(h, "Not mentioned in the advisory report: kept as it is. Advisor to confirm.");
+        continue;
+      }
+      problems.push(`${h.scheme_name} (folio ${h.folio_number ?? "—"}, ${inr(h.current_value)}) is in the CAS but not covered by the report.`);
     }
   }
 
@@ -419,6 +427,7 @@ export function buildPlanFromReport(
     report.goal ? `Goal: ${report.goal}.` : null,
     ...report.deploymentNotes.map((n) => `• ${n}`),
     ...(drift.length ? ["NAV movement since the report:", ...drift.map((d) => `• ${d}`)] : []),
+    ...(unreported.length ? ["Not mentioned in the report (kept as they are; please confirm):", ...unreported.map((d) => `• ${d}`)] : []),
   ].filter(Boolean).join("\n");
 
   return {

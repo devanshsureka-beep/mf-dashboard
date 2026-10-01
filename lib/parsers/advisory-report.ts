@@ -90,6 +90,11 @@ export interface AdvisoryReportParse {
   /** Funds named in a fund list / status table (proves the report covers them). */
   mentioned: { fund: string; planType: "DIRECT" | "REGULAR" | null; folio: string | null; folioCount: number }[];
   deploymentNotes: string[];
+  /**
+   * CAS funds a second reader (Claude) confirmed the report never mentions.
+   * They are kept as they are, flagged for the advisor, instead of blocking.
+   */
+  notInReport?: string[];
   /** Anything that does not reconcile. Callers must block on any entry. */
   problems: string[];
   /** @deprecated alias of `problems` */

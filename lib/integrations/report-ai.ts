@@ -86,9 +86,14 @@ export const REPORT_AI_SCHEMA = obj({
       note: TEXT("\"\" if none"),
     }),
   },
+  cas_funds_not_in_report: {
+    type: "array",
+    description: "CAS fund names (exactly as in the CAS list) that the report does not mention anywhere, after searching every page.",
+    items: { type: "string" },
+  },
   corrections: {
     type: "array",
-    description: "Short notes: what differs from the built-in reader's draft and why (empty if nothing).",
+    description: "Short notes: what differs from the draft you were given and why (empty if nothing).",
     items: { type: "string" },
   },
 });
@@ -126,6 +131,7 @@ export const reportAiAnswerSchema = z.object({
     fund: fundZ, folio: textZ, folio_count: countZ,
     plan_type: planZ, value: optAmountZ, deferred: z.boolean(), note: textZ,
   })).max(300),
+  cas_funds_not_in_report: z.array(z.string()).max(200).default([]),
   corrections: z.array(z.string()).max(100),
 });
 export type ReportAiAnswer = z.output<typeof reportAiAnswerSchema>;
@@ -146,8 +152,15 @@ Rules:
 - plan_type: DIRECT or REGULAR when the report or the matching CAS fund shows it; otherwise UNKNOWN.
 - folio: only when the report prints it, else "". folio_count: how many folios one row covers (1 unless the report says otherwise).
 - Anything the report does not show: "" for text, 0 for amounts.
-- Use the CAS fund list only to identify which fund / folio a report line means and to write the fund name precisely. A CAS fund the report never mentions must NOT appear in your answer.
-- You also get the built-in reader's draft and the points it could not reconcile. Keep its lines that are right, fix the ones that are wrong or missing, and list what you changed in corrections (one short line each).
+- Use the CAS fund list to identify which fund / folio a report line means and to write the fund name exactly as the CAS writes it (same fund, same plan type).
+- A CAS fund must not be invented into sells/holds. If, after searching every page (tables, notes, footnotes, annexures, "no change" / "continue" lists), the report never mentions a CAS fund, list its CAS name in cas_funds_not_in_report.
+- You get a draft (from the built-in reader or your previous attempt) and the points that still do not reconcile with the CAS. Keep draft lines that are right, fix the rest, and list each change in corrections (one short line each). How to resolve each kind of point:
+  * "... is in the CAS but not covered by the report": find that fund in the report under any name. If the report keeps / holds / continues it or only changes its SIP, add it to holds with the value the report shows (0 if none). If it is sold, add the sell. If it is truly not in the report, put it in cas_funds_not_in_report.
+  * "the report values it at A, the CAS at B" / "full exit ... CAS holding is ...": check you took the right row, folio and plan type, and that the value is the report's printed value for that fund (sum the folios when one row covers several). Do not copy the CAS value unless the report prints it.
+  * "... does not match any fund in the CAS" / "is not in the CAS": if it is the same fund as a CAS fund, write the CAS name and plan type; if the client does not hold it, it is a NEW buy, not a hold, sell or SIP change.
+  * "marked top-up, but no ... holding": use kind NEW unless the client holds that fund in that plan type.
+  * "sell lines add up to X, but the report's sell total is Y" (same for buys): re-read every line and the printed total; a line is missing, duplicated or misread.
+  * "reviews X ... not in the CAS" / "both sells it and keeps it": each fund appears once, as a sell (partial or full), a hold, or neither.
 - Dates as YYYY-MM-DD.`;
 
 export interface ReportAiInput {
@@ -171,6 +184,8 @@ function draftSummary(d: AdvisoryReportParse | null) {
     buy_total: d.buyTotal,
     sips: d.sips.map((s) => ({ fund: s.fund, plan_type: s.planType, change: s.change, current: s.current, next: s.next })),
     holds: d.holds.map((h) => ({ fund: h.fund, folio: h.folio, value: h.value, note: h.note })),
+    mentioned_without_value: d.mentioned.map((m) => m.fund),
+    cas_funds_not_in_report: d.notInReport ?? [],
     reviewed: d.review.map((r) => ({ fund: r.fund, value: r.value, verdict: r.verdictText })),
   };
 }
@@ -194,7 +209,7 @@ export function buildReportAiRequest(input: ReportAiInput) {
       role: "user",
       content: [
         { type: "document", source: { type: "base64", media_type: "application/pdf", data: Buffer.from(input.pdf).toString("base64") } },
-        { type: "text", text: `Client's CAS and the reader's draft:\n${JSON.stringify(context)}\n\nRead the attached advisory report and return its recommendations.` },
+        { type: "text", text: `Client's CAS, the current draft and the points to fix:\n${JSON.stringify(context)}\n\nRead the attached advisory report and return its recommendations.` },
       ],
     }],
   };
@@ -247,8 +262,9 @@ export function answerToReport(a: ReportAiAnswer, base: AdvisoryReportParse | nu
       note: [h.deferred ? "Exit later (not now)" : null, h.note].filter(Boolean).join(": "),
     })),
     mentioned: a.holds.filter((h) => h.value === null).map((h) => ({ fund: h.fund, planType: h.plan_type, folio: h.folio, folioCount: h.folio_count })),
+    notInReport: a.cas_funds_not_in_report,
     deploymentNotes: [
-      ...(base?.deploymentNotes ?? []),
+      ...(base?.deploymentNotes ?? []).filter((n) => !/^Report read with Claude|^  - /.test(n)),
       ...(a.corrections.length ? ["Report read with Claude's help; corrected lines:", ...a.corrections.map((c) => `  - ${c}`)] : ["Report read with Claude's help."]),
     ],
     problems,
