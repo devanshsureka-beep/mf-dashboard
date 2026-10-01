@@ -14,7 +14,7 @@ import { AppError } from "@/lib/errors";
 import type { PlanHolding } from "@/lib/domain/report-plan";
 import type { AdvisoryReportParse } from "@/lib/parsers/advisory-report";
 
-export const REPORT_AI_MODEL = "claude-opus-5-5";
+export const REPORT_AI_MODEL = "claude-sonnet-5-5";
 
 export function reportAiConfigured(): boolean {
   return Boolean(process.env.REPORT_AI_URL?.trim() && process.env.REPORT_AI_KEY?.trim());

@@ -62,7 +62,7 @@ describe("Claude's answer goes through the same CAS tie-out", () => {
     };
     walk(REPORT_AI_SCHEMA as Record<string, unknown>);
     const req = buildReportAiRequest({ pdf: new Uint8Array([37, 80, 68, 70]), holdings, casValuationDate: "2026-09-23", draft: null, readerError: "unknown layout", problems: [] });
-    expect(req.model).toBe("claude-opus-5-5");
+    expect(req.model).toBe("claude-sonnet-5-5");
     expect(req.messages[0].content[0]).toMatchObject({ type: "document", source: { media_type: "application/pdf", data: "JVBERg==" } });
     expect(req.messages[0].content[1].text).toContain("unknown layout");
   });

@@ -223,7 +223,7 @@ Advisory reports come in many layouts. The built-in readers (`lib/parsers/*`) ru
 
 **n8n workflow:** "Univest MF Desk - Report reader (Claude)": Webhook (POST, Header Auth) → HTTP Request to `https://api.anthropic.com/v1/messages` (Anthropic credential) → Respond to Webhook with `{ status, body }`. Executions are not saved (the request holds client documents).
 
-**Request** (built in `lib/integrations/report-ai.ts`): model `claude-opus-5-5`, effort `high`, structured JSON output (`output_config.format`, schema `REPORT_AI_SCHEMA`). The message carries the report PDF, the CAS fund list (name, folio, plan type, value), the built-in reader's draft and the exact points that did not reconcile. Claude returns sells, buys, SIP changes, kept/deferred funds and totals, plus a list of what it corrected.
+**Request** (built in `lib/integrations/report-ai.ts`): model `claude-sonnet-5-5`, effort `high`, structured JSON output (`output_config.format`, schema `REPORT_AI_SCHEMA`). The message carries the report PDF, the CAS fund list (name, folio, plan type, value), the built-in reader's draft and the exact points that did not reconcile. Claude returns sells, buys, SIP changes, kept/deferred funds and totals, plus a list of what it corrected.
 
 **Safety:** Claude's answer is validated with zod and then goes through exactly the same tie-out as any report (`buildPlanFromReport`): every sell and kept fund must match a CAS holding and value, totals must add up, every CAS fund must be covered. Anything that does not tie out is shown as **Needs review** and nothing is saved. A clean result is saved as a **DRAFT** plan whose notes list Claude's corrections; an advisor approves it.
 
