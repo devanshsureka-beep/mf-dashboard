@@ -12,7 +12,7 @@
 import { z } from "zod";
 import { AppError } from "@/lib/errors";
 import type { PlanHolding } from "@/lib/domain/report-plan";
-import type { AdvisoryReportParse } from "@/lib/parsers/advisory-report";
+import { mapRisk, type AdvisoryReportParse } from "@/lib/parsers/advisory-report";
 
 export const REPORT_AI_MODEL = "claude-sonnet-5-5";
 
@@ -98,6 +98,8 @@ const textZ = z.string().nullable().transform((v) => (v && v.trim() ? v.trim() :
 const dateZ = z.string().nullable().transform((v) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v.trim()) ? v.trim() : null));
 const planZ = z.enum(["DIRECT", "REGULAR", "UNKNOWN"]).nullable().transform((v) => (v === "UNKNOWN" ? null : v));
 const amountZ = z.number().finite().nonnegative();
+const countZ = z.number().finite().transform((n) => Math.min(20, Math.max(1, Math.round(n))));
+const fundZ = z.string().transform((v) => v.trim());
 const optAmountZ = amountZ.nullable().transform((v) => (v ? v : null));
 export const reportAiAnswerSchema = z.object({
   client_name: textZ,
@@ -107,21 +109,21 @@ export const reportAiAnswerSchema = z.object({
   risk_profile: textZ,
   goal: textZ,
   sells: z.array(z.object({
-    fund: z.string().min(2), folio: textZ, folio_count: z.number().int().min(1).max(20),
-    plan_type: planZ, partial: z.boolean(), value: amountZ.positive(),
+    fund: fundZ, folio: textZ, folio_count: countZ,
+    plan_type: planZ, partial: z.boolean(), value: amountZ,
   })).max(200),
   sell_total: optAmountZ,
   buys: z.array(z.object({
-    fund: z.string().min(2), plan_type: planZ, amount: amountZ.positive(), kind: z.enum(["NEW", "TOP_UP"]),
+    fund: fundZ, plan_type: planZ, amount: amountZ, kind: z.enum(["NEW", "TOP_UP"]),
     amc: textZ, category: textZ,
   })).max(200),
   buy_total: optAmountZ,
   sips: z.array(z.object({
-    fund: z.string().min(2), plan_type: planZ, change: z.enum(["START", "STOP", "CHANGE"]),
+    fund: fundZ, plan_type: planZ, change: z.enum(["START", "STOP", "CHANGE"]),
     current: optAmountZ, next: optAmountZ,
   })).max(200),
   holds: z.array(z.object({
-    fund: z.string().min(2), folio: textZ, folio_count: z.number().int().min(1).max(20),
+    fund: fundZ, folio: textZ, folio_count: countZ,
     plan_type: planZ, value: optAmountZ, deferred: z.boolean(), note: textZ,
   })).max(300),
   corrections: z.array(z.string()).max(100),
@@ -214,10 +216,13 @@ export function answerToReport(a: ReportAiAnswer, base: AdvisoryReportParse | nu
   for (const s of a.sips) {
     if (s.change !== "STOP" && !s.next) problems.push(`SIP ${s.change.toLowerCase()} in ${s.fund} has no new amount.`);
   }
+  for (const x of [...a.sells, ...a.buys, ...a.sips, ...a.holds]) if (!x.fund) problems.push("Claude returned a line without a fund name.");
+  for (const x of a.sells) if (!x.value) problems.push(`Sell of ${x.fund}: no amount found in the report.`);
+  for (const x of a.buys) if (!x.amount) problems.push(`Buy of ${x.fund}: no amount found in the report.`);
   return {
     template: "AI_ASSISTED",
     clientName: a.client_name ?? base?.clientName ?? null,
-    riskProfile: a.risk_profile ?? base?.riskProfile ?? null,
+    riskProfile: mapRisk(a.risk_profile) ?? base?.riskProfile ?? null,
     goal: a.goal ?? base?.goal ?? null,
     casPeriod: { from: base?.casPeriod.from ?? null, to: base?.casPeriod.to ?? null },
     valuationDate: a.report_cas_date ?? base?.valuationDate ?? null,
@@ -290,6 +295,9 @@ export async function askClaudeForReport(input: ReportAiInput, timeoutMs = 280_0
     throw new AppError("Claude's answer was not valid JSON.");
   }
   const answer = reportAiAnswerSchema.safeParse(parsed);
-  if (!answer.success) throw new AppError("Claude's answer did not have the expected shape.");
+  if (!answer.success) {
+    const first = answer.error.issues[0];
+    throw new AppError(`Claude's answer did not have the expected shape${first ? ` (${first.path.join(".")}: ${first.message})` : ""}.`);
+  }
   return { report: answerToReport(answer.data, input.draft), corrections: answer.data.corrections };
 }

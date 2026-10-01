@@ -19,6 +19,8 @@ import type { SecurityCandidate } from "@/lib/domain/securities";
  * becomes a new DRAFT; approving it replaces the current plan (history kept).
  */
 
+const RISK_PROFILES = ["CONSERVATIVE", "MODERATELY_CONSERVATIVE", "MODERATE", "MODERATELY_AGGRESSIVE", "AGGRESSIVE"];
+
 export interface OnboardingPreview {
   investorName: string | null;
   reportName: string | null;
@@ -105,7 +107,7 @@ export async function ensureClientFromDocuments(
     email: args.cas.investor.email?.toLowerCase() ?? null,
     phone: args.phone || args.cas.investor.mobile,
     pan: args.cas.investor.pan,
-    risk_profile: args.report.riskProfile,
+    risk_profile: RISK_PROFILES.includes(args.report.riskProfile ?? "") ? args.report.riskProfile : null,
     goal: args.report.goal,
     status: "ACTIVE",
     advisor_id: args.advisorId || actor.id,

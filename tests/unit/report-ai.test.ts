@@ -102,13 +102,24 @@ describe("calling Claude through n8n", () => {
     expect(report.mentioned[0]).toMatchObject({ fund: "Axis Small Cap Fund" });
   });
 
+  it("maps the risk profile to the stored values and tolerates small slips", async () => {
+    vi.stubEnv("REPORT_AI_URL", "https://n8n.example/webhook/x");
+    vi.stubEnv("REPORT_AI_KEY", "k");
+    const raw = { ...answer, risk_profile: "Moderately High", sells: [{ ...answer.sells[0], folio_count: 0 }, { ...answer.sells[0], value: 0 }] };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ status: 200, body: { stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify(raw) }] } }))));
+    const { report } = await askClaudeForReport(input);
+    expect(report.riskProfile).toBe("MODERATELY_AGGRESSIVE");
+    expect(report.sells[0].folioCount).toBe(1);
+    expect(report.problems.some((p) => /no amount found/.test(p))).toBe(true);
+  });
+
   it("explains failures in plain words", async () => {
     vi.stubEnv("REPORT_AI_URL", "https://n8n.example/webhook/x");
     vi.stubEnv("REPORT_AI_KEY", "k");
     vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 403 })));
     await expect(askClaudeForReport(input)).rejects.toThrow(/refused the key/);
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ status: 200, body: { stop_reason: "end_turn", content: [{ type: "text", text: "{\"sells\": 1}" }] } }))));
-    await expect(askClaudeForReport(input)).rejects.toThrow(/expected shape/);
+    await expect(askClaudeForReport(input)).rejects.toThrow(/expected shape \(.+\)/);
     vi.unstubAllEnvs();
     vi.stubEnv("REPORT_AI_URL", "");
     await expect(askClaudeForReport(input)).rejects.toThrow(/not set up/);
