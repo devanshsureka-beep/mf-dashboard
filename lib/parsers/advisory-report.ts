@@ -88,7 +88,7 @@ export interface AdvisoryReportParse {
   /** Funds the report keeps / defers with their value (not sold now). */
   holds: { fund: string; folio: string | null; folioCount: number; planType: "DIRECT" | "REGULAR" | null; value: number; note: string }[];
   /** Funds named in a fund list / status table (proves the report covers them). */
-  mentioned: { fund: string; planType: "DIRECT" | "REGULAR" | null; folio: string | null; folioCount: number }[];
+  mentioned: { fund: string; planType: "DIRECT" | "REGULAR" | null; folio: string | null; folioCount: number; note?: string }[];
   deploymentNotes: string[];
   /**
    * CAS funds a second reader (Claude) confirmed the report never mentions.

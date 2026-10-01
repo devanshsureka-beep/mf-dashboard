@@ -29,6 +29,15 @@ const reply = (a: ReportAiAnswer) => ({ report: answerToReport(a, null), correct
 const far = () => Date.now() + 600_000;
 
 describe("Claude resolves what the built-in reader could not, in rounds", () => {
+  it("a TRIM with no amount is kept with a note for the advisor, not a sell and not a blocker", () => {
+    const trim = answerToReport({ ...base, holds: base.holds.slice(1), sells: [...base.sells, { fund: "360 ONE Flexicap Fund (formerly IIFL Focused Equity Fund)", folio: null, folio_count: 1, plan_type: "DIRECT", partial: true, value: 0 }], cas_funds_not_in_report: ["HSBC Value Fund - Direct Growth"] }, null);
+    expect(trim.problems).toEqual([]);
+    const plan = buildPlanFromReport(trim, holdingsFromCas(cas), cas.valuationDate);
+    expect(plan.problems).toEqual([]);
+    expect(plan.items.find((i) => /360 ONE/.test(i.scheme_name))).toMatchObject({ action: "RETAIN", reason: expect.stringMatching(/TRIM advised .* advisor to set the amount/) });
+    expect(plan.notes).toMatch(/360 ONE .* says TRIM but gives no amount/);
+  });
+
   it("a CAS fund the report never mentions blocks, unless Claude confirms it is absent; then it is kept and flagged", () => {
     const plan1 = buildPlanFromReport(answerToReport(base, null), holdingsFromCas(cas), cas.valuationDate);
     expect(plan1.problems).toEqual([expect.stringMatching(/HSBC Value Fund .* not covered by the report/)]);

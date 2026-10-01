@@ -336,7 +336,12 @@ export function buildPlanFromReport(
         holdReason.set(g, `Kept for now: ${hd.note || "held / deferred in the report"}`.slice(0, 300));
       }
     }
-    for (const m of report.mentioned) for (const g of pick(m.fund, m.folio, m.folioCount, m.planType)) covered.add(g);
+    for (const m of report.mentioned) {
+      for (const g of pick(m.fund, m.folio, m.folioCount, m.planType)) {
+        covered.add(g);
+        if (m.note && !holdReason.has(g)) holdReason.set(g, m.note.slice(0, 300));
+      }
+    }
     for (const x of [...report.sips.filter((z) => z.change !== "START").map((z) => ({ fund: z.fund, planType: z.planType })), ...report.buys.filter((b) => b.kind === "TOP_UP").map((b) => ({ fund: b.fund, planType: b.planType }))]) {
       const pt = x.planType ?? detectPlanType(x.fund);
       for (const g of [...viaAlias(x.fund, pt), ...sameFundHoldings(x.fund, live, pt)]) covered.add(g);

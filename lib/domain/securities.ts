@@ -9,6 +9,8 @@ const STOP_WORDS = new Set(["fund", "the", "of", "and", "plan", "option", "schem
 export function tokens(name: string): string[] {
   return name
     .toLowerCase()
+    // "(formerly X Fund)" / "(erstwhile X)": the old name is not part of the fund's name.
+    .replace(/\((?:formerly|erstwhile|earlier|previously)[^)]*\)?/g, " ")
     .replace(/\bfof\b/g, "fund of funds")
     // Same words, different spellings across registrars and reports.
     .replace(/\bpru\b/g, "prudential")

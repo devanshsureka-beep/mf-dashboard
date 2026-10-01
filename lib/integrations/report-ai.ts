@@ -110,6 +110,7 @@ Rules:
 - Report only what the report says. Never invent a line, an amount or a total. If the report does not print a total, use 0.
 - Amounts are rupees as plain numbers: "₹5.2L" = 520000, "₹1.15 Cr" = 11500000, "16,500/mo" = 16500.
 - sells: every fund the report sells / exits / redeems / switches out NOW. partial = true when only part is sold ("trim ₹5L", "sell 50%"); value = the rupees sold now. A switch is a sell here plus a buy of the target fund.
+- A fund marked TRIM / REDUCE / RIGHT-SIZE without a rupee amount or percentage: put it in sells with partial = true and value 0 (the adviser sets the amount). Never guess an amount.
 - holds: every fund the report keeps, holds, continues, or defers ("exit later", "next tranche", "after 1 year") with the value the report shows for it (null if none). deferred = true for anything to be sold later, not now.
 - buys: lump-sum purchases. kind = TOP_UP when the client already holds that fund (see the CAS list), else NEW.
 - sips: START (new), STOP, or CHANGE (amount changes) with the monthly amount before (current) and after (next).
@@ -182,6 +183,7 @@ export function buildReportAiRequest(input: ReportAiInput) {
 // ---------------------------------------------------------------------------
 // Answer -> the report shape every check already understands
 // ---------------------------------------------------------------------------
+const TRIM_NOTE = "TRIM advised in the report, amount not stated: advisor to set the amount before issuing the call.";
 const inr = (n: number) => `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 const near = (a: number, b: number) => Math.abs(a - b) <= Math.max(100, Math.abs(b) * 0.005);
 
@@ -196,7 +198,9 @@ export function answerToReport(a: ReportAiAnswer, base: AdvisoryReportParse | nu
     if (s.change !== "STOP" && !s.next) problems.push(`SIP ${s.change.toLowerCase()} in ${s.fund} has no new amount.`);
   }
   for (const x of [...a.sells, ...a.buys, ...a.sips, ...a.holds]) if (!x.fund) problems.push("Claude returned a line without a fund name.");
-  for (const x of a.sells) if (!x.value) problems.push(`Sell of ${x.fund}: no amount found in the report.`);
+  // "TRIM" / "REDUCE" with no amount is advice without a size: kept for now, the advisor sets the amount.
+  const trimNoAmount = a.sells.filter((x) => !x.value && x.partial);
+  for (const x of a.sells) if (!x.value && !x.partial) problems.push(`Exit of ${x.fund}: no amount found in the report.`);
   for (const x of a.buys) if (!x.amount) problems.push(`Buy of ${x.fund}: no amount found in the report.`);
   return {
     template: "AI_ASSISTED",
@@ -207,7 +211,7 @@ export function answerToReport(a: ReportAiAnswer, base: AdvisoryReportParse | nu
     valuationDate: a.report_cas_date ?? base?.valuationDate ?? null,
     preparedDate: a.prepared_date ?? base?.preparedDate ?? null,
     currentValue: a.portfolio_value ?? base?.currentValue ?? null,
-    sells: a.sells.map((s) => ({
+    sells: a.sells.filter((s) => s.value > 0).map((s) => ({
       fund: s.fund, folio: s.folio, actionText: s.partial ? "Trim" : "Exit", action: "SELL", partial: s.partial,
       value: s.value, folioCount: s.folio_count, planType: s.plan_type,
     })),
@@ -225,10 +229,17 @@ export function answerToReport(a: ReportAiAnswer, base: AdvisoryReportParse | nu
       fund: h.fund, folio: h.folio, folioCount: h.folio_count, planType: h.plan_type, value: h.value as number,
       note: [h.deferred ? "Exit later (not now)" : null, h.note].filter(Boolean).join(": "),
     })),
-    mentioned: a.holds.filter((h) => h.value === null).map((h) => ({ fund: h.fund, planType: h.plan_type, folio: h.folio, folioCount: h.folio_count })),
+    mentioned: [
+      ...a.holds.filter((h) => h.value === null).map((h) => ({
+        fund: h.fund, planType: h.plan_type, folio: h.folio, folioCount: h.folio_count,
+        note: [h.deferred ? "Exit later (not now)" : "Kept", h.note].filter(Boolean).join(": "),
+      })),
+      ...trimNoAmount.map((t) => ({ fund: t.fund, planType: t.plan_type, folio: t.folio, folioCount: t.folio_count, note: TRIM_NOTE })),
+    ],
     notInReport: a.cas_funds_not_in_report,
     deploymentNotes: [
-      ...(base?.deploymentNotes ?? []).filter((n) => !/^Report read with Claude|^  - /.test(n)),
+      ...trimNoAmount.map((t) => `${t.fund}: the report says TRIM but gives no amount. Kept for now; set the amount before issuing the call.`),
+      ...(base?.deploymentNotes ?? []).filter((n) => !/^Report read with Claude|^  - |the report says TRIM but gives no amount/.test(n)),
       ...(a.corrections.length ? ["Report read with Claude's help; corrected lines:", ...a.corrections.map((c) => `  - ${c}`)] : ["Report read with Claude's help."]),
     ],
     problems,
