@@ -9,6 +9,7 @@ import { fromISTDateTimeLocal } from "@/lib/format";
 import { actionTx, ADVISORY_ROLES } from "@/lib/server";
 import { resolveFundRef, searchFunds, type FundOption } from "@/services/fund-search";
 import { closeAdvice, issueAdvice, reviseAdvice } from "@/services/advice";
+import { correctAdvice, correctExecution } from "@/services/corrections";
 import { addNote } from "@/services/notes";
 import { CHANNELS, type Channel } from "@/types/domain";
 
@@ -112,4 +113,46 @@ export async function followUpNoteAction(clientId: string, itemId: string, _p: A
 export async function searchFundsAction(q: string): Promise<FundOption[]> {
   if (typeof q !== "string" || q.trim().length < 2) return [];
   return actionTx((tx) => searchFunds(tx, q.slice(0, 80)));
+}
+
+/** Admin: correct a recorded call (amount, units, fund, plan line, date, channel). */
+export async function correctAdviceAction(itemId: string, _p: ActionResult | null, fd: FormData): Promise<ActionResult> {
+  return runAction("correctAdvice", async () => {
+    const basis = reqStr(fd, "quantity_basis") === "UNITS" ? "UNITS" : "AMOUNT";
+    const units = optStr(fd, "advised_units");
+    const price = optStr(fd, "reference_price");
+    const planItem = optStr(fd, "plan_item_id");
+    await actionTx((tx, actor) => correctAdvice(tx, actor, itemId, {
+      advisedAmount: reqNum(fd, "advised_amount", "Advised amount"),
+      advisedUnits: units ? Number(units) : null,
+      quantityBasis: basis,
+      referencePrice: price ? Number(price) : null,
+      planItemId: planItem && planItem !== "OFF_PLAN" ? planItem : null,
+      securityId: reqStr(fd, "security_id", "Fund"),
+      communicatedAt: when(fd),
+      channel: channel(fd),
+      reason: reqStr(fd, "reason", "Reason"),
+    }), { roles: ["ADMIN"] });
+    revalidatePath(`/advice/items/${itemId}`);
+    revalidatePath("/");
+    return "Call corrected. The plan numbers and the call's status are updated.";
+  });
+}
+
+/** Admin: correct a recorded execution (amount, units, date, NAV). */
+export async function correctExecutionAction(itemId: string, executionId: string, _p: ActionResult | null, fd: FormData): Promise<ActionResult> {
+  return runAction("correctExecution", async () => {
+    const units = optStr(fd, "executed_units");
+    const price = optStr(fd, "execution_price");
+    await actionTx((tx, actor) => correctExecution(tx, actor, executionId, {
+      executedAmount: reqNum(fd, "executed_amount", "Executed amount"),
+      executedUnits: units ? Number(units) : null,
+      executionDate: reqStr(fd, "execution_date", "Execution date"),
+      executionPrice: price ? Number(price) : null,
+      reason: reqStr(fd, "reason", "Reason"),
+    }), { roles: ["ADMIN"] });
+    revalidatePath(`/advice/items/${itemId}`);
+    revalidatePath("/");
+    return "Execution corrected. The call's status and the plan numbers are updated.";
+  });
 }

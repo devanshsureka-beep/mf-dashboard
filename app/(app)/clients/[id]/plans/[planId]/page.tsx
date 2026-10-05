@@ -16,6 +16,7 @@ import { formatDate, formatDateTime, humanize, toISTDateTimeLocal } from "@/lib/
 import { pageData } from "@/lib/server";
 import { getClientSummary } from "@/services/clients";
 import { getPlan, getPlanItems, getSipItems, getTranches } from "@/services/plans";
+import { getSipProgress } from "@/services/sip";
 import { countMigrateNotes, getMigrations, type MigrationRow } from "@/services/migrations";
 import { listAllSecurities } from "@/services/securities";
 import { getHoldings } from "@/services/portfolio";
@@ -23,6 +24,7 @@ import type { PlanItemProgress } from "@/types/domain";
 import {
   addPlanItemAction, addSipAction, approvePlanAction, cancelPlanItemAction, closePlanAction, deletePlanItemAction,
   convertMigrateNotesAction, deleteSipAction, issueMigrationCallsAction, resolveSipSecurityAction, updatePlanItemAction,
+  convertBuyToSipAction, convertSipToLumpsumAction, updateSipAmountsAction,
 } from "../actions";
 import { setSipStatusAction } from "../../actions";
 
@@ -30,7 +32,7 @@ export const metadata = { title: "Portfolio plan" };
 
 export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[planId]">) {
   const { id, planId } = await props.params;
-  const { c, plan, items: allItems, sips, securities, heldIds, tranches, migrations, migrateNotes, actor } = await pageData(async (tx) => {
+  const { c, plan, items: allItems, sips, sipProgress, securities, heldIds, tranches, migrations, migrateNotes, actor } = await pageData(async (tx) => {
     const c = await getClientSummary(tx, id);
     const plan = await getPlan(tx, planId);
     const holdings = c.latest_snapshot_id ? await getHoldings(tx, c.latest_snapshot_id) : [];
@@ -38,6 +40,7 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
       c, plan,
       items: await getPlanItems(tx, planId),
       sips: await getSipItems(tx, planId),
+      sipProgress: await getSipProgress(tx, planId),
       tranches: await getTranches(tx, planId),
       migrations: await getMigrations(tx, planId),
       migrateNotes: await countMigrateNotes(tx, planId),
@@ -199,7 +202,33 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
       <Card className="mt-4">
         <CardHeader><CardTitle>SIP plan (tracked separately from lump sums)</CardTitle><span className="text-xs text-muted">Target SIP <Money value={plan.target_sip_value} full />/month</span></CardHeader>
         {sips.length ? (
-          <SipTable rows={sips} canUpdate={isActive} action={isActive ? setSipStatusAction.bind(null, id) : undefined} />
+          <SipTable
+            rows={sips}
+            canUpdate={isActive}
+            action={isActive ? setSipStatusAction.bind(null, id) : undefined}
+            invested={Object.fromEntries(sipProgress.map((r) => [r.sip_item_id, r]))}
+            extra={editable ? (s) => s.status === "CANCELLED" || s.status === "COMPLETED" ? null : (
+              <details className="text-xs">
+                <summary className="cursor-pointer text-brand">Change / → lump sum</summary>
+                <div className="mt-2 space-y-2">
+                  <ActionForm action={updateSipAmountsAction.bind(null, id, planId, s.id)} className="flex flex-wrap items-end gap-1">
+                    {s.action !== "START" ? <Field label="Old ₹"><Input name="old_amount" className="h-8 w-24 text-xs" defaultValue={s.old_amount ?? ""} /></Field> : null}
+                    {s.action !== "STOP" ? <Field label="New ₹/instalment"><Input name="new_amount" className="h-8 w-28 text-xs" defaultValue={s.new_amount ?? ""} /></Field> : null}
+                    <Field label="Day"><Input name="debit_day" className="h-8 w-14 text-xs" defaultValue={s.debit_day ?? ""} /></Field>
+                    <Field label="Reason *"><Input name="reason" className="h-8 w-40 text-xs" required /></Field>
+                    <SubmitButton size="sm" variant="outline">Save</SubmitButton>
+                  </ActionForm>
+                  {s.action !== "STOP" && s.security_id ? (
+                    <ActionForm action={convertSipToLumpsumAction.bind(null, id, planId, s.id)} className="flex flex-wrap items-end gap-1">
+                      <Field label="Lump sum ₹ *"><Input name="lumpsum_amount" className="h-8 w-28 text-xs" required /></Field>
+                      <Field label="Reason *"><Input name="reason" className="h-8 w-40 text-xs" required /></Field>
+                      <SubmitButton size="sm" variant="outline" confirm="Cancel this SIP line and add a lump-sum buy instead?">Make lump sum</SubmitButton>
+                    </ActionForm>
+                  ) : null}
+                </div>
+              </details>
+            ) : undefined}
+          />
         ) : <CardContent><p className="text-sm text-muted">No SIP actions.</p></CardContent>}
         {editable && sips.some((s) => s.needs_review || plan.status === "DRAFT") ? (
           <CardContent className="space-y-2 border-t border-border">
@@ -329,6 +358,20 @@ function ItemEditor({ i, clientId, planId, isActive, securities, heldIds }: {
           {isActive ? <Field label="Reason for amending an ACTIVE plan *" className="col-span-2"><Input name="change_reason" required /></Field> : null}
           <div className="col-span-2"><SubmitButton size="sm">Save</SubmitButton></div>
         </ActionForm>
+        {i.action === "BUY" && i.item_status === "OPEN" && i.yet_to_advise_amount > 0 ? (
+          <div className="mt-3 border-t border-border pt-3">
+            <div className="mb-1 font-medium text-ink">Move to SIP</div>
+            <ActionForm action={convertBuyToSipAction.bind(null, clientId, planId, i.plan_item_id)} className="grid grid-cols-2 gap-2">
+              <Field label="Monthly SIP ₹ *"><Input name="monthly_amount" inputMode="decimal" required /></Field>
+              <Field label="Lump sum to move ₹" hint={`Up to ${Math.round(i.yet_to_advise_amount).toLocaleString("en-IN")} not yet advised`}>
+                <Input name="lumpsum_amount" inputMode="decimal" defaultValue={Math.round(i.yet_to_advise_amount)} />
+              </Field>
+              <Field label="Debit day"><Input name="debit_day" inputMode="numeric" /></Field>
+              <Field label="Reason *"><Input name="reason" required placeholder="e.g. client prefers SIP" /></Field>
+              <div className="col-span-2"><SubmitButton size="sm" variant="outline">Move to SIP</SubmitButton></div>
+            </ActionForm>
+          </div>
+        ) : null}
         <div className="mt-3 border-t border-border pt-3">
           {isActive ? (
             <ActionForm action={cancelPlanItemAction.bind(null, clientId, planId, i.plan_item_id)} className="flex gap-2">

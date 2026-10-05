@@ -76,7 +76,6 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
                 <TH>Client</TH>
                 <TH>Advisor</TH>
                 <TH className="text-right">Value today</TH>
-                <TH className="text-right">Money left</TH>
                 <TH>Latest CAS</TH>
                 <TH className="text-right">Target exit</TH>
                 <TH className="text-right">Target buy</TH>
@@ -100,7 +99,6 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
                   </TD>
                   <TD className="whitespace-nowrap">{c.advisor_name ?? "—"}</TD>
                   <TD className="text-right font-medium"><Money value={c.live_portfolio_value} /></TD>
-                  <TD className="text-right"><Money value={c.money_left} zeroDash className={c.money_left > 0 ? "font-medium text-amber-700" : "text-muted"} /></TD>
                   <TD className="whitespace-nowrap text-xs">{c.latest_cas_date ? formatDate(c.latest_cas_date) : <span className="text-muted">No CAS</span>}</TD>
                   <TD className="text-right"><Money value={c.target_sell} zeroDash /></TD>
                   <TD className="text-right"><Money value={c.target_buy} zeroDash /></TD>

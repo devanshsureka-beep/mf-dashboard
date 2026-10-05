@@ -4,6 +4,8 @@ import { Badge } from "@/components/ui/badge";
 import { Money } from "@/components/app/money";
 import { StatusBadge } from "@/components/app/status-badge";
 import { TransitionSummary } from "@/components/app/transition-summary";
+import { SipSummary } from "@/components/app/sip-summary";
+import { getClientSip } from "@/services/sip";
 import { formatDate, humanize } from "@/lib/format";
 import { pageData } from "@/lib/server";
 import { cn } from "@/lib/utils";
@@ -35,9 +37,10 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
   const { id } = await props.params;
   const sp = await props.searchParams;
   const tab = (TABS as readonly string[]).includes(String(sp.tab)) ? (sp.tab as Tab) : "overview";
-  const { c, fresh, unchecked, actor } = await pageData(async (tx) => ({
+  const { c, fresh, unchecked, sip, actor } = await pageData(async (tx) => ({
     c: await getClientSummary(tx, id),
     fresh: Number((await tx<{ fresh_money: number }[]>`select fresh_money from public.v_client_cash where client_id = ${id}`)[0]?.fresh_money ?? 0),
+    sip: await getClientSip(tx, id),
     // A CAS read but not yet checked: its holdings count only once confirmed.
     unchecked: (await tx<{ cas_document_id: string; snapshot_date: string }[]>`
       select s.cas_document_id, s.snapshot_date::text as snapshot_date from public.portfolio_snapshots s
@@ -84,10 +87,7 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
             <div className="text-xs text-muted">
               {c.live_nav_date ? `NAV ${formatDate(c.live_nav_date)}` : "CAS NAV"} · at onboarding <Money value={c.initial_portfolio_value} />
             </div>
-            <div className={c.money_left > 0 ? "mt-1 text-xs font-medium text-amber-700" : "mt-1 text-xs text-muted"}>
-              Money left <Money value={c.money_left} />
-              {fresh > 0 ? <span className="font-normal text-muted"> · incl. <Money value={fresh} /> fresh money added</span> : null}
-            </div>
+            {fresh > 0 ? <div className="mt-1 text-xs text-muted">Fresh money added <Money value={fresh} /></div> : null}
           </div>
         </div>
       </section>
@@ -97,6 +97,7 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
         <TransitionSummary side="SELL" n={{ target: c.target_sell, advised: c.advised_sell, executed: c.executed_sell, pending: c.pending_sell, yetToAdvise: c.yet_to_advise_sell }} />
         <TransitionSummary side="BUY" n={{ target: c.target_buy, advised: c.advised_buy, executed: c.executed_buy, pending: c.pending_buy, yetToAdvise: c.yet_to_advise_buy }} />
       </div>
+      <SipSummary className="mt-3" s={sip} planHref={c.active_plan_id ? `/clients/${id}/plans/${c.active_plan_id}` : null} />
       {unchecked ? (
         <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
           The CAS of {formatDate(unchecked.snapshot_date)} is waiting for your check. Until it is confirmed, the portfolio and value

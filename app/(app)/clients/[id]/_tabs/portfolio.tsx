@@ -10,7 +10,6 @@ import { EmptyState } from "@/components/app/page-header";
 import { withUserTx, type Actor } from "@/lib/db/tx";
 import { formatDate, formatDateTime, formatINRCompact, formatNav, formatUnits, humanize } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { getClientSummary } from "@/services/clients";
 import { latestNavRun } from "@/services/nav";
 import { listRecentTransactions, listSnapshots } from "@/services/portfolio";
 import { getPortfolioViews, planLineFor, type PlanLine } from "@/services/portfolio-views";
@@ -41,9 +40,8 @@ function PlanCell({ p, liveValue }: { p: PlanLine | null; liveValue?: number }) 
 }
 
 export async function PortfolioTab({ clientId, actor }: { clientId: string; actor: Actor }) {
-  const { views, c, snapshots, txns, nav, sip } = await withUserTx(actor, async (tx) => ({
+  const { views, snapshots, txns, nav, sip } = await withUserTx(actor, async (tx) => ({
     views: await getPortfolioViews(tx, clientId),
-    c: await getClientSummary(tx, clientId),
     snapshots: await listSnapshots(tx, clientId),
     txns: await listRecentTransactions(tx, clientId, 100),
     nav: await latestNavRun(tx),
@@ -66,7 +64,7 @@ export async function PortfolioTab({ clientId, actor }: { clientId: string; acto
 
   return (
     <div className="space-y-4">
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-3">
         <StatCard
           label="Value today"
           value={formatINRCompact(liveTotal)}
@@ -78,12 +76,6 @@ export async function PortfolioTab({ clientId, actor }: { clientId: string; acto
           value={`${liveTotal - baseTotal >= 0 ? "+" : "−"}${formatINRCompact(Math.abs(liveTotal - baseTotal))}`}
           tone={liveTotal - baseTotal >= 0 ? "success" : "danger"}
           hint="Market movement and executed calls"
-        />
-        <StatCard
-          label="Money left with client"
-          value={formatINRCompact(c.money_left)}
-          tone={c.money_left > 0 ? "attention" : "default"}
-          hint={`Sold ${formatINRCompact(c.sell_proceeds)} − bought ${formatINRCompact(c.buy_spent)} (executed calls)`}
         />
       </section>
 

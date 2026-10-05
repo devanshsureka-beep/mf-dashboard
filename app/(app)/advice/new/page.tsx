@@ -67,6 +67,7 @@ export default async function NewAdvicePage(props: PageProps<"/advice/new">) {
       />
       {!c.active_plan_id ? <p className="mb-3 text-sm text-amber-700">This client has no ACTIVE plan: only off-plan calls are possible.</p> : null}
       <IssueAdviceForm
+        key={`${clientId}:${effectiveSide}:${planItem ?? ""}`}
         action={issueAdviceAction.bind(null, clientId)}
         side={effectiveSide}
         preselect={planItem}

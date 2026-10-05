@@ -14,14 +14,14 @@ import { formatDate, formatDateTime, formatINR, formatUnits, humanize, toISTDate
 import { pageData } from "@/lib/server";
 import { getAdviceItem, getExecutionsForAdvice, getRevisionChain } from "@/services/advice";
 import { CHANNELS } from "@/types/domain";
-import { closeAdviceAction, followUpNoteAction, reviseAdviceAction } from "../../actions";
+import { closeAdviceAction, correctAdviceAction, correctExecutionAction, followUpNoteAction, reviseAdviceAction } from "../../actions";
 import { confirmPendingExecutionAction, recordExecutionAction, voidExecutionAction } from "../../../executions/actions";
 
 export const metadata = { title: "Call detail" };
 
 export default async function AdviceItemPage(props: PageProps<"/advice/items/[itemId]">) {
   const { itemId } = await props.params;
-  const { a, chain, executions, notes, actor } = await pageData(async (tx) => ({
+  const { a, chain, executions, notes, fixable, actor } = await pageData(async (tx, actor) => ({
     a: await getAdviceItem(tx, itemId),
     chain: await getRevisionChain(tx, itemId),
     executions: await getExecutionsForAdvice(tx, itemId),
@@ -29,6 +29,24 @@ export default async function AdviceItemPage(props: PageProps<"/advice/items/[it
       select n.id, n.body, n.created_at, n.follow_up_date, p.full_name as author
       from public.client_notes n left join public.profiles p on p.id = n.created_by
       where n.advice_item_id = ${itemId} and n.deleted_at is null order by n.created_at desc`,
+    // Admin corrections: the plan lines and funds a call can be moved to.
+    fixable: actor.role === "ADMIN" ? {
+      lines: await tx<{ id: string; scheme_name: string; action: string; security_id: string | null }[]>`
+        select pi.id, pi.scheme_name, pi.action, pi.security_id
+        from public.advisory_plan_items pi join public.advisory_plans p on p.id = pi.plan_id
+        join public.advice_items ai on ai.id = ${itemId} and ai.client_id = pi.client_id
+        where p.status = 'ACTIVE' and pi.status <> 'CANCELLED'
+          and ((ai.action = 'BUY' and pi.action = 'BUY') or (ai.action <> 'BUY' and pi.action in ('SELL', 'SWITCH', 'MIGRATE')))
+        order by pi.scheme_name`,
+      funds: await tx<{ id: string; scheme_name: string }[]>`
+        select distinct sm.id, sm.scheme_name from public.security_master sm
+        where sm.id = (select security_id from public.advice_items where id = ${itemId})
+           or sm.id in (select h.security_id from public.portfolio_holdings h join public.v_latest_snapshot l on l.snapshot_id = h.snapshot_id
+                        where h.client_id = (select client_id from public.advice_items where id = ${itemId}))
+           or sm.id in (select pi.security_id from public.advisory_plan_items pi join public.advisory_plans p on p.id = pi.plan_id
+                        where p.status = 'ACTIVE' and pi.client_id = (select client_id from public.advice_items where id = ${itemId}))
+        order by sm.scheme_name`,
+    } : null,
   }));
   const canAdvise = actor.role !== "OPERATIONS";
 
@@ -75,6 +93,19 @@ export default async function AdviceItemPage(props: PageProps<"/advice/items/[it
                     {e.status === "PENDING" ? (
                       <ActionForm action={confirmPendingExecutionAction.bind(null, itemId, e.id)}><SubmitButton size="sm" variant="outline">Confirm executed</SubmitButton></ActionForm>
                     ) : null}
+                    {fixable ? (
+                      <details className="w-full">
+                        <summary className="cursor-pointer text-brand">Admin: correct this execution</summary>
+                        <ActionForm action={correctExecutionAction.bind(null, itemId, e.id)} className="mt-2 grid gap-2 sm:grid-cols-5">
+                          <Field label="Amount ₹ *"><Input name="executed_amount" inputMode="decimal" defaultValue={String(e.executed_amount)} required /></Field>
+                          <Field label="Units"><Input name="executed_units" inputMode="decimal" defaultValue={e.executed_units == null ? "" : String(e.executed_units)} /></Field>
+                          <Field label="Date *"><Input type="date" name="execution_date" defaultValue={String(e.execution_date).slice(0, 10)} required /></Field>
+                          <Field label="NAV"><Input name="execution_price" inputMode="decimal" defaultValue={e.execution_price == null ? "" : String(e.execution_price)} /></Field>
+                          <Field label="Reason *"><Input name="reason" required placeholder="What was wrong" /></Field>
+                          <div className="sm:col-span-5"><SubmitButton size="sm" variant="outline">Save correction</SubmitButton></div>
+                        </ActionForm>
+                      </details>
+                    ) : null}
                     <ActionForm action={voidExecutionAction.bind(null, itemId, e.id)} className="flex items-center gap-1">
                       <Select name="status" className="h-8 w-28 text-xs"><option value="REJECTED">Reject</option><option value="CANCELLED">Cancel</option></Select>
                       <Input name="reason" placeholder="Reason (required)" className="h-8 w-56 text-xs" required />
@@ -113,6 +144,39 @@ export default async function AdviceItemPage(props: PageProps<"/advice/items/[it
         </div>
 
         <div className="space-y-4">
+          {fixable ? (
+            <Card>
+              <CardHeader><CardTitle>Admin: correct this call</CardTitle></CardHeader>
+              <CardContent>
+                <p className="mb-3 text-xs text-muted">Fixes a recording mistake in place (no revision). The old values stay in the audit log with your reason. Date and channel apply to every fund in this call ({a.batch_code}).</p>
+                <ActionForm action={correctAdviceAction.bind(null, itemId)} className="space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <Field label="Advised amount ₹ *"><Input name="advised_amount" inputMode="decimal" defaultValue={String(a.advised_amount)} required /></Field>
+                    <Field label="Basis"><Select name="quantity_basis" defaultValue={a.quantity_basis}><option value="AMOUNT">Amount</option><option value="UNITS">Units</option></Select></Field>
+                    <Field label="Units"><Input name="advised_units" inputMode="decimal" defaultValue={a.advised_units == null ? "" : String(a.advised_units)} /></Field>
+                    <Field label="Ref. NAV"><Input name="reference_price" inputMode="decimal" defaultValue={a.reference_price == null ? "" : String(a.reference_price)} /></Field>
+                  </div>
+                  <Field label="Plan line">
+                    <Select name="plan_item_id" defaultValue={a.plan_item_id ?? "OFF_PLAN"}>
+                      <option value="OFF_PLAN">Off-plan (not counted against the plan)</option>
+                      {fixable.lines.map((l) => <option key={l.id} value={l.id}>{l.action} · {l.scheme_name}</option>)}
+                    </Select>
+                  </Field>
+                  <Field label="Fund (off-plan calls; a plan line brings its own fund)">
+                    <Select name="security_id" defaultValue={a.security_id}>
+                      {fixable.funds.map((f) => <option key={f.id} value={f.id}>{f.scheme_name}</option>)}
+                    </Select>
+                  </Field>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Field label="Communicated at"><Input type="datetime-local" name="communicated_at" defaultValue={toISTDateTimeLocal(new Date(a.communicated_at))} required /></Field>
+                    <Field label="Channel"><Select name="channel" defaultValue={a.communication_channel}>{CHANNELS.map((c) => <option key={c}>{c}</option>)}</Select></Field>
+                  </div>
+                  <Field label="Reason *"><Input name="reason" required placeholder="e.g. typo: ₹3L was advised, not ₹30K" /></Field>
+                  <SubmitButton size="sm">Save correction</SubmitButton>
+                </ActionForm>
+              </CardContent>
+            </Card>
+          ) : null}
           {canAdvise && a.is_open ? (
             <>
               <Card>

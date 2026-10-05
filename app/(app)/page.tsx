@@ -22,8 +22,13 @@ function greeting(now = new Date()): string {
 }
 
 export default async function Overview() {
-  const { m, recent, unadvised, docs, reviews, followUps, actor } = await pageData(async (tx) => ({
+  const { m, sip, recent, unadvised, docs, reviews, followUps, actor } = await pageData(async (tx) => ({
     m: await getCommandCentreMetrics(tx),
+    // SIP under ACTIVE plans, across the clients this user can see.
+    sip: (await tx<{ invested: number; advised: number; target: number }[]>`
+      select coalesce(sum(sip_invested), 0)::float8 as invested, coalesce(sum(sip_monthly_advised), 0)::float8 as advised,
+             coalesce(sum(sip_monthly_target), 0)::float8 as target
+      from public.v_client_sip`)[0],
     recent: await listAdviceLedger(tx, { limit: 12 }),
     unadvised: await listUnadvisedActivity(tx, 8),
     docs: await listDocumentsNeedingReview(tx, 8),
@@ -53,7 +58,7 @@ export default async function Overview() {
         <StatCard label="Premium clients" value={m.total_clients} href="/clients" />
         <StatCard label="Assets under advice" value={formatINRCompact(m.total_portfolio_value)} hint="Latest CAS units × latest NAV" />
         <StatCard label="Active advisory plans" value={m.active_plans} hint={m.draft_plans ? `${m.draft_plans} draft awaiting approval` : undefined} />
-        <StatCard label="Money left with clients" value={formatINRCompact(m.money_left_total)} hint="Sold − bought on executed calls" href="/advice/bulk" tone={m.money_left_total > 0 ? "attention" : "default"} />
+        <StatCard label="SIP invested under plans" value={formatINRCompact(sip.invested)} hint={`SIP advised ${formatINRCompact(sip.advised)}/mo of ${formatINRCompact(sip.target)}/mo planned`} />
         <StatCard label="Calls today" value={m.calls_issued_today} hint={`${m.advice_items_today} fund-level instructions`} href={`/advice?from=${m.day}&to=${m.day}`} />
       </section>
 

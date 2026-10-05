@@ -12,6 +12,7 @@ import {
 import type { Tx } from "@/lib/db/tx";
 import { fromISTDateTimeLocal } from "@/lib/format";
 import { convertMigrateNotes, issueMigrationCalls } from "@/services/migrations";
+import { convertBuyToSip, convertSipToLumpsum, updateSipAmounts } from "@/services/sip";
 import type { Channel } from "@/types/domain";
 
 const opts = { roles: ADVISORY_ROLES };
@@ -178,5 +179,43 @@ export async function convertMigrateNotesAction(clientId: string, planId: string
     const n = await actionTx((tx, actor) => convertMigrateNotes(tx, actor, planId), opts);
     refresh(clientId, planId);
     return n ? `${n} fund(s) moved to the Migrate to Direct checklist.` : "Nothing to convert: no Regular holding has a Migrate to Direct note.";
+  });
+}
+
+/** Last-moment change: a lump-sum buy line becomes a SIP (monthly amount entered by the advisor). */
+export async function convertBuyToSipAction(clientId: string, planId: string, itemId: string, _p: ActionResult | null, fd: FormData): Promise<ActionResult> {
+  return runAction("convertBuyToSip", async () => {
+    const day = num(fd, "debit_day");
+    await actionTx((tx, actor) => convertBuyToSip(tx, actor, itemId, {
+      monthlyAmount: reqNum(fd, "monthly_amount", "Monthly SIP amount"),
+      lumpsumAmount: num(fd, "lumpsum_amount"),
+      debitDay: day,
+      reason: reqStr(fd, "reason", "Reason"),
+    }), opts);
+    refresh(clientId, planId);
+    return "Moved to SIP: the lump-sum target is reduced and a SIP start line is added.";
+  });
+}
+
+/** Last-moment change: a SIP line becomes a lump-sum buy. */
+export async function convertSipToLumpsumAction(clientId: string, planId: string, sipId: string, _p: ActionResult | null, fd: FormData): Promise<ActionResult> {
+  return runAction("convertSipToLumpsum", async () => {
+    await actionTx((tx, actor) => convertSipToLumpsum(tx, actor, sipId, {
+      lumpsumAmount: reqNum(fd, "lumpsum_amount", "Lump-sum amount"),
+      reason: reqStr(fd, "reason", "Reason"),
+    }), opts);
+    refresh(clientId, planId);
+    return "Moved to lump sum: the SIP line is cancelled and a lump-sum buy line is added.";
+  });
+}
+
+/** Change the amount of a SIP line (approved plans need a reason). */
+export async function updateSipAmountsAction(clientId: string, planId: string, sipId: string, _p: ActionResult | null, fd: FormData): Promise<ActionResult> {
+  return runAction("updateSipAmounts", async () => {
+    await actionTx((tx) => updateSipAmounts(tx, sipId, {
+      oldAmount: num(fd, "old_amount"), newAmount: num(fd, "new_amount"), debitDay: num(fd, "debit_day"),
+    }, reqStr(fd, "reason", "Reason")), opts);
+    refresh(clientId, planId);
+    return "SIP line updated.";
   });
 }

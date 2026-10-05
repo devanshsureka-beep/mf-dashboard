@@ -46,25 +46,21 @@ export function IssueAdviceForm({
   const unitsOf = useMemo(() => new Map(holdings.map((h) => [h.security_id, h.units])), [holdings]);
   const visible = planItems.filter((p) => side === "ALL" || p.side === side);
 
-  const [rows, setRows] = useState<Record<string, PlanRow>>(() =>
-    Object.fromEntries(
-      visible.map((p) => [
-        p.id,
-        {
-          include: p.id === preselect,
-          // A full exit is advised as "all units": the CAS redemption then matches exactly, whatever the NAV did.
-          basis: p.full_exit_units ? "UNITS" : "AMOUNT",
-          amount: p.id === preselect && p.yet_to_advise_amount > 0 ? String(Math.round(p.yet_to_advise_amount)) : "",
-          units: p.full_exit_units ? String(p.full_exit_units) : "",
-          price: p.security_id && navOf.get(p.security_id) ? String(navOf.get(p.security_id)) : "",
-        },
-      ]),
-    ),
-  );
+  const initialRow = (p: AdvisablePlanItem): PlanRow => ({
+    include: p.id === preselect,
+    // A full exit is advised as "all units": the CAS redemption then matches exactly, whatever the NAV did.
+    basis: p.full_exit_units ? "UNITS" : "AMOUNT",
+    amount: p.id === preselect && p.yet_to_advise_amount > 0 ? String(Math.round(p.yet_to_advise_amount)) : "",
+    units: p.full_exit_units ? String(p.full_exit_units) : "",
+    price: p.security_id && navOf.get(p.security_id) ? String(navOf.get(p.security_id)) : "",
+  });
+  const [edited, setRows] = useState<Record<string, PlanRow>>(() => Object.fromEntries(planItems.map((p) => [p.id, initialRow(p)])));
+  // Every visible line has a row, even one that came in with new props (e.g. switching SELL → ALL).
+  const rows: Record<string, PlanRow> = Object.fromEntries(visible.map((p) => [p.id, edited[p.id] ?? initialRow(p)]));
   const [off, setOff] = useState<OffRow[]>([]);
   const [confirmOver, setConfirmOver] = useState(false);
 
-  const setRow = (id: string, patch: Partial<PlanRow>) => setRows((r) => ({ ...r, [id]: { ...r[id], ...patch, include: patch.include ?? true } }));
+  const setRow = (id: string, patch: Partial<PlanRow>) => setRows((r) => ({ ...r, [id]: { ...rows[id], ...r[id], ...patch, include: patch.include ?? true } }));
   const estimate = (basis: string, amount: string, units: string, price: string) =>
     basis === "UNITS" && !amount && units && price ? Number(units) * Number(price) : Number(amount || 0);
 

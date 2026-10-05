@@ -19,7 +19,7 @@ export function BulkCallForm({ clients, searchFunds }: { clients: BulkClient[]; 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [action, setAction] = useState<"BUY" | "SELL">("BUY");
   const [fund, setFund] = useState<PickedFund | null>(null);
-  const [mode, setMode] = useState<BulkMode>("PCT_MONEY_LEFT");
+  const [mode, setMode] = useState<BulkMode>("FIXED");
   const [value, setValue] = useState("");
   const [preview, setPreview] = useState<{ lines: BulkLine[]; error?: string; key: string } | null>(null);
   const [state, formAction, pending] = useActionState(issueBulkAction, null);
@@ -76,7 +76,7 @@ export function BulkCallForm({ clients, searchFunds }: { clients: BulkClient[]; 
         </div>
         {clients.length === 0 ? <p className="p-4 text-sm text-muted">No client matches these filters.</p> : (
           <Table className="text-[13px]">
-            <THead><TR><TH /><TH>Client</TH><TH>Advisor</TH><TH>Risk</TH><TH className="text-right">Value today</TH><TH className="text-right">Money left</TH><TH className="text-right">This call</TH></TR></THead>
+            <THead><TR><TH /><TH>Client</TH><TH>Advisor</TH><TH>Risk</TH><TH className="text-right">Value today</TH><TH className="text-right">This call</TH></TR></THead>
             <TBody>
               {clients.map((c) => {
                 const line = current?.lines.find((l) => l.client_id === c.id);
@@ -87,7 +87,6 @@ export function BulkCallForm({ clients, searchFunds }: { clients: BulkClient[]; 
                     <TD className="text-xs">{c.advisor ?? "—"}</TD>
                     <TD className="text-xs">{humanize(c.risk)}</TD>
                     <TD className="text-right num">{formatINRCompact(c.value)}</TD>
-                    <TD className={`text-right num ${c.moneyLeft > 0 ? "font-medium text-amber-700" : "text-muted"}`}>{formatINRCompact(c.moneyLeft)}</TD>
                     <TD className="text-right text-xs">
                       {!selected.has(c.id) ? null : !line ? <span className="text-muted">…</span> : line.amount != null ? (
                         <><span className="num font-medium">{formatINR(line.amount)}</span><div className="text-[11px] text-muted">{line.plan_item_id ? "on plan" : "off plan"}</div></>
@@ -105,7 +104,7 @@ export function BulkCallForm({ clients, searchFunds }: { clients: BulkClient[]; 
         <input type="hidden" name="spec" value={specKey} />
         <div className="flex gap-1 rounded-lg bg-slate-100 p-1">
           {(["BUY", "SELL"] as const).map((a) => (
-            <button key={a} type="button" onClick={() => { setAction(a); if (a === "SELL" && mode === "PCT_MONEY_LEFT") setMode("PCT_HOLDING"); }}
+            <button key={a} type="button" onClick={() => setAction(a)}
               className={`flex-1 rounded-md py-1.5 text-sm font-medium ${action === a ? (a === "BUY" ? "bg-white text-emerald-700 shadow-sm" : "bg-white text-red-700 shadow-sm") : "text-muted"}`}>
               {a === "BUY" ? "Buy" : "Sell"}
             </button>
@@ -117,7 +116,7 @@ export function BulkCallForm({ clients, searchFunds }: { clients: BulkClient[]; 
         <div className="grid grid-cols-[1fr_8rem] gap-2">
           <Field label="How much">
             <Select value={mode} onChange={(e) => setMode(e.target.value as BulkMode)}>
-              {BULK_MODES.filter((m) => action === "SELL" || m.value !== "PCT_HOLDING").map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+              {BULK_MODES.filter((m) => m.value !== "PCT_MONEY_LEFT" && (action === "SELL" || m.value !== "PCT_HOLDING")).map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
             </Select>
           </Field>
           <Field label={mode === "FIXED" ? "₹ per client" : "%"}>
