@@ -11,7 +11,7 @@ import {
 } from "@/services/plans";
 import type { Tx } from "@/lib/db/tx";
 import { fromISTDateTimeLocal } from "@/lib/format";
-import { issueMigrationCalls } from "@/services/migrations";
+import { convertMigrateNotes, issueMigrationCalls } from "@/services/migrations";
 import type { Channel } from "@/types/domain";
 
 const opts = { roles: ADVISORY_ROLES };
@@ -169,5 +169,14 @@ export async function issueMigrationCallsAction(clientId: string, planId: string
     const r = await actionTx((tx, actor) => issueMigrationCalls(tx, actor, { clientId, planId, planItemIds: ids, channel, communicatedAt }), opts);
     refresh(clientId, planId);
     return `${r.count} switch call(s) issued (${r.batchCode}). They complete when the client's CAS shows the switch, or when execution is recorded.`;
+  });
+}
+
+/** Turn "Migrate to Direct" notes on Keep lines (plans approved before the checklist) into checklist lines. */
+export async function convertMigrateNotesAction(clientId: string, planId: string, _p: ActionResult | null, _fd: FormData): Promise<ActionResult> {
+  return runAction("convertMigrateNotes", async () => {
+    const n = await actionTx((tx, actor) => convertMigrateNotes(tx, actor, planId), opts);
+    refresh(clientId, planId);
+    return n ? `${n} fund(s) moved to the Migrate to Direct checklist.` : "Nothing to convert: no Regular holding has a Migrate to Direct note.";
   });
 }

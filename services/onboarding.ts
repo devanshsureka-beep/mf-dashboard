@@ -9,6 +9,7 @@ import { findClientByPan, ingestParsedCas, isDuplicateCas, type StoredFile } fro
 import { registerDocument } from "@/services/documents";
 import { ingestAdvisoryReport } from "@/services/plans";
 import { resolveOrCreateSecurity, suggestSecurity } from "@/services/securities";
+import { findDirectVariant } from "@/services/migrations";
 import type { SecurityCandidate } from "@/lib/domain/securities";
 import { RISK_PROFILES, type PlanKind } from "@/types/domain";
 
@@ -215,6 +216,11 @@ export async function onboardFromDocuments(
   for (const h of holdings) if (h.security_id) securityIds[h.scheme_name.toLowerCase()] = h.security_id;
   const pool = await tx<SecurityCandidate[]>`
     select id, scheme_name, isin, plan_type, aliases from public.security_master where is_active`;
+  // Migrate to Direct: the real Direct plan from the AMFI list when it is clear, else a name-only entry.
+  for (const i of draft.items.filter((x) => x.action === "MIGRATE" && x.switch_to_scheme_name)) {
+    const to = await findDirectVariant(tx, i.isin, actor.id);
+    if (to) securityIds[(i.switch_to_scheme_name as string).toLowerCase()] = to;
+  }
   const migrations = draft.items
     .filter((i) => i.action === "MIGRATE" && i.switch_to_scheme_name)
     .map((i) => ({ scheme_name: i.switch_to_scheme_name as string, plan_type: "DIRECT" as const, amc: null }));

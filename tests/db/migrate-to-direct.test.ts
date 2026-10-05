@@ -1,8 +1,10 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { advisoryReportResultSchema } from "@/lib/integrations/contracts";
 import { recordExecution } from "@/services/executions";
-import { getMigrations, issueMigrationCalls } from "@/services/migrations";
-import { approvePlan, ingestAdvisoryReport } from "@/services/plans";
+import { convertMigrateNotes, countMigrateNotes, getMigrations, issueMigrationCalls } from "@/services/migrations";
+import { addPlanItem, approvePlan, ingestAdvisoryReport } from "@/services/plans";
+import { ingestNavFeed } from "@/services/nav";
+import { resolveFundRef } from "@/services/fund-search";
 import { clientWithActivePlan, scenario, sql, TEST_DB } from "./harness";
 
 const describeDb = TEST_DB ? describe : describe.skip;
@@ -58,6 +60,37 @@ describeDb("Migrate to Direct checklist", () => {
       // A switch moves money fund to fund: money left is unchanged.
       const cash = await ctx.tx<{ money_left: number }[]>`select money_left::float8 from public.v_client_summary where client_id = ${p.clientId}`;
       expect(cash[0].money_left).toBe(0);
+    });
+  });
+
+  it("turns Migrate to Direct notes of an approved plan into checklist lines, pointing at the AMFI Direct plan", async () => {
+    await scenario(async (ctx) => {
+      const p = await clientWithActivePlan(ctx);
+      const tag = String(Math.floor(Math.random() * 1e6)).padStart(6, "0");
+      const reg = `INFZR${tag}1`;
+      const dir = `INFZD${tag}2`;
+      const base = { amfi_code: "1", amc: `Zeta ${tag} Mutual Fund`, category: "Equity Scheme - Flexi Cap Fund", option_type: "GROWTH" as const, nav: 50, nav_date: "2026-09-30" };
+      await ctx.asSuper((t) => ingestNavFeed(t, { navDate: "2026-09-30", schemes: [
+        { ...base, isin: reg, scheme_name: `Zeta ${tag} Flexi Cap Fund - Regular Plan - Growth`, plan_type: "REGULAR" },
+        { ...base, isin: dir, scheme_name: `Zeta ${tag} Flexi Cap Fund - Direct Plan - Growth`, plan_type: "DIRECT" },
+        { ...base, isin: `INFZD${tag}3`, scheme_name: `Zeta ${tag} Small Cap Fund - Direct Plan - Growth`, plan_type: "DIRECT", category: "Equity Scheme - Small Cap Fund" },
+      ] }, "test"));
+      const regSec = await ctx.as("advisor", (t) => resolveFundRef(t, `isin:${reg}`, ctx.users.advisor.id));
+      await ctx.as("advisor", (t) => addPlanItem(t, ctx.users.advisor, p.planId, {
+        security_id: regSec, scheme_name: `Zeta ${tag} Flexi Cap Fund - Regular Plan - Growth`, action: "RETAIN", target_amount: 0,
+        current_amount: 300000, reason: "Kept for now: Migrate to Direct; Hold",
+      }, "test: old-style plan line"));
+      expect(await ctx.as("advisor", (t) => countMigrateNotes(t, p.planId))).toBe(1);
+
+      expect(await ctx.as("advisor", (t) => convertMigrateNotes(t, ctx.users.advisor, p.planId))).toBe(1);
+      const m = await ctx.as("advisor", (t) => getMigrations(t, p.planId));
+      expect(m).toHaveLength(1);
+      const dirSec = (await ctx.tx<{ id: string }[]>`select id from public.security_master where isin = ${dir}`)[0].id;
+      expect(m[0]).toMatchObject({ switch_to_security_id: dirSec, current_value: 300000, reason: "Migrate to Direct; Hold", migration_status: "TO_DO" });
+      expect(await ctx.as("advisor", (t) => countMigrateNotes(t, p.planId))).toBe(0);
+      // Audited with a reason; the lump-sum targets are unchanged.
+      const t = (await ctx.tx<{ sell_target: number }[]>`select sell_target::float8 from public.v_plan_transition where plan_id = ${p.planId}`)[0];
+      expect(t.sell_target).toBe(1000000);
     });
   });
 });

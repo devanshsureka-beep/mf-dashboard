@@ -16,13 +16,13 @@ import { formatDate, formatDateTime, humanize, toISTDateTimeLocal } from "@/lib/
 import { pageData } from "@/lib/server";
 import { getClientSummary } from "@/services/clients";
 import { getPlan, getPlanItems, getSipItems, getTranches } from "@/services/plans";
-import { getMigrations, type MigrationRow } from "@/services/migrations";
+import { countMigrateNotes, getMigrations, type MigrationRow } from "@/services/migrations";
 import { listAllSecurities } from "@/services/securities";
 import { getHoldings } from "@/services/portfolio";
 import type { PlanItemProgress } from "@/types/domain";
 import {
   addPlanItemAction, addSipAction, approvePlanAction, cancelPlanItemAction, closePlanAction, deletePlanItemAction,
-  deleteSipAction, issueMigrationCallsAction, resolveSipSecurityAction, updatePlanItemAction,
+  convertMigrateNotesAction, deleteSipAction, issueMigrationCallsAction, resolveSipSecurityAction, updatePlanItemAction,
 } from "../actions";
 import { setSipStatusAction } from "../../actions";
 
@@ -30,7 +30,7 @@ export const metadata = { title: "Portfolio plan" };
 
 export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[planId]">) {
   const { id, planId } = await props.params;
-  const { c, plan, items: allItems, sips, securities, heldIds, tranches, migrations, actor } = await pageData(async (tx) => {
+  const { c, plan, items: allItems, sips, securities, heldIds, tranches, migrations, migrateNotes, actor } = await pageData(async (tx) => {
     const c = await getClientSummary(tx, id);
     const plan = await getPlan(tx, planId);
     const holdings = c.latest_snapshot_id ? await getHoldings(tx, c.latest_snapshot_id) : [];
@@ -40,6 +40,7 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
       sips: await getSipItems(tx, planId),
       tranches: await getTranches(tx, planId),
       migrations: await getMigrations(tx, planId),
+      migrateNotes: await countMigrateNotes(tx, planId),
       securities: await listAllSecurities(tx),
       heldIds: holdings.map((h) => h.security_id).filter((x): x is string => Boolean(x)),
     };
@@ -114,6 +115,16 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
         </div>
       ) : null}
 
+      {migrateNotes > 0 && editable ? (
+        <Card className="mt-4 border-sky-200">
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 text-sm">
+            <span><strong>{migrateNotes}</strong> fund(s) say &ldquo;Migrate to Direct&rdquo; only as a note on a Keep line (read before the migration checklist existed).</span>
+            <ActionForm action={convertMigrateNotesAction.bind(null, id, planId)}>
+              <SubmitButton size="sm">Add them to the Migrate to Direct checklist</SubmitButton>
+            </ActionForm>
+          </CardContent>
+        </Card>
+      ) : null}
       {migrations.length ? (
         <MigrationCard rows={migrations} clientId={id} planId={planId} canIssue={isActive && canAdvise} />
       ) : null}
