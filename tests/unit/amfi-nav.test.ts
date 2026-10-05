@@ -66,6 +66,7 @@ describe("AMFI NAV file", () => {
       " ",
       "119242;INF740K01OK1;-;DSP ELSS Tax Saver Fund;Direct Plan;Growth;146.2490;01-Oct-2026",
       "151750;INF179KC1GI5;-;HDFC Defence Fund;Regular Plan;IDCW Option;30.224;30-Sep-2026",
+      "120001;INF000A01AA1;-;Kappa Flexi Cap Fund - Direct Plan - Growth;-;-;55.10;01-Oct-2026",
     ].join("\n");
     const r = parseAmfiNav(text);
     expect(r.navDate).toBe("2026-10-01");
@@ -74,5 +75,9 @@ describe("AMFI NAV file", () => {
       nav: 146.249, nav_date: "2026-10-01", amc: "DSP Mutual Fund", category: "Equity Scheme - ELSS",
     });
     expect(r.schemes.find((x) => x.isin === "INF179KC1GI5")).toMatchObject({ plan_type: "REGULAR", option_type: "IDCW", nav: 30.224, nav_date: "2026-09-30" });
+    // "-" in Plan / Option: read from the name.
+    expect(r.schemes.find((x) => x.isin === "INF000A01AA1")).toMatchObject({
+      scheme_name: "Kappa Flexi Cap Fund - Direct Plan - Growth", plan_type: "DIRECT", option_type: "GROWTH",
+    });
   });
 });

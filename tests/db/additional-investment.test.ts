@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { advisoryReportResultSchema } from "@/lib/integrations/contracts";
-import { approvePlan, ingestAdvisoryReport } from "@/services/plans";
+import { approvePlan, closePlan, ingestAdvisoryReport } from "@/services/plans";
 import { clientWithActivePlan, scenario, sql, TEST_DB, type Ctx } from "./harness";
 
 const describeDb = TEST_DB ? describe : describe.skip;
@@ -74,6 +74,18 @@ describeDb("Additional investment (fresh money on top of the active plan)", () =
         update public.advisory_plans set status = 'MERGED', approved_at = now() where id = ${draftId}`)).rejects.toThrow(/ACTIVE plan/);
       await expect(ctx.as("ops", (t) => t`
         insert into public.client_fresh_money (client_id, amount, created_by) values (${p.clientId}, 1000, ${ctx.users.ops.id})`)).rejects.toThrow();
+    });
+  });
+
+  it("with no active plan left to join, it becomes the client's plan and its fresh money still counts", async () => {
+    await scenario(async (ctx) => {
+      const p = await clientWithActivePlan(ctx);
+      const draftId = await additionalDraft(ctx, p.clientId);
+      await ctx.as("advisor", (t) => closePlan(t, p.planId, "CANCELLED", "test: plan withdrawn"));
+      expect(await ctx.as("advisor", (t) => approvePlan(t, ctx.users.advisor, draftId, "tranche on its own"))).toBe("ACTIVE");
+      const cash = (await ctx.tx<{ fresh_money: number; money_left: number }[]>`
+        select fresh_money::float8, money_left::float8 from public.v_client_cash where client_id = ${p.clientId}`)[0];
+      expect(cash).toEqual({ fresh_money: 1500000, money_left: 1500000 });
     });
   });
 });

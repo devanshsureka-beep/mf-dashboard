@@ -13,6 +13,9 @@
  *     UNADVISED and always need a person to acknowledge them.
  *   - SIP instalments and SIP cancellations never satisfy lump-sum calls; they
  *     are reported separately (and tick off SIP start/stop plan items).
+ *   - A switch-in to the target of an advised SWITCH (e.g. Regular → Direct) is
+ *     the other leg of that switch: the switch-out is matched to the call, the
+ *     switch-in is not a new purchase.
  */
 
 export const TOLERANCE = 0.03; // NAV drift between call and execution
@@ -35,6 +38,8 @@ export interface MatchCall {
   unverifiedExecutedAmount: number;
   unverifiedExecutedUnits: number;
   communicatedAt: Date;
+  /** Folio the call names, if any: a trade in that folio goes to it first. */
+  folio?: string | null;
 }
 
 export interface MatchTxn {
@@ -48,6 +53,14 @@ export interface MatchTxn {
   amount: number | null; // signed as in the CAS
   units: number | null; // signed as in the CAS
   nav: number | null;
+  folio?: string | null;
+}
+
+/** Where an advised SWITCH moves the money (from its plan line). */
+export interface SwitchTarget {
+  securityId: string;
+  isin: string | null;
+  communicatedAt: Date;
 }
 
 export interface TxnProposal {
@@ -106,7 +119,13 @@ function capacityOf(c: MatchCall): number {
 const sameSecurity = (c: MatchCall, t: MatchTxn) =>
   (t.securityId !== null && c.securityId === t.securityId) || (t.isin !== null && c.isin !== null && c.isin === t.isin);
 
-export function matchTransactions(calls: MatchCall[], txns: MatchTxn[]): TxnProposal[] {
+const isSwitchInLeg = (t: MatchTxn, targets: SwitchTarget[]) =>
+  t.type === "SWITCH_IN" &&
+  targets.some((s) =>
+    ((t.securityId !== null && s.securityId === t.securityId) || (t.isin !== null && s.isin !== null && s.isin === t.isin)) &&
+    istDate(s.communicatedAt) <= t.date && daysBetween(istDate(s.communicatedAt), t.date) <= AUTO_CONFIRM_MAX_LAG_DAYS * 2);
+
+export function matchTransactions(calls: MatchCall[], txns: MatchTxn[], switchTargets: SwitchTarget[] = []): TxnProposal[] {
   const caps: Capacity[] = calls
     .map((call) => ({ call, remaining: capacityOf(call), initial: capacityOf(call) }))
     .filter((c) => c.remaining > 0.0001)
@@ -117,7 +136,7 @@ export function matchTransactions(calls: MatchCall[], txns: MatchTxn[]): TxnProp
 
   for (const t of sorted) {
     const kind = txnKind(t);
-    if (kind === "IGNORE") continue;
+    if (kind === "IGNORE" || isSwitchInLeg(t, switchTargets)) continue;
     const txnAmount = r2(Math.abs(t.amount ?? 0));
     const txnUnits = r4(Math.abs(t.units ?? 0));
     const nav = t.nav ?? (txnUnits > 0 ? txnAmount / txnUnits : null);
@@ -143,6 +162,11 @@ export function matchTransactions(calls: MatchCall[], txns: MatchTxn[]): TxnProp
       (wantSell ? c.call.action !== "BUY" : c.call.action === "BUY") &&
       istDate(c.call.communicatedAt) <= t.date,
     );
+    // Calls on the trade's own folio first (stable: otherwise oldest first).
+    if (t.folio) {
+      const own = (c: Capacity) => (c.call.folio && c.call.folio === t.folio ? 0 : 1);
+      candidates.sort((a, b) => own(a) - own(b));
+    }
 
     // Quantity of this txn still to attribute, per basis.
     let leftAmount = txnAmount;

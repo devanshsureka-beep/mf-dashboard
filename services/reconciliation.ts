@@ -8,7 +8,7 @@ import {
   type CasTxnLine,
   type HoldingLine,
 } from "@/lib/domain/reconciliation";
-import { matchTransactions, istDate, type MatchCall, type MatchTxn, type TxnProposal } from "@/lib/domain/txn-matching";
+import { matchTransactions, istDate, type MatchCall, type MatchTxn, type SwitchTarget, type TxnProposal } from "@/lib/domain/txn-matching";
 import type { Channel, ReconciliationMatchRow, ReconciliationRunRow } from "@/types/domain";
 import { issueAdvice } from "./advice";
 
@@ -170,9 +170,9 @@ async function runTransactionReconciliation(
     id: string; security_id: string; isin: string | null; action: "BUY" | "SELL" | "SWITCH";
     status: "ISSUED" | "PARTIALLY_EXECUTED" | "EXECUTED"; quantity_basis: "AMOUNT" | "UNITS";
     advised_amount: number; advised_units: number | null; executed_amount: number; executed_units: number;
-    communicated_at: Date; unverified_amount: number; unverified_units: number;
+    communicated_at: Date; unverified_amount: number; unverified_units: number; folio_number: string | null;
   }[]>`
-    select v.id, v.security_id, sm.isin, v.action, v.status, v.quantity_basis, v.advised_amount, v.advised_units,
+    select v.id, v.security_id, sm.isin, v.action, v.status, v.quantity_basis, v.advised_amount, v.advised_units, v.folio_number,
            v.executed_amount, v.executed_units, v.communicated_at,
            coalesce(u.amount, 0) as unverified_amount, coalesce(u.units, 0) as unverified_units
     from public.v_advice_items v
@@ -191,8 +191,18 @@ async function runTransactionReconciliation(
     advisedUnits: a.advised_units === null ? null : Number(a.advised_units),
     executedAmount: Number(a.executed_amount), executedUnits: Number(a.executed_units),
     unverifiedExecutedAmount: Number(a.unverified_amount), unverifiedExecutedUnits: Number(a.unverified_units),
-    communicatedAt: new Date(a.communicated_at),
+    communicatedAt: new Date(a.communicated_at), folio: a.folio_number,
   }));
+
+  // Targets of advised switches: their switch-in legs are not new purchases.
+  const switchTargets: SwitchTarget[] = (await tx<{ security_id: string; isin: string | null; communicated_at: Date }[]>`
+    select pi.switch_to_security_id as security_id, sm.isin, v.communicated_at
+    from public.v_advice_items v
+    join public.advisory_plan_items pi on pi.id = v.plan_item_id
+    join public.security_master sm on sm.id = pi.switch_to_security_id
+    where v.client_id = ${args.clientId} and v.action = 'SWITCH'
+      and v.status in ('ISSUED', 'PARTIALLY_EXECUTED', 'EXECUTED')`)
+    .map((r) => ({ securityId: r.security_id, isin: r.isin, communicatedAt: new Date(r.communicated_at) }));
 
   // Only transactions first seen in this CAS (overlapping statements are de-duplicated on insert).
   const txnRows = await tx<{
@@ -209,11 +219,11 @@ async function runTransactionReconciliation(
     id: t.id, securityId: t.security_id, isin: t.isin, schemeName: t.scheme_name, date: t.transaction_date,
     type: t.transaction_type, description: t.description,
     amount: t.amount === null ? null : Number(t.amount), units: t.units === null ? null : Number(t.units),
-    nav: t.nav === null ? null : Number(t.nav),
+    nav: t.nav === null ? null : Number(t.nav), folio: t.folio_number,
   }));
   const folioOf = new Map(txnRows.map((t) => [t.id, t.folio_number]));
 
-  const proposals = matchTransactions(calls, txns);
+  const proposals = matchTransactions(calls, txns, switchTargets);
   const sipItemsCompleted = await completeSipItemsFromTransactions(tx, args.clientId, proposals);
 
   const needsPerson = (p: TxnProposal) =>
@@ -500,6 +510,9 @@ const round4 = (n: number) => Math.round(n * 10_000) / 10_000;
  * execution. The original unadvised row is closed with a note; a new matched
  * row carries the link, so resolved history is never rewritten.
  */
+/** Resolution note prefix of an unadvised row recorded as advised. */
+export const RECORDED_AS_ADVISED = "Recorded as advised";
+
 export async function recordAdvisedOffline(
   tx: Tx,
   actor: Actor,
@@ -519,6 +532,9 @@ export async function recordAdvisedOffline(
     throw new AppError("This change has no single CAS transaction to record.");
   }
   const action: "BUY" | "SELL" = m.change_type === "DECREASE" ? "SELL" : "BUY";
+  // The row may be only the part of the trade that open calls did not cover.
+  const amount = Number(m.approx_amount) > 0 ? Number(m.approx_amount) : Number(m.transaction_amount);
+  const units = m.allocated_units != null ? Number(m.allocated_units) : m.transaction_units;
 
   // The call cannot be later than the trade it explains.
   const tradeDay = new Date(`${m.transaction_date}T09:00:00+05:30`);
@@ -546,7 +562,7 @@ export async function recordAdvisedOffline(
       folio_number: m.folio_numbers?.[0] ?? null,
       action,
       quantity_basis: "AMOUNT",
-      advised_amount: Number(m.transaction_amount),
+      advised_amount: amount,
     }],
   });
   const adviceItemId = b.itemIds[0];
@@ -559,16 +575,17 @@ export async function recordAdvisedOffline(
        transaction_units, transaction_nav)
     values (${m.run_id}, ${m.client_id}, ${m.security_id}, ${m.scheme_name}, ${m.folio_numbers ?? []}, ${m.change_type},
             ${m.previous_units}, ${m.current_units}, ${m.detected_change}, ${m.previous_value}, ${m.current_value},
-            ${m.reference_nav}, ${m.approx_amount}, ${adviceItemId}, 'ADVICE_MATCH', ${m.transaction_amount},
-            ${m.transaction_units}, 'HIGH', 'SUGGESTED', 'Call recorded after the trade (advised outside the dashboard).',
+            ${m.reference_nav}, ${amount}, ${adviceItemId}, 'ADVICE_MATCH', ${amount},
+            ${units}, 'HIGH', 'SUGGESTED', 'Call recorded after the trade (advised outside the dashboard).',
             ${m.cas_transaction_id}, ${m.transaction_date}::date, ${m.transaction_amount}, ${m.transaction_units}, ${m.transaction_nav})
     returning id`;
-  const res = await resolveMatch(tx, actor, ins[0].id, "CONFIRM", { note: opts.note ?? "Advised outside the dashboard" });
+  // Close the original row first, so confirming the new one can close the run.
   await tx`
     update public.reconciliation_matches set
       status = 'REJECTED', resolved_at = now(), resolved_by = ${actor.id},
       reviewed_at = coalesce(reviewed_at, now()), reviewed_by = coalesce(reviewed_by, ${actor.id}),
-      resolution_note = ${`Recorded as advised (call ${b.batchCode})${opts.note ? `: ${opts.note}` : ""}`}
+      resolution_note = ${`${RECORDED_AS_ADVISED} (call ${b.batchCode})${opts.note ? `: ${opts.note}` : ""}`}
     where id = ${m.id}`;
+  const res = await resolveMatch(tx, actor, ins[0].id, "CONFIRM", { note: opts.note ?? "Advised outside the dashboard" });
   return { adviceItemId, executionId: res.executionId, planItemId: plan?.plan_item_id ?? null };
 }

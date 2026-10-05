@@ -10,7 +10,7 @@ import { StatCard } from "@/components/app/stat-card";
 import { EmptyState } from "@/components/app/page-header";
 import { pageData } from "@/lib/server";
 import { formatDate, formatDateTime, formatINRCompact, formatUnits, humanize } from "@/lib/format";
-import { getMatches, getRun } from "@/services/reconciliation";
+import { getMatches, getRun, RECORDED_AS_ADVISED } from "@/services/reconciliation";
 import type { ReconciliationMatchRow } from "@/types/domain";
 import { cancelRunAction, recordAdvisedAction, resolveMatchAction } from "../actions";
 
@@ -155,7 +155,7 @@ export default async function RunPage(props: PageProps<"/reconciliation/[runId]"
                   <TD className="text-right font-medium text-red-700"><Money value={m.approx_amount} /></TD>
                   <TD className="max-w-56 text-xs text-muted">{m.system_note}{m.resolution_note ? <div className="text-ink">{m.resolution_note}</div> : null}</TD>
                   <TD>
-                    {m.status === "REJECTED" ? <Badge tone="success">Recorded as advised</Badge> : m.reviewed_at ? <span className="text-xs text-muted">Acknowledged {formatDate(m.reviewed_at)}</span> : (
+                    {m.status === "REJECTED" && m.resolution_note?.startsWith(RECORDED_AS_ADVISED) ? <Badge tone="success">Recorded as advised</Badge> : m.status === "REJECTED" ? <span className="text-xs text-muted">Rejected</span> : m.reviewed_at ? <span className="text-xs text-muted">Acknowledged {formatDate(m.reviewed_at)}</span> : (
                       <ActionForm action={act(m)} className="flex gap-1">
                         <input type="hidden" name="decision" value="ACKNOWLEDGE" />
                         <Input name="note" placeholder="What did the client say? (required)" className="h-8 w-56 text-xs" required />

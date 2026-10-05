@@ -108,10 +108,12 @@ export function parseAmfiNav(text: string): AmfiParse {
     const code = cells[cols.code];
     const isin1 = cells[cols.isin1] ?? "";
     const isin2 = cols.isin2 >= 0 ? cells[cols.isin2] ?? "" : "";
-    const plan = cols.plan !== null ? cells[cols.plan] ?? "" : "";
-    const option = cols.option !== null ? cells[cols.option] ?? "" : "";
+    // "-" in the Plan / Option cells means not given: fall back to the name.
+    const cell = (i: number | null) => (i !== null && cells[i] && cells[i] !== "-" ? cells[i] : "");
+    const plan = cell(cols.plan);
+    const option = cell(cols.option);
     // Full name as before: "X Fund - Direct Plan - Growth Option" (names, plan and option all read from it).
-    const name = [cells[cols.name], plan, option].filter((x) => x && x !== "-").join(" - ").replace(/\s+/g, " ");
+    const name = [cells[cols.name], plan, option].filter(Boolean).join(" - ").replace(/\s+/g, " ");
     const navNum = Number((cells[cols.nav] ?? "").replace(/,/g, ""));
     const nav = Number.isFinite(navNum) && navNum > 0 ? navNum : null;
     const date = amfiDate(cells[cols.date] ?? "");

@@ -105,14 +105,19 @@ export async function findDirectVariant(tx: Tx, regularIsin: string | null, crea
  * Plans approved before the checklist existed keep "Migrate to Direct" as a note
  * on a Keep line. Turn those Regular holdings into MIGRATE lines (audited).
  */
-export async function convertMigrateNotes(tx: Tx, actor: Actor, planId: string): Promise<number> {
+/** Keep lines of a Regular fund with a value whose note says Migrate to Direct. */
+async function migrateNoteLines(tx: Tx, planId: string) {
   const rows = await tx<{ id: string; scheme_name: string; reason: string | null; current_amount: number | null; isin: string | null; plan_type: string | null; sec_name: string | null }[]>`
     select i.id, i.scheme_name, i.reason, i.current_amount::float8 as current_amount, sm.isin, sm.plan_type, sm.scheme_name as sec_name
     from public.advisory_plan_items i
     join public.advisory_plans p on p.id = i.plan_id and p.status in ('DRAFT', 'ACTIVE')
     left join public.security_master sm on sm.id = i.security_id
     where i.plan_id = ${planId} and i.action = 'RETAIN' and i.status = 'OPEN' and i.reason ~* 'migrate to direct'`;
-  const regular = rows.filter((r) => (r.plan_type ?? detectPlanType(r.sec_name ?? r.scheme_name)) !== "DIRECT" && (r.current_amount ?? 0) > 0);
+  return rows.filter((r) => (r.plan_type ?? detectPlanType(r.sec_name ?? r.scheme_name)) !== "DIRECT" && (r.current_amount ?? 0) > 0);
+}
+
+export async function convertMigrateNotes(tx: Tx, actor: Actor, planId: string): Promise<number> {
+  const regular = await migrateNoteLines(tx, planId);
   if (!regular.length) return 0;
   await setAuditReason(tx, "Migrate to Direct notes turned into the migration checklist");
   for (const r of regular) {
@@ -126,10 +131,7 @@ export async function convertMigrateNotes(tx: Tx, actor: Actor, planId: string):
   return regular.length;
 }
 
-/** Keep lines whose note says Migrate to Direct (shown as a prompt to convert them). */
+/** Lines the convert button would turn into checklist lines (shown as a prompt). */
 export async function countMigrateNotes(tx: Tx, planId: string): Promise<number> {
-  const r = await tx<{ n: number }[]>`
-    select count(*)::int as n from public.advisory_plan_items
-    where plan_id = ${planId} and action = 'RETAIN' and status = 'OPEN' and reason ~* 'migrate to direct'`;
-  return r[0].n;
+  return (await migrateNoteLines(tx, planId)).length;
 }
