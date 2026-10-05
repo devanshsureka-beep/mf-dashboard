@@ -90,8 +90,10 @@ describeDb("CAS reconciliation against the database", () => {
       const p = await clientWithActivePlan(ctx);
       expect(await ctx.expectError("advisor", (t) => t`update public.portfolio_holdings set units = 1 where snapshot_id = ${p.snapshotId}`)).toMatch(/immutable/);
       expect(await ctx.expectError("advisor", (t) => t`update public.portfolio_snapshots set total_current_value = 1 where id = ${p.snapshotId}`)).toMatch(/immutable/);
-      const doc = { clientId: p.clientId, fileName: "cas.pdf", mimeType: "application/pdf", sizeBytes: 10, sha256: "c".repeat(64), filePath: `${p.clientId}/CAS/x.pdf`, source: "CAMS", passwordProtected: true };
-      await ctx.as("ops", (t) => registerCasDocument(t, ctx.users.ops.id, doc));
+      const doc = { clientId: p.clientId, fileName: "Client cas Pass1234$.pdf", mimeType: "application/pdf", sizeBytes: 10, sha256: "c".repeat(64), filePath: `${p.clientId}/CAS/x.pdf`, source: "CAMS", passwordProtected: true };
+      const reg = await ctx.as("ops", (t) => registerCasDocument(t, ctx.users.ops.id, doc));
+      // The uploaded name (which may hold the CAS password) is not stored.
+      expect((await ctx.tx<{ file_name: string }[]>`select file_name from public.documents where id = ${reg.documentId}`)[0].file_name).toBe("CAS statement.pdf");
       expect(await ctx.expectError("ops", (t) => registerCasDocument(t, ctx.users.ops.id, doc))).toMatch(/already been uploaded/);
     });
   });

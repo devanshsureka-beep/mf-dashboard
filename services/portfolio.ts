@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Tx } from "@/lib/db/tx";
+import { CAS_STORED_NAME } from "@/lib/cas/password";
 import { AppError } from "@/lib/errors";
 import type { CasParsed, CasParseResult, CasTransactionInput } from "@/lib/integrations/contracts";
 import type { CasDocumentRow, HoldingRow, SnapshotRow } from "@/types/domain";
@@ -83,7 +84,7 @@ export async function registerCasDocument(
 
   const doc = await tx<{ id: string }[]>`
     insert into public.documents (client_id, document_type, file_path, file_name, mime_type, size_bytes, sha256, parse_status, created_by)
-    values (${input.clientId}, 'CAS', ${input.filePath}, ${input.fileName}, ${input.mimeType}, ${input.sizeBytes},
+    values (${input.clientId}, 'CAS', ${input.filePath}, ${CAS_STORED_NAME}, ${input.mimeType}, ${input.sizeBytes},
             ${input.sha256}, 'UPLOADED', ${actorId})
     returning id`;
   const cas = await tx<{ id: string }[]>`

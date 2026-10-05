@@ -29,6 +29,8 @@ export async function prepareUpload(file: File | null): Promise<PreparedFile> {
 }
 
 export function objectPath(clientId: string, type: string, f: Pick<PreparedFile, "sha256" | "fileName">): string {
+  // CAS file names often hold the CAS password: never put them in the path.
+  if (type === "CAS") return `${clientId}/CAS/${f.sha256.slice(0, 16)}.pdf`;
   const safe = f.fileName.replace(/[^A-Za-z0-9._-]+/g, "_").slice(-120);
   return `${clientId}/${type}/${f.sha256.slice(0, 16)}-${safe}`;
 }

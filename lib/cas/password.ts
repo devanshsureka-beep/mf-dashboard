@@ -89,3 +89,6 @@ export function fileNamePasswords(fileName: string): string[] {
   if (useful.length) add(base);
   return out.slice(0, 60);
 }
+
+/** CAS file names often hold the CAS password, so a CAS document is stored under this neutral name. */
+export const CAS_STORED_NAME = "CAS statement.pdf";
