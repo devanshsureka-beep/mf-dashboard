@@ -20,6 +20,8 @@ export interface AdvisablePlanItem {
   advised_amount: number;
   pending_amount: number;
   yet_to_advise_amount: number;
+  /** Full exit (sell the whole holding, nothing advised yet): all units of that holding. */
+  full_exit_units?: number | null;
 }
 export interface HoldingLite { security_id: string; scheme_name: string; units: number; nav: number | null; folio: string | null }
 
@@ -50,9 +52,10 @@ export function IssueAdviceForm({
         p.id,
         {
           include: p.id === preselect,
-          basis: "AMOUNT",
+          // A full exit is advised as "all units": the CAS redemption then matches exactly, whatever the NAV did.
+          basis: p.full_exit_units ? "UNITS" : "AMOUNT",
           amount: p.id === preselect && p.yet_to_advise_amount > 0 ? String(Math.round(p.yet_to_advise_amount)) : "",
-          units: "",
+          units: p.full_exit_units ? String(p.full_exit_units) : "",
           price: p.security_id && navOf.get(p.security_id) ? String(navOf.get(p.security_id)) : "",
         },
       ]),

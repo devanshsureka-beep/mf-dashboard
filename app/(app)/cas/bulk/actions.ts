@@ -56,17 +56,27 @@ export async function processCasFileAction(fd: FormData): Promise<BulkCasRow> {
     }
     const clientInfo = { clientId: client.id, clientName: client.full_name, clientCode: client.client_code };
 
+    // Same file uploaded before: read it into that record if it never was, else nothing to do.
+    let unread: { casId: string; path: string } | null = null;
     if (await actionTx((tx) => isDuplicateCas(tx, client.id, file.sha256))) {
-      return { ok: true, fileName, outcome: "DUPLICATE", message: "Already uploaded earlier (same file). Nothing changed.", ...clientInfo };
+      const prior = await actionTx((tx) => tx<{ id: string; file_path: string }[]>`
+        select cd.id, d.file_path from public.cas_documents cd join public.documents d on d.id = cd.document_id
+        where cd.client_id = ${client.id} and d.sha256 = ${file.sha256} and d.deleted_at is null
+          and cd.parse_status in ('UPLOADED', 'FAILED')
+          and not exists (select 1 from public.portfolio_snapshots s where s.cas_document_id = cd.id)
+        limit 1`);
+      if (!prior[0]) return { ok: true, fileName, outcome: "DUPLICATE", message: "Already uploaded and read earlier (same file). Nothing changed.", ...clientInfo };
+      unread = { casId: prior[0].id, path: prior[0].file_path };
     }
 
-    const path = objectPath(client.id, "CAS", file);
-    await uploadAsUser(path, file);
+    const path = unread?.path ?? objectPath(client.id, "CAS", file);
+    if (!unread) await uploadAsUser(path, file);
     const out = await actionTx((tx, actor) => ingestParsedCas(tx, actor, {
       clientId: client.id,
       file: { fileName: file.fileName, mimeType: file.mimeType, size: file.size, sha256: file.sha256, path },
       parsed,
       passwordProtected,
+      existingCasDocumentId: unread?.casId,
     }));
 
     const common = { ...clientInfo, valuationDate: out.valuationDate, snapshotId: out.snapshotId, runId: out.runId, summary: out.summary };

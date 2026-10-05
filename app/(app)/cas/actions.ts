@@ -26,11 +26,32 @@ export async function uploadCasAction(clientId: string, _p: ActionResult | null,
     const password = str(fd, "password") || null;
     const passwordProtected = str(fd, "password_protected") === "yes" || Boolean(password);
 
-    const client = await actionTx(async (tx) => {
+    const { client, unread } = await actionTx(async (tx) => {
       const dup = await findDuplicateDocument(tx, clientId, "CAS", file.sha256);
-      if (dup) throw new AppError("This exact CAS file was already uploaded for this client (matched by SHA-256). No new snapshot was created.", "CONFLICT");
-      return getClientSummary(tx, clientId);
+      let unread: { casId: string; path: string } | null = null;
+      if (dup) {
+        // Same file uploaded before: read it now if it never was, else nothing to do.
+        const prior = (await tx<{ id: string; parse_status: string; file_path: string; has_snapshot: boolean }[]>`
+          select cd.id, cd.parse_status, d.file_path,
+                 exists (select 1 from public.portfolio_snapshots s where s.cas_document_id = cd.id) as has_snapshot
+          from public.cas_documents cd join public.documents d on d.id = cd.document_id
+          where cd.document_id = ${dup.id}`)[0];
+        if (!prior || prior.has_snapshot || ["PARSED", "NEEDS_REVIEW", "PROCESSING"].includes(prior.parse_status)) {
+          throw new AppError("This exact CAS file was already uploaded and read for this client. Open it from the client's CAS tab.", "CONFLICT");
+        }
+        unread = { casId: prior.id, path: prior.file_path };
+      }
+      return { client: await getClientSummary(tx, clientId), unread };
     });
+
+    if (unread) {
+      const out = await readClientCas({
+        clientId, clientPan: client.pan, bytes: file.bytes, typedPassword: password, existingCasDocumentId: unread.casId,
+        file: { fileName: file.fileName, mimeType: file.mimeType, size: file.size, sha256: file.sha256, path: unread.path },
+      });
+      casId = out.casDocumentId;
+      return;
+    }
 
     const path = objectPath(clientId, "CAS", file);
     await uploadAsUser(path, file);

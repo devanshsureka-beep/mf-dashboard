@@ -73,6 +73,7 @@ export default async function NewAdvicePage(props: PageProps<"/advice/new">) {
         planItems={items.filter((i) => i.side !== "NONE").map((i) => ({
           id: i.plan_item_id, security_id: i.security_id, scheme_name: i.scheme_name, action: i.action, side: i.side as "SELL" | "BUY",
           target_amount: i.target_amount, advised_amount: i.advised_amount, pending_amount: i.pending_amount, yet_to_advise_amount: i.yet_to_advise_amount,
+          full_exit_units: fullExitUnits(i, holdings),
         }))}
         holdings={holdings.filter((h) => h.security_id).map((h) => ({ security_id: h.security_id!, scheme_name: h.scheme_name, units: h.units, nav: h.latest_nav, folio: h.folio_number }))}
         searchFunds={searchFundsAction}
@@ -80,4 +81,18 @@ export default async function NewAdvicePage(props: PageProps<"/advice/new">) {
       />
     </>
   );
+}
+
+/** All units of the holding a not-yet-advised full-exit SELL line covers (its folio when named), else null. */
+function fullExitUnits(
+  i: { side: string; action: string; security_id: string | null; folio_number: string | null; target_amount: number; current_amount: number | null; advised_amount: number },
+  holdings: { security_id: string | null; folio_number: string | null; units: number }[],
+): number | null {
+  if (i.side !== "SELL" || i.action !== "SELL" || !i.security_id || !i.current_amount || i.advised_amount > 0) return null;
+  if (i.target_amount < i.current_amount * 0.999) return null;
+  const norm = (f: string | null) => (f ?? "").replace(/[^0-9a-z]/gi, "").toLowerCase();
+  const same = holdings.filter((h) => h.security_id === i.security_id);
+  const inFolio = i.folio_number ? same.filter((h) => norm(h.folio_number) === norm(i.folio_number)) : same;
+  const units = (inFolio.length ? inFolio : same).reduce((t, h) => t + Number(h.units), 0);
+  return units > 0 ? Math.round(units * 10000) / 10000 : null;
 }
