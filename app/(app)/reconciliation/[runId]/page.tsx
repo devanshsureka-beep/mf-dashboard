@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
-import { Input } from "@/components/ui/form";
+import { Input, Select } from "@/components/ui/form";
 import { Badge } from "@/components/ui/badge";
 import { ActionForm, SubmitButton } from "@/components/app/action-form";
 import { Money } from "@/components/app/money";
@@ -12,13 +12,14 @@ import { pageData } from "@/lib/server";
 import { formatDate, formatDateTime, formatINRCompact, formatUnits, humanize } from "@/lib/format";
 import { getMatches, getRun } from "@/services/reconciliation";
 import type { ReconciliationMatchRow } from "@/types/domain";
-import { cancelRunAction, resolveMatchAction } from "../actions";
+import { cancelRunAction, recordAdvisedAction, resolveMatchAction } from "../actions";
 
 export const metadata = { title: "CAS matching run" };
 
 export default async function RunPage(props: PageProps<"/reconciliation/[runId]">) {
   const { runId } = await props.params;
-  const { run, matches } = await pageData(async (tx) => ({ run: await getRun(tx, runId), matches: await getMatches(tx, runId) }));
+  const { run, matches, actor } = await pageData(async (tx) => ({ run: await getRun(tx, runId), matches: await getMatches(tx, runId) }));
+  const canAdvise = actor.role !== "OPERATIONS";
   const advice = matches.filter((m) => m.classification === "ADVICE_MATCH");
   const unadvised = matches.filter((m) => m.classification === "UNADVISED");
   const sip = matches.filter((m) => m.classification === "SIP_INSTALMENT");
@@ -154,13 +155,29 @@ export default async function RunPage(props: PageProps<"/reconciliation/[runId]"
                   <TD className="text-right font-medium text-red-700"><Money value={m.approx_amount} /></TD>
                   <TD className="max-w-56 text-xs text-muted">{m.system_note}{m.resolution_note ? <div className="text-ink">{m.resolution_note}</div> : null}</TD>
                   <TD>
-                    {m.reviewed_at ? <span className="text-xs text-muted">Acknowledged {formatDate(m.reviewed_at)}</span> : (
+                    {m.status === "REJECTED" ? <Badge tone="success">Recorded as advised</Badge> : m.reviewed_at ? <span className="text-xs text-muted">Acknowledged {formatDate(m.reviewed_at)}</span> : (
                       <ActionForm action={act(m)} className="flex gap-1">
                         <input type="hidden" name="decision" value="ACKNOWLEDGE" />
                         <Input name="note" placeholder="What did the client say? (required)" className="h-8 w-56 text-xs" required />
                         <SubmitButton size="sm" variant="outline">Acknowledge</SubmitButton>
                       </ActionForm>
                     )}
+                    {m.status !== "REJECTED" && m.cas_transaction_id && canAdvise ? (
+                      <details className="mt-1">
+                        <summary className="cursor-pointer text-xs text-brand">It was advised (call given outside the dashboard)</summary>
+                        <ActionForm action={recordAdvisedAction.bind(null, runId, m.id)} className="mt-1 space-y-1">
+                          <div className="flex gap-1">
+                            <Select name="channel" defaultValue="PHONE" className="h-8 w-28 text-xs">
+                              <option value="PHONE">Phone</option><option value="WHATSAPP">WhatsApp</option><option value="EMAIL">Email</option>
+                              <option value="IN_PERSON">In person</option><option value="OTHER">Other</option>
+                            </Select>
+                            <Input type="datetime-local" name="communicated_at" defaultValue={m.transaction_date ? `${m.transaction_date}T09:00` : undefined} className="h-8 w-44 text-xs" />
+                          </div>
+                          <Input name="note" placeholder="Note (optional)" className="h-8 w-72 text-xs" />
+                          <SubmitButton size="sm">Record call &amp; confirm execution</SubmitButton>
+                        </ActionForm>
+                      </details>
+                    ) : null}
                   </TD>
                 </TR>
               ))}

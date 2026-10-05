@@ -9,7 +9,8 @@ import {
   type HoldingLine,
 } from "@/lib/domain/reconciliation";
 import { matchTransactions, istDate, type MatchCall, type MatchTxn, type TxnProposal } from "@/lib/domain/txn-matching";
-import type { ReconciliationMatchRow, ReconciliationRunRow } from "@/types/domain";
+import type { Channel, ReconciliationMatchRow, ReconciliationRunRow } from "@/types/domain";
+import { issueAdvice } from "./advice";
 
 export const TXN_ENGINE_VERSION = "v2-transactions";
 
@@ -341,7 +342,7 @@ export async function getRun(tx: Tx, runId: string): Promise<ReconciliationRunRo
 
 export async function getMatches(tx: Tx, runId: string): Promise<ReconciliationMatchRow[]> {
   return tx<ReconciliationMatchRow[]>`
-    select m.*, a.action as advice_action, a.status as advice_status, b.batch_code as advice_batch_code,
+    select m.*, m.transaction_date::text as transaction_date, a.action as advice_action, a.status as advice_status, b.batch_code as advice_batch_code,
            b.communicated_at as advice_communicated_at, a.advised_amount as advice_advised_amount,
            a.advised_units as advice_advised_units
     from public.reconciliation_matches m
@@ -488,3 +489,86 @@ export async function resolveMatch(
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const round4 = (n: number) => Math.round(n * 10_000) / 10_000;
+
+// -----------------------------------------------------------------------------
+// "This was advised": a CAS trade flagged unadvised because the call was given
+// outside the dashboard (phone / WhatsApp before it was logged).
+// -----------------------------------------------------------------------------
+/**
+ * Records the call (linked to the matching ACTIVE plan line when there is one,
+ * communicated on or before the trade) and confirms the CAS trade as its
+ * execution. The original unadvised row is closed with a note; a new matched
+ * row carries the link, so resolved history is never rewritten.
+ */
+export async function recordAdvisedOffline(
+  tx: Tx,
+  actor: Actor,
+  matchId: string,
+  opts: { communicatedAt?: Date | null; channel: Channel; note?: string | null },
+): Promise<{ adviceItemId: string; executionId: string | null; planItemId: string | null }> {
+  const m = (await tx<(ReconciliationMatchRow & { run_status: string })[]>`
+    select m.*, m.transaction_date::text as transaction_date, r.status as run_status
+    from public.reconciliation_matches m join public.reconciliation_runs r on r.id = m.run_id
+    where m.id = ${matchId} for update of m`)[0];
+  if (!m) throw new AppError("Match not found.", "NOT_FOUND");
+  if (m.run_status === "CANCELLED") throw new AppError("This reconciliation run was cancelled.");
+  if (m.classification !== "UNADVISED" || !["UNEXPLAINED", "SUGGESTED"].includes(m.status)) {
+    throw new AppError("Only an unadvised CAS trade can be recorded as advised.");
+  }
+  if (!m.cas_transaction_id || !m.security_id || !m.transaction_date || !(Number(m.transaction_amount) > 0)) {
+    throw new AppError("This change has no single CAS transaction to record.");
+  }
+  const action: "BUY" | "SELL" = m.change_type === "DECREASE" ? "SELL" : "BUY";
+
+  // The call cannot be later than the trade it explains.
+  const tradeDay = new Date(`${m.transaction_date}T09:00:00+05:30`);
+  const at = opts.communicatedAt ?? tradeDay;
+  if (at.getTime() > new Date(`${m.transaction_date}T23:59:59+05:30`).getTime()) {
+    throw new AppError(`The call must have been given on or before the trade (${m.transaction_date}).`);
+  }
+
+  const plan = (await tx<{ plan_item_id: string }[]>`
+    select v.plan_item_id from public.v_plan_item_progress v
+    where v.client_id = ${m.client_id} and v.plan_status = 'ACTIVE' and v.security_id = ${m.security_id}
+      and v.side = ${action} and v.item_status = 'OPEN'
+    order by v.yet_to_advise_amount desc limit 1`)[0];
+
+  await setAuditReason(tx, opts.note?.trim() || "Call given outside the dashboard; recorded from the CAS trade");
+  const b = await issueAdvice(tx, actor, {
+    clientId: m.client_id,
+    communicatedAt: at,
+    channel: opts.channel,
+    notes: `Recorded after the trade: advised outside the dashboard${opts.note ? ` (${opts.note})` : ""}`,
+    items: [{
+      plan_item_id: plan?.plan_item_id ?? null,
+      security_id: m.security_id,
+      scheme_name: m.scheme_name,
+      folio_number: m.folio_numbers?.[0] ?? null,
+      action,
+      quantity_basis: "AMOUNT",
+      advised_amount: Number(m.transaction_amount),
+    }],
+  });
+  const adviceItemId = b.itemIds[0];
+
+  const ins = await tx<{ id: string }[]>`
+    insert into public.reconciliation_matches
+      (run_id, client_id, security_id, scheme_name, folio_numbers, change_type, previous_units, current_units, detected_change,
+       previous_value, current_value, reference_nav, approx_amount, advice_item_id, classification, expected_amount,
+       allocated_units, confidence, status, system_note, cas_transaction_id, transaction_date, transaction_amount,
+       transaction_units, transaction_nav)
+    values (${m.run_id}, ${m.client_id}, ${m.security_id}, ${m.scheme_name}, ${m.folio_numbers ?? []}, ${m.change_type},
+            ${m.previous_units}, ${m.current_units}, ${m.detected_change}, ${m.previous_value}, ${m.current_value},
+            ${m.reference_nav}, ${m.approx_amount}, ${adviceItemId}, 'ADVICE_MATCH', ${m.transaction_amount},
+            ${m.transaction_units}, 'HIGH', 'SUGGESTED', 'Call recorded after the trade (advised outside the dashboard).',
+            ${m.cas_transaction_id}, ${m.transaction_date}::date, ${m.transaction_amount}, ${m.transaction_units}, ${m.transaction_nav})
+    returning id`;
+  const res = await resolveMatch(tx, actor, ins[0].id, "CONFIRM", { note: opts.note ?? "Advised outside the dashboard" });
+  await tx`
+    update public.reconciliation_matches set
+      status = 'REJECTED', resolved_at = now(), resolved_by = ${actor.id},
+      reviewed_at = coalesce(reviewed_at, now()), reviewed_by = coalesce(reviewed_by, ${actor.id}),
+      resolution_note = ${`Recorded as advised (call ${b.batchCode})${opts.note ? `: ${opts.note}` : ""}`}
+    where id = ${m.id}`;
+  return { adviceItemId, executionId: res.executionId, planItemId: plan?.plan_item_id ?? null };
+}

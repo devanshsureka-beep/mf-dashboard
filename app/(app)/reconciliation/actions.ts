@@ -4,7 +4,9 @@ import { revalidatePath } from "next/cache";
 import { num, optStr, reqStr, runAction, type ActionResult } from "@/lib/actions";
 import { AppError } from "@/lib/errors";
 import { actionTx } from "@/lib/server";
-import { cancelRun, resolveMatch, type MatchDecision } from "@/services/reconciliation";
+import { cancelRun, recordAdvisedOffline, resolveMatch, type MatchDecision } from "@/services/reconciliation";
+import { fromISTDateTimeLocal } from "@/lib/format";
+import { CHANNELS, type Channel } from "@/types/domain";
 
 const DECISIONS: MatchDecision[] = ["CONFIRM", "PARTIAL", "REJECT", "UNADVISED", "ACKNOWLEDGE"];
 
@@ -32,5 +34,20 @@ export async function cancelRunAction(runId: string, _p: ActionResult | null, fd
     await actionTx((tx) => cancelRun(tx, runId, reqStr(fd, "reason", "Reason")));
     revalidatePath(`/reconciliation/${runId}`);
     return "Run cancelled.";
+  });
+}
+
+/** "This was advised": the call was given outside the dashboard; record it and confirm the CAS trade as its execution. */
+export async function recordAdvisedAction(runId: string, matchId: string, _p: ActionResult | null, fd: FormData): Promise<ActionResult> {
+  return runAction("recordAdvised", async () => {
+    const channel = reqStr(fd, "channel", "Channel") as Channel;
+    if (!(CHANNELS as readonly string[]).includes(channel)) throw new AppError("Choose how the client was told.");
+    const at = optStr(fd, "communicated_at");
+    const out = await actionTx((tx, actor) => recordAdvisedOffline(tx, actor, matchId, {
+      channel, communicatedAt: at ? fromISTDateTimeLocal(at) : null, note: optStr(fd, "note"),
+    }), { roles: ["ADMIN", "ADVISOR"] });
+    revalidatePath(`/reconciliation/${runId}`);
+    revalidatePath("/");
+    return `Call recorded and the CAS trade confirmed as its execution${out.planItemId ? " (linked to the plan line)" : " (off-plan: no matching plan line)"}.`;
   });
 }

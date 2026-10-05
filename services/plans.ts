@@ -191,6 +191,10 @@ export async function approvePlan(
   const sips = await tx<{ n: number }[]>`select count(*)::int as n from public.sip_plan_items where plan_id = ${planId}`;
   if (items[0].n + sips[0].n === 0) throw new AppError("A plan needs at least one item before approval.");
 
+  // The report this plan came from has been reviewed: it no longer needs review.
+  await tx`
+    update public.documents set parse_status = 'PARSED'
+    where id = (select source_document_id from public.advisory_plans where id = ${planId}) and parse_status = 'NEEDS_REVIEW'`;
   const current = await getActivePlanId(tx, plan.client_id);
   const meta = await tx<{ plan_kind: string; fresh_money: number | null; plan_name: string; plan_date: string }[]>`
     select plan_kind, fresh_money, plan_name, plan_date::text from public.advisory_plans where id = ${planId}`;

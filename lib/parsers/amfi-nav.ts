@@ -58,16 +58,45 @@ export function optionTypeFromName(name: string): "GROWTH" | "IDCW" | "OTHER" {
   return "OTHER";
 }
 
+/**
+ * Column positions from the header line. AMFI added "Plan" and "Option" columns
+ * (Oct 2026): "Scheme Code;ISIN Div Payout/ ISIN Growth;ISIN Div Reinvestment;
+ * Scheme Name;Plan;Option;Net Asset Value;Date". The older file had no Plan /
+ * Option. Columns are found by name so either layout (and a reordering) works.
+ */
+interface Cols { code: number; isin1: number; isin2: number; name: number; plan: number | null; option: number | null; nav: number; date: number }
+const LEGACY: Cols = { code: 0, isin1: 1, isin2: 2, name: 3, plan: null, option: null, nav: 4, date: 5 };
+
+export function amfiColumns(header: string): Cols {
+  const h = header.split(";").map((c) => c.trim().toLowerCase());
+  const at = (re: RegExp) => h.findIndex((c) => re.test(c));
+  const code = at(/^scheme code/);
+  const isin1 = at(/payout|isin growth/);
+  const isin2 = at(/reinvest/);
+  const name = at(/^scheme name/);
+  const nav = at(/net asset value|^nav$/);
+  const date = at(/^date/);
+  if ([code, isin1, name, nav, date].some((i) => i < 0)) return LEGACY;
+  const plan = at(/^plan$/);
+  const option = at(/^option$/);
+  return { code, isin1, isin2: isin2 < 0 ? -1 : isin2, name, plan: plan < 0 ? null : plan, option: option < 0 ? null : option, nav, date };
+}
+
 export function parseAmfiNav(text: string): AmfiParse {
   const out = new Map<string, AmfiScheme>();
   let category: string | null = null;
   let amc: string | null = null;
   let navDate: string | null = null;
   let skipped = 0;
+  let cols: Cols = LEGACY;
 
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
-    if (!line || /^scheme code;/i.test(line)) continue;
+    if (!line) continue;
+    if (/^scheme code;/i.test(line)) {
+      cols = amfiColumns(line);
+      continue;
+    }
     if (!line.includes(";")) {
       const cat = line.match(/^(?:open|close|interval)[^(]*\((.+)\)\s*$/i);
       if (cat) category = cat[1].trim();
@@ -75,25 +104,31 @@ export function parseAmfiNav(text: string): AmfiParse {
       continue;
     }
     const cells = line.split(";").map((c) => c.trim());
-    if (cells.length < 6) { skipped++; continue; }
-    const [code, isin1, isin2, name, navText, dateText] = cells;
-    const navNum = Number(navText.replace(/,/g, ""));
+    if (cells.length <= Math.max(cols.nav, cols.date, cols.name)) { skipped++; continue; }
+    const code = cells[cols.code];
+    const isin1 = cells[cols.isin1] ?? "";
+    const isin2 = cols.isin2 >= 0 ? cells[cols.isin2] ?? "" : "";
+    const plan = cols.plan !== null ? cells[cols.plan] ?? "" : "";
+    const option = cols.option !== null ? cells[cols.option] ?? "" : "";
+    // Full name as before: "X Fund - Direct Plan - Growth Option" (names, plan and option all read from it).
+    const name = [cells[cols.name], plan, option].filter((x) => x && x !== "-").join(" - ").replace(/\s+/g, " ");
+    const navNum = Number((cells[cols.nav] ?? "").replace(/,/g, ""));
     const nav = Number.isFinite(navNum) && navNum > 0 ? navNum : null;
-    const date = amfiDate(dateText);
+    const date = amfiDate(cells[cols.date] ?? "");
     if (date && (!navDate || date > navDate)) navDate = date;
     const base = {
-      amfi_code: code, scheme_name: name.replace(/\s+/g, " "), amc, category,
-      plan_type: planTypeFromName(name), nav, nav_date: nav ? date : null,
+      amfi_code: code, scheme_name: name, amc, category,
+      plan_type: planTypeFromName(plan || name), nav, nav_date: nav ? date : null,
     };
     let any = false;
-    for (const [isin, option] of [
-      [isin1, optionTypeFromName(name)],
+    for (const [isin, opt] of [
+      [isin1, optionTypeFromName(option || name)],
       [isin2, "IDCW" as const],
     ] as const) {
       const v = isin.toUpperCase();
       if (!/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(v) || !isValidIsin(v)) continue;
       any = true;
-      out.set(v, { ...base, isin: v, option_type: option });
+      out.set(v, { ...base, isin: v, option_type: opt });
     }
     if (!any) skipped++;
   }

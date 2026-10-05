@@ -54,4 +54,25 @@ describe("AMFI NAV file", () => {
     expect(optionTypeFromName("X Fund - Direct Plan - IDCW")).toBe("IDCW");
     expect(optionTypeFromName("X Fund - Growth")).toBe("GROWTH");
   });
+
+  it("reads the file with Plan and Option columns (AMFI layout from Oct 2026)", async () => {
+    const { parseAmfiNav } = await import("@/lib/parsers/amfi-nav");
+    const text = [
+      "Scheme Code;ISIN Div Payout/ ISIN Growth;ISIN Div Reinvestment;Scheme Name;Plan;Option;Net Asset Value;Date",
+      " ",
+      "Open Ended Schemes(Equity Scheme - ELSS)",
+      " ",
+      "DSP Mutual Fund",
+      " ",
+      "119242;INF740K01OK1;-;DSP ELSS Tax Saver Fund;Direct Plan;Growth;146.2490;01-Oct-2026",
+      "151750;INF179KC1GI5;-;HDFC Defence Fund;Regular Plan;IDCW Option;30.224;30-Sep-2026",
+    ].join("\n");
+    const r = parseAmfiNav(text);
+    expect(r.navDate).toBe("2026-10-01");
+    expect(r.schemes.find((x) => x.isin === "INF740K01OK1")).toMatchObject({
+      scheme_name: "DSP ELSS Tax Saver Fund - Direct Plan - Growth", plan_type: "DIRECT", option_type: "GROWTH",
+      nav: 146.249, nav_date: "2026-10-01", amc: "DSP Mutual Fund", category: "Equity Scheme - ELSS",
+    });
+    expect(r.schemes.find((x) => x.isin === "INF179KC1GI5")).toMatchObject({ plan_type: "REGULAR", option_type: "IDCW", nav: 30.224, nav_date: "2026-09-30" });
+  });
 });
