@@ -35,9 +35,16 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
   const { id } = await props.params;
   const sp = await props.searchParams;
   const tab = (TABS as readonly string[]).includes(String(sp.tab)) ? (sp.tab as Tab) : "overview";
-  const { c, fresh, actor } = await pageData(async (tx) => ({
+  const { c, fresh, unchecked, actor } = await pageData(async (tx) => ({
     c: await getClientSummary(tx, id),
     fresh: Number((await tx<{ fresh_money: number }[]>`select fresh_money from public.v_client_cash where client_id = ${id}`)[0]?.fresh_money ?? 0),
+    // A CAS read but not yet checked: its holdings count only once confirmed.
+    unchecked: (await tx<{ cas_document_id: string; snapshot_date: string }[]>`
+      select s.cas_document_id, s.snapshot_date::text as snapshot_date from public.portfolio_snapshots s
+      where s.client_id = ${id} and s.review_status = 'PENDING_REVIEW' and s.cas_document_id is not null
+        and s.snapshot_date >= coalesce((select max(snapshot_date) from public.portfolio_snapshots
+                                         where client_id = ${id} and review_status = 'CONFIRMED'), '-infinity'::date)
+      order by s.snapshot_date desc, s.created_at desc limit 1`)[0] ?? null,
   }));
   const canAdvise = actor.role !== "OPERATIONS";
 
@@ -90,6 +97,13 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
         <TransitionSummary side="SELL" n={{ target: c.target_sell, advised: c.advised_sell, executed: c.executed_sell, pending: c.pending_sell, yetToAdvise: c.yet_to_advise_sell }} />
         <TransitionSummary side="BUY" n={{ target: c.target_buy, advised: c.advised_buy, executed: c.executed_buy, pending: c.pending_buy, yetToAdvise: c.yet_to_advise_buy }} />
       </div>
+      {unchecked ? (
+        <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          The CAS of {formatDate(unchecked.snapshot_date)} is waiting for your check. Until it is confirmed, the portfolio and value
+          {c.latest_cas_date ? " use the previous confirmed CAS" : " stay empty"}.{" "}
+          <Link className="font-medium underline" href={`/cas/${unchecked.cas_document_id}`}>Open it to review and confirm</Link>
+        </p>
+      ) : null}
       {!c.active_plan_id ? (
         <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">No active advisory plan. Targets stay at zero until a plan is approved. {canAdvise ? <Link className="underline" href={`/clients/${id}/plans/new`}>Create a plan</Link> : null}</p>
       ) : null}
