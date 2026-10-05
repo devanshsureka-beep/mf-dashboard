@@ -64,9 +64,15 @@ export interface CasIntakeOutcome {
 export async function ingestParsedCas(
   tx: Tx,
   actor: Actor | null,
-  args: { clientId: string; file: StoredFile; parsed: CasParseOutput; passwordProtected: boolean; autoConfirm?: boolean },
+  args: {
+    clientId: string; file: StoredFile; parsed: CasParseOutput; passwordProtected: boolean; autoConfirm?: boolean;
+    /** A CAS already stored and registered (uploaded earlier, not yet read): read into it instead of registering again. */
+    existingCasDocumentId?: string;
+  },
 ): Promise<CasIntakeOutcome> {
-  const reg = await registerCasDocument(tx, actor?.id ?? null, {
+  const reg = args.existingCasDocumentId
+    ? { casDocumentId: args.existingCasDocumentId }
+    : await registerCasDocument(tx, actor?.id ?? null, {
     clientId: args.clientId,
     fileName: args.file.fileName,
     mimeType: args.file.mimeType,
@@ -77,6 +83,9 @@ export async function ingestParsedCas(
     passwordProtected: args.passwordProtected,
     notes: "Read by the built-in CAS parser",
   });
+  if (args.existingCasDocumentId) {
+    await tx`update public.cas_documents set notes = 'Read by the built-in CAS parser', parse_error = null where id = ${args.existingCasDocumentId}`;
+  }
 
   const contract = casParseResultSchema.safeParse(toCasParseResult(args.parsed, reg.casDocumentId));
   if (!contract.success) {

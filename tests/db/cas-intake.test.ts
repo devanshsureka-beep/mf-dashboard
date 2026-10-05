@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import { issueAdvice } from "@/services/advice";
 import { recordExecution } from "@/services/executions";
-import { confirmSnapshot, createSnapshotFromParsed } from "@/services/portfolio";
+import { confirmSnapshot, createSnapshotFromParsed, registerCasDocument } from "@/services/portfolio";
 import { runReconciliation } from "@/services/reconciliation";
 import { ingestParsedCas } from "@/services/cas-intake";
 import { ensureClientFromDocuments, onboardFromDocuments } from "@/services/onboarding";
@@ -307,6 +307,25 @@ describeDb("onboarding from CAS + advisory report", () => {
         .catch((e) => { throw e; });
       const msg = await ctx.expectError("advisor", (t) => ingestParsedCas(t, ctx.users.advisor, { clientId: client.id, file: f, parsed: cas, passwordProtected: false }));
       expect(msg).toMatch(/already been uploaded/);
+    });
+  });
+
+  it("reads a CAS that was stored earlier but never read, into that same CAS record", async () => {
+    await scenario(async (ctx) => {
+      const client = await ctx.as("advisor", (t) => ensureClientFromDocuments(t, ctx.users.advisor, { cas, report }));
+      const f = file("stored.pdf");
+      const reg = await ctx.as("ops", (t) => registerCasDocument(t, ctx.users.ops.id, {
+        clientId: client.id, fileName: f.fileName, mimeType: f.mimeType, sizeBytes: f.size, sha256: f.sha256, filePath: f.path,
+        source: "CAMS", passwordProtected: true, notes: null,
+      }));
+      const out = await ctx.as("ops", (t) => ingestParsedCas(t, ctx.users.ops, {
+        clientId: client.id, file: f, parsed: cas, passwordProtected: true, existingCasDocumentId: reg.casDocumentId,
+      }));
+      expect(out.casDocumentId).toBe(reg.casDocumentId);
+      expect(out.snapshotId).toBeTruthy();
+      const docs = await ctx.tx<{ n: number; status: string }[]>`
+        select count(*)::int as n, max(parse_status) as status from public.cas_documents where client_id = ${client.id}`;
+      expect(docs[0]).toEqual({ n: 1, status: out.snapshotStatus === "CONFIRMED" ? "PARSED" : "NEEDS_REVIEW" });
     });
   });
 });

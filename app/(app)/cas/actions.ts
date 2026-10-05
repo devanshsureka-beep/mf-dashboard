@@ -7,12 +7,13 @@ import { AppError } from "@/lib/errors";
 import { casParseResultSchema, CAS_SOURCES } from "@/lib/integrations/contracts";
 import { n8nConfigured, notify, triggerCasParse } from "@/lib/integrations/n8n";
 import { actionTx } from "@/lib/server";
-import { objectPath, prepareUpload, signedUrlForService, uploadAsUser } from "@/lib/storage";
+import { downloadAsUser, objectPath, prepareUpload, signedUrlForService, uploadAsUser } from "@/lib/storage";
 import { getClientSummary } from "@/services/clients";
 import {
   confirmSnapshot, findDuplicateDocument, ingestCasParseResult, registerCasDocument, rejectSnapshot, setCasStatus,
 } from "@/services/portfolio";
 import { runReconciliation } from "@/services/reconciliation";
+import { readClientCas } from "./read";
 
 export async function uploadCasAction(clientId: string, _p: ActionResult | null, fd: FormData): Promise<ActionResult> {
   let casId = "";
@@ -33,11 +34,28 @@ export async function uploadCasAction(clientId: string, _p: ActionResult | null,
 
     const path = objectPath(clientId, "CAS", file);
     await uploadAsUser(path, file);
+
+    // Built-in reader first (as Bulk CAS Upload): snapshot + reconciliation right away.
+    let readError: string | null = null;
+    try {
+      const out = await readClientCas({
+        clientId, clientPan: client.pan, bytes: file.bytes, typedPassword: password,
+        file: { fileName: file.fileName, mimeType: file.mimeType, size: file.size, sha256: file.sha256, path },
+      });
+      casId = out.casDocumentId;
+      return;
+    } catch (e) {
+      if (!(e instanceof AppError)) throw e;
+      readError = e.message;
+    }
+
+    // Not readable by the built-in reader: keep the file, extract via n8n or JSON from the CAS page.
     const reg = await actionTx((tx, actor) => registerCasDocument(tx, actor.id, {
       clientId, fileName: file.fileName, mimeType: file.mimeType, sizeBytes: file.size, sha256: file.sha256,
       filePath: path, source, passwordProtected, notes: optStr(fd, "notes"),
     }));
     casId = reg.casDocumentId;
+    await actionTx((tx) => setCasStatus(tx, casId, "UPLOADED", `Built-in reader: ${readError}`));
 
     if (n8nConfigured.casParse()) {
       const url = await signedUrlForService(path, 600);
@@ -136,4 +154,31 @@ export async function rejectSnapshotAction(snapshotId: string, _p: ActionResult 
     revalidatePath(`/snapshots/${snapshotId}`);
     return "Snapshot rejected. It stays in history and never drives metrics. Upload a corrected CAS or re-import.";
   });
+}
+
+/** Read a CAS that was stored earlier but never read (e.g. uploaded before the built-in reader ran here). */
+export async function readStoredCasAction(casId: string, _p: ActionResult | null, fd: FormData): Promise<ActionResult> {
+  let target = "";
+  const res = await runAction("readStoredCas", async () => {
+    const { doc, client } = await actionTx(async (tx) => {
+      const rows = await tx<{ client_id: string; parse_status: string; file_path: string; file_name: string; mime_type: string; size_bytes: number; sha256: string; snapshot_id: string | null }[]>`
+        select cd.client_id, cd.parse_status, d.file_path, d.file_name, d.mime_type, d.size_bytes, d.sha256,
+               (select s.id from public.portfolio_snapshots s where s.cas_document_id = cd.id limit 1) as snapshot_id
+        from public.cas_documents cd join public.documents d on d.id = cd.document_id
+        where cd.id = ${casId}`;
+      if (!rows[0]) throw new AppError("CAS not found.", "NOT_FOUND");
+      return { doc: rows[0], client: await getClientSummary(tx, rows[0].client_id) };
+    });
+    if (doc.snapshot_id || ["PARSED", "NEEDS_REVIEW"].includes(doc.parse_status)) throw new AppError("This CAS already has an extraction.");
+    const bytes = await downloadAsUser(doc.file_path);
+    const out = await readClientCas({
+      clientId: doc.client_id, clientPan: client.pan, bytes, typedPassword: str(fd, "password") || null,
+      file: { fileName: doc.file_name, mimeType: doc.mime_type, size: Number(doc.size_bytes), sha256: doc.sha256, path: doc.file_path },
+      existingCasDocumentId: casId,
+    });
+    target = out.snapshotId ? `/snapshots/${out.snapshotId}` : `/cas/${casId}`;
+    revalidatePath(`/clients/${doc.client_id}`);
+  });
+  if (!res.ok) return res;
+  redirect(target);
 }

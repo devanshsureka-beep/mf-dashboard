@@ -49,6 +49,14 @@ export async function uploadAsService(path: string, f: PreparedFile): Promise<vo
   if (error && !/exists|duplicate/i.test(error.message)) throw new AppError(`Storage upload failed: ${error.message}`);
 }
 
+/** Read a stored file with the USER's session (storage RLS applies). */
+export async function downloadAsUser(path: string): Promise<Uint8Array> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.storage.from(BUCKET).download(path);
+  if (error || !data) throw new AppError("The file is not available in storage.", "NOT_FOUND");
+  return new Uint8Array(await data.arrayBuffer());
+}
+
 /** Short-lived signed URL, generated with the USER's session (storage RLS applies). */
 export async function signedUrlForUser(path: string, seconds = 60, downloadName?: string): Promise<string> {
   const supabase = await createSupabaseServerClient();

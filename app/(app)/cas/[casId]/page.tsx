@@ -8,7 +8,10 @@ import { formatDate, formatDateTime, humanize } from "@/lib/format";
 import { n8nConfigured } from "@/lib/integrations/n8n";
 import { AppError } from "@/lib/errors";
 import type { CasDocumentRow } from "@/types/domain";
-import { importCasJsonAction, markCasFailedAction, triggerExtractionAction } from "../actions";
+import { importCasJsonAction, markCasFailedAction, readStoredCasAction, triggerExtractionAction } from "../actions";
+
+// Reading a CAS PDF and saving the snapshot can take a while on a cold start.
+export const maxDuration = 120;
 
 export const metadata = { title: "CAS document" };
 
@@ -64,6 +67,23 @@ export default async function CasDocumentPage(props: PageProps<"/cas/[casId]">) 
         <p className="mb-4 text-sm">Snapshot created: <Link className="text-brand hover:underline" href={`/snapshots/${d.snapshot_id}`}>review snapshot</Link> <StatusBadge status={d.snapshot_review_status} /></p>
       ) : null}
 
+      {waiting ? (
+        <Card className="mb-4 border-brand/30">
+          <CardHeader><CardTitle>Read this CAS</CardTitle></CardHeader>
+          <CardContent>
+            <ActionForm action={readStoredCasAction.bind(null, casId)} className="flex flex-wrap items-end gap-3">
+              <Field label="PDF password (only if it does not open; not stored)">
+                <Input type="password" name="password" autoComplete="off" className="w-64" />
+              </Field>
+              <SubmitButton>Read with the built-in reader</SubmitButton>
+            </ActionForm>
+            <p className="mt-2 text-xs text-muted">
+              Reads KFintech / CAMS consolidated statements like Bulk CAS Upload: the password is tried from the house template, the file name
+              and the client&apos;s mobile; the CAS must carry this client&apos;s PAN. Creates the snapshot and matches its transactions with the calls.
+            </p>
+          </CardContent>
+        </Card>
+      ) : null}
       {waiting ? (
         <div className="grid gap-4 lg:grid-cols-2">
           <Card>
