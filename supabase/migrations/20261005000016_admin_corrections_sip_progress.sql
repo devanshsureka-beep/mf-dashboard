@@ -125,8 +125,7 @@ begin
 end;
 $$;
 
-drop trigger if exists advice_items_refresh_after_correction on public.advice_items;
-create trigger advice_items_refresh_after_correction
+create or replace trigger advice_items_refresh_after_correction
   after update of advised_amount, advised_units, quantity_basis on public.advice_items
   for each row execute function app.after_advice_correction();
 
@@ -178,8 +177,7 @@ begin
 end;
 $$;
 
-drop trigger if exists executions_refresh_advice_values on public.executions;
-create trigger executions_refresh_advice_values
+create or replace trigger executions_refresh_advice_values
   after update of executed_amount, executed_units on public.executions
   for each row execute function app.after_execution_change();
 
