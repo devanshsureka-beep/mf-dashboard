@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { num, optStr, reqStr, runAction, type ActionResult } from "@/lib/actions";
-import { AppError } from "@/lib/errors";
+import { AppError, logServerError, toUserMessage } from "@/lib/errors";
 import { actionTx } from "@/lib/server";
 import { cancelRun, recheckRun, recordAdvisedOffline, resolveMatch, type MatchDecision } from "@/services/reconciliation";
 import { fromISTDateTimeLocal } from "@/lib/format";
@@ -58,7 +58,50 @@ export async function recheckRunAction(runId: string, _p: ActionResult | null, _
     const out = await actionTx((tx, actor) => recheckRun(tx, actor, runId));
     revalidatePath(`/reconciliation/${runId}`);
     revalidatePath("/");
-    if (!out.added) return "Nothing new: every transaction in this CAS is already matched.";
-    return `${out.added} transaction row(s) added${out.needsReview ? `, ${out.needsReview} need your decision` : ", all matched automatically"}.`;
+    const history = out.closedHistory ? ` ${out.closedHistory} row(s) dated before the previous CAS were closed as history.` : "";
+    if (!out.added) return `Nothing new to match.${history}`;
+    return `${out.added} transaction row(s) added${out.needsReview ? `, ${out.needsReview} need your decision` : ", all matched automatically"}.${history}`;
   });
+}
+
+export interface BulkUnadvisedInput {
+  ids: string[];
+  /** ADVISED: a call was given outside the dashboard; NOT_ADVISED: the client acted on their own. */
+  decision: "ADVISED" | "NOT_ADVISED";
+  note?: string | null;
+  channel?: Channel;
+  /** IST datetime-local for every call; empty = each trade's own day at 09:00. */
+  communicatedAt?: string | null;
+}
+export interface BulkUnadvisedResult { ok: number; failed: { id: string; error: string }[] }
+
+/** Review many unadvised trades at once. Each trade is saved on its own, so one failure does not undo the rest. */
+export async function bulkUnadvisedAction(runId: string, input: BulkUnadvisedInput): Promise<BulkUnadvisedResult> {
+  const ids = [...new Set((input.ids ?? []).filter((x) => typeof x === "string" && /^[0-9a-f-]{36}$/i.test(x)))].slice(0, 500);
+  const out: BulkUnadvisedResult = { ok: 0, failed: [] };
+  if (!ids.length) return { ok: 0, failed: [{ id: "", error: "Select at least one trade." }] };
+  const note = input.note?.trim() || null;
+  if (input.decision === "NOT_ADVISED" && !note) return { ok: 0, failed: [{ id: "", error: "Add a note (e.g. what the client said)." }] };
+  const channel = (CHANNELS as readonly string[]).includes(input.channel ?? "") ? (input.channel as Channel) : "PHONE";
+  let at: Date | null = null;
+  if (input.communicatedAt) {
+    at = fromISTDateTimeLocal(input.communicatedAt);
+    if (Number.isNaN(at.getTime())) return { ok: 0, failed: [{ id: "", error: "Invalid call time." }] };
+  }
+  for (const id of ids) {
+    try {
+      if (input.decision === "ADVISED") {
+        await actionTx((tx, actor) => recordAdvisedOffline(tx, actor, id, { channel, communicatedAt: at, note }), { roles: ["ADMIN", "ADVISOR"] });
+      } else {
+        await actionTx((tx, actor) => resolveMatch(tx, actor, id, "ACKNOWLEDGE", { note }));
+      }
+      out.ok++;
+    } catch (e) {
+      if (!(e instanceof AppError)) logServerError("reconciliation:bulk", e);
+      out.failed.push({ id, error: toUserMessage(e) });
+    }
+  }
+  revalidatePath(`/reconciliation/${runId}`);
+  revalidatePath("/");
+  return out;
 }

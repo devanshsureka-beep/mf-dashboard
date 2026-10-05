@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
-import { Input, Select } from "@/components/ui/form";
+import { Input } from "@/components/ui/form";
 import { Badge } from "@/components/ui/badge";
 import { ActionForm, SubmitButton } from "@/components/app/action-form";
 import { Money } from "@/components/app/money";
@@ -10,21 +10,34 @@ import { StatCard } from "@/components/app/stat-card";
 import { EmptyState } from "@/components/app/page-header";
 import { pageData } from "@/lib/server";
 import { formatDate, formatDateTime, formatINRCompact, formatUnits, humanize } from "@/lib/format";
-import { getMatches, getRun, RECORDED_AS_ADVISED } from "@/services/reconciliation";
+import { getMatches, getRun, HISTORY_BEFORE_PREVIOUS_CAS, RECORDED_AS_ADVISED } from "@/services/reconciliation";
 import type { ReconciliationMatchRow } from "@/types/domain";
-import { cancelRunAction, recheckRunAction, recordAdvisedAction, resolveMatchAction } from "../actions";
+import { bulkUnadvisedAction, cancelRunAction, recheckRunAction, resolveMatchAction } from "../actions";
+import { UnadvisedReview, type UnadvisedRow } from "./unadvised-review";
 
 export const metadata = { title: "CAS matching run" };
 
 export default async function RunPage(props: PageProps<"/reconciliation/[runId]">) {
   const { runId } = await props.params;
-  const { run, matches, actor } = await pageData(async (tx) => ({ run: await getRun(tx, runId), matches: await getMatches(tx, runId) }));
+  const { run, matches: allMatches, actor } = await pageData(async (tx) => ({ run: await getRun(tx, runId), matches: await getMatches(tx, runId) }));
+  // Rows closed as history (trades before the previous CAS) are not changes.
+  const isHistory = (m: ReconciliationMatchRow) => m.status === "REJECTED" && Boolean(m.resolution_note?.startsWith(HISTORY_BEFORE_PREVIOUS_CAS));
+  const matches = allMatches.filter((m) => !isHistory(m));
+  const historyCount = allMatches.length - matches.length;
   const canAdvise = actor.role !== "OPERATIONS";
   const advice = matches.filter((m) => m.classification === "ADVICE_MATCH");
   const unadvised = matches.filter((m) => m.classification === "UNADVISED");
   const sip = matches.filter((m) => m.classification === "SIP_INSTALMENT");
   const act = (m: ReconciliationMatchRow) => resolveMatchAction.bind(null, runId, m.id);
-  const byTxn = matches.some((m) => m.cas_transaction_id);
+  const byTxn = allMatches.some((m) => m.cas_transaction_id);
+  const unadvisedRows: UnadvisedRow[] = unadvised.map((m) => ({
+    id: m.id, scheme_name: m.scheme_name, folio: m.folio_numbers?.[0] ?? null, change_type: m.change_type,
+    transaction_date: m.transaction_date, transaction_amount: m.transaction_amount, transaction_units: m.transaction_units,
+    transaction_nav: m.transaction_nav, approx_amount: Number(m.approx_amount), system_note: m.system_note, resolution_note: m.resolution_note,
+    state: m.status === "REJECTED" ? (m.resolution_note?.startsWith(RECORDED_AS_ADVISED) ? "ADVISED" : "CLOSED") : m.reviewed_at ? "NOT_ADVISED" : "TO_REVIEW",
+    reviewed_at: m.reviewed_at ? new Date(m.reviewed_at).toISOString() : null,
+    canRecordAdvised: Boolean(m.cas_transaction_id) && Number(m.transaction_amount) > 0,
+  }));
   const autoCount = advice.filter((m) => m.auto_confirmed).length;
   const txnCell = (m: ReconciliationMatchRow) => (
     <TD className="text-xs">
@@ -51,7 +64,7 @@ export default async function RunPage(props: PageProps<"/reconciliation/[runId]"
         <StatCard label="Previous portfolio value" value={formatINRCompact(run.previous_value)} hint={formatDate(run.previous_snapshot_date)} />
         <StatCard label="New portfolio value" value={formatINRCompact(run.current_value)} hint={formatDate(run.current_snapshot_date)} />
         <StatCard label="Advice matches" value={advice.length} hint={`${advice.filter((m) => m.status === "SUGGESTED").length} awaiting decision`} tone={advice.some((m) => m.status === "SUGGESTED") ? "attention" : "default"} />
-        <StatCard label="Unadvised changes" value={unadvised.length} tone={unadvised.some((m) => !m.reviewed_at) ? "danger" : "default"} />
+        <StatCard label="Unadvised to review" value={unadvisedRows.filter((r) => r.state === "TO_REVIEW").length} hint={`of ${unadvised.length} unadvised trade(s)`} tone={unadvisedRows.some((r) => r.state === "TO_REVIEW") ? "danger" : "default"} />
         <StatCard label="SIP instalments" value={sip.length} hint={run.summary.sip_items_completed ? `${run.summary.sip_items_completed} SIP plan action(s) verified` : "Explained by CAS SIP transactions"} />
       </div>
 
@@ -139,51 +152,9 @@ export default async function RunPage(props: PageProps<"/reconciliation/[runId]"
       </Card>
 
       <Card className="mt-4 border-red-200">
-        <CardHeader><CardTitle className="text-red-700">Unadvised transactions</CardTitle><span className="text-xs text-muted">Holding changes with no matching recommendation. They appear under Needs Attention until acknowledged.</span></CardHeader>
-        {unadvised.length === 0 ? <CardContent><p className="text-sm text-muted">None — every change is explained by advice or SIP instalments.</p></CardContent> : (
-          <Table className="text-[13px] [&_td]:px-2 [&_th]:px-2">
-            <THead><TR><TH>Security</TH>{byTxn ? <TH>CAS transaction</TH> : <><TH className="text-right">Previous</TH><TH className="text-right">Current</TH><TH className="text-right">Units change</TH></>}<TH className="text-right">{byTxn ? "Unadvised amount" : "Approx. amount"}</TH><TH>Note</TH><TH>Review</TH></TR></THead>
-            <TBody>
-              {unadvised.map((m) => (
-                <TR key={m.id}>
-                  <TD className="max-w-64"><div className="truncate font-medium">{m.scheme_name}</div><Badge tone="danger">UNADVISED {humanize(m.change_type).toUpperCase()}</Badge></TD>
-                  {byTxn ? txnCell(m) : <>
-                  <TD className="text-right"><Money value={m.previous_value} /><div className="num text-[11px] text-muted">{formatUnits(m.previous_units)} u</div></TD>
-                  <TD className="text-right"><Money value={m.current_value} /><div className="num text-[11px] text-muted">{formatUnits(m.current_units)} u</div></TD>
-                  <TD className="text-right num text-xs">{formatUnits(m.detected_change)}{m.allocated_units && Math.abs(m.allocated_units) < Math.abs(m.detected_change) ? <div className="text-muted">unexplained {formatUnits(m.allocated_units)}</div> : null}</TD>
-                  </>}
-                  <TD className="text-right font-medium text-red-700"><Money value={m.approx_amount} /></TD>
-                  <TD className="max-w-56 text-xs text-muted">{m.system_note}{m.resolution_note ? <div className="text-ink">{m.resolution_note}</div> : null}</TD>
-                  <TD>
-                    {m.status === "REJECTED" && m.resolution_note?.startsWith(RECORDED_AS_ADVISED) ? <Badge tone="success">Recorded as advised</Badge> : m.status === "REJECTED" ? <span className="text-xs text-muted">Rejected</span> : m.reviewed_at ? <span className="text-xs text-muted">Acknowledged {formatDate(m.reviewed_at)}</span> : (
-                      <ActionForm action={act(m)} className="flex gap-1">
-                        <input type="hidden" name="decision" value="ACKNOWLEDGE" />
-                        <Input name="note" placeholder="What did the client say? (required)" className="h-8 w-56 text-xs" required />
-                        <SubmitButton size="sm" variant="outline">Acknowledge</SubmitButton>
-                      </ActionForm>
-                    )}
-                    {m.status !== "REJECTED" && m.cas_transaction_id && canAdvise ? (
-                      <details className="mt-1">
-                        <summary className="cursor-pointer text-xs text-brand">It was advised (call given outside the dashboard)</summary>
-                        <ActionForm action={recordAdvisedAction.bind(null, runId, m.id)} className="mt-1 space-y-1">
-                          <div className="flex gap-1">
-                            <Select name="channel" defaultValue="PHONE" className="h-8 w-28 text-xs">
-                              <option value="PHONE">Phone</option><option value="WHATSAPP">WhatsApp</option><option value="EMAIL">Email</option>
-                              <option value="IN_PERSON">In person</option><option value="OTHER">Other</option>
-                            </Select>
-                            <Input type="datetime-local" name="communicated_at" defaultValue={m.transaction_date ? `${m.transaction_date}T09:00` : undefined} className="h-8 w-44 text-xs" />
-                          </div>
-                          <Input name="note" placeholder="Note (optional)" className="h-8 w-72 text-xs" />
-                          <SubmitButton size="sm">Record call &amp; confirm execution</SubmitButton>
-                        </ActionForm>
-                      </details>
-                    ) : null}
-                  </TD>
-                </TR>
-              ))}
-            </TBody>
-          </Table>
-        )}
+        <CardHeader><CardTitle className="text-red-700">Unadvised transactions</CardTitle><span className="text-xs text-muted">Trades with no matching call. Search, tick one or many, then say whether you advised them.</span></CardHeader>
+        <UnadvisedReview rows={unadvisedRows} canAdvise={canAdvise} act={bulkUnadvisedAction.bind(null, runId)} />
+        {historyCount ? <CardContent className="border-t border-border text-xs text-muted">{historyCount} transaction(s) dated on or before the previous CAS were set aside as history (a full-history statement lists past trades again).</CardContent> : null}
       </Card>
 
       {sip.length ? (

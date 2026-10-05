@@ -200,8 +200,13 @@ async function loadMatchCalls(tx: Tx, clientId: string): Promise<{ calls: MatchC
   return { calls, switchTargets };
 }
 
-/** Transactions first seen in a CAS (overlapping statements are de-duplicated on insert), optionally only those a run has not matched yet. */
-async function loadSnapshotTxns(tx: Tx, snapshotId: string, notInRunId: string | null = null) {
+/**
+ * Transactions first seen in a CAS (overlapping statements are de-duplicated on
+ * insert) and dated after the previous CAS: a full-history statement also lists
+ * years of older trades, which are history, not changes. Optionally only those a
+ * run has not matched yet.
+ */
+async function loadSnapshotTxns(tx: Tx, snapshotId: string, afterDate: string, notInRunId: string | null = null) {
   const txnRows = await tx<{
     id: string; security_id: string | null; isin: string | null; scheme_name: string; folio_number: string | null;
     transaction_date: string; transaction_type: string; description: string | null;
@@ -211,6 +216,7 @@ async function loadSnapshotTxns(tx: Tx, snapshotId: string, notInRunId: string |
            t.transaction_type, t.description, t.amount, t.units, t.nav
     from public.portfolio_transactions t
     where t.source_snapshot_id = ${snapshotId}
+      and t.transaction_date > ${afterDate}::date
       and (${notInRunId}::uuid is null or not exists (
         select 1 from public.reconciliation_matches m where m.run_id = ${notInRunId} and m.cas_transaction_id = t.id))
     order by t.transaction_date, t.created_at`;
@@ -265,7 +271,7 @@ async function runTransactionReconciliation(
   },
 ): Promise<{ runId: string; existing: boolean }> {
   const { calls, switchTargets } = await loadMatchCalls(tx, args.clientId);
-  const { txns, folioOf } = await loadSnapshotTxns(tx, args.current.id);
+  const { txns, folioOf } = await loadSnapshotTxns(tx, args.current.id, args.previous.snapshot_date);
 
   const proposals = matchTransactions(calls, txns, switchTargets);
   const sipItemsCompleted = await completeSipItemsFromTransactions(tx, args.clientId, proposals);
@@ -299,17 +305,31 @@ async function runTransactionReconciliation(
  * the run yet (e.g. ones an older reader did not recognise, or calls recorded
  * since). Rows already in the run, and anything already confirmed, stay.
  */
-export async function recheckRun(tx: Tx, actor: Actor | null, runId: string): Promise<{ added: number; needsReview: number }> {
-  const run = (await tx<{ client_id: string; current_snapshot_id: string; status: string; engine_version: string }[]>`
-    select client_id, current_snapshot_id, status, engine_version from public.reconciliation_runs where id = ${runId} for update`)[0];
+export async function recheckRun(tx: Tx, actor: Actor | null, runId: string): Promise<{ added: number; needsReview: number; closedHistory: number }> {
+  const run = (await tx<{ client_id: string; current_snapshot_id: string; status: string; engine_version: string; previous_date: string }[]>`
+    select r.client_id, r.current_snapshot_id, r.status, r.engine_version, ps.snapshot_date::text as previous_date
+    from public.reconciliation_runs r join public.portfolio_snapshots ps on ps.id = r.previous_snapshot_id
+    where r.id = ${runId} for update of r`)[0];
   if (!run) throw new AppError("Reconciliation run not found.", "NOT_FOUND");
   if (run.status === "CANCELLED") throw new AppError("This reconciliation run was cancelled.");
   if (run.engine_version !== TXN_ENGINE_VERSION) throw new AppError("Only a CAS with transactions can be re-checked.");
 
+  // Rows for trades on or before the previous CAS (older engine) are history: close them.
+  await setAuditReason(tx, "CAS re-checked: trades before the previous CAS are history");
+  const closed = await tx`
+    update public.reconciliation_matches set status = 'REJECTED', resolved_at = now(), resolved_by = ${actor?.id ?? null},
+      reviewed_at = coalesce(reviewed_at, now()), reviewed_by = coalesce(reviewed_by, ${actor?.id ?? null}),
+      resolution_note = ${HISTORY_BEFORE_PREVIOUS_CAS}
+    where run_id = ${runId} and transaction_date <= ${run.previous_date}::date
+      and classification in ('UNADVISED', 'SIP_INSTALMENT') and status in ('UNEXPLAINED', 'SUGGESTED')`;
+
   const { calls, switchTargets } = await loadMatchCalls(tx, run.client_id);
-  const { txns, folioOf } = await loadSnapshotTxns(tx, run.current_snapshot_id, runId);
+  const { txns, folioOf } = await loadSnapshotTxns(tx, run.current_snapshot_id, run.previous_date, runId);
   const proposals = matchTransactions(calls, txns, switchTargets).filter((p) => p.kind !== "SIP_CANCELLED");
-  if (!proposals.length) return { added: 0, needsReview: 0 };
+  if (!proposals.length) {
+    if (closed.count) await closeRunIfDone(tx, runId);
+    return { added: 0, needsReview: 0, closedHistory: closed.count };
+  }
 
   await completeSipItemsFromTransactions(tx, run.client_id, proposals);
   const needsReview = proposals.filter(needsPerson).length;
@@ -318,7 +338,21 @@ export async function recheckRun(tx: Tx, actor: Actor | null, runId: string): Pr
     await tx`update public.reconciliation_runs set status = 'OPEN', completed_at = null where id = ${runId} and status <> 'OPEN'`;
   }
   await saveTxnProposals(tx, actor, runId, run.client_id, proposals, folioOf);
-  return { added: proposals.length, needsReview };
+  if (needsReview === 0) await closeRunIfDone(tx, runId);
+  return { added: proposals.length, needsReview, closedHistory: closed.count };
+}
+
+/** Resolution note of rows closed because the trade predates the previous CAS. */
+export const HISTORY_BEFORE_PREVIOUS_CAS = "History: dated on or before the previous CAS, not a change";
+
+/** Close the run once nothing needs a decision any more. */
+async function closeRunIfDone(tx: Tx, runId: string): Promise<void> {
+  await tx`
+    update public.reconciliation_runs r set status = 'COMPLETED', completed_at = now()
+    where r.id = ${runId} and r.status = 'OPEN'
+      and not exists (
+        select 1 from public.reconciliation_matches x
+        where x.run_id = r.id and (x.status = 'SUGGESTED' or (x.status = 'UNEXPLAINED' and x.reviewed_at is null)))`;
 }
 
 /**
@@ -531,13 +565,7 @@ export async function resolveMatch(
       where id = ${m.id}`;
   }
 
-  // Close the run once nothing needs a decision any more.
-  await tx`
-    update public.reconciliation_runs r set status = 'COMPLETED', completed_at = now()
-    where r.id = ${m.run_id} and r.status = 'OPEN'
-      and not exists (
-        select 1 from public.reconciliation_matches x
-        where x.run_id = r.id and (x.status = 'SUGGESTED' or (x.status = 'UNEXPLAINED' and x.reviewed_at is null)))`;
+  await closeRunIfDone(tx, m.run_id);
 
   return { executionId, verifiedExecutions: verified };
 }

@@ -35,7 +35,7 @@ describeDb("A newer CAS updates the client's plan", () => {
       expect((await progress(ctx, p.sellItem)).executed_amount).toBe(300000);
 
       // Nothing new to match.
-      expect(await ctx.as("ops", (t) => recheckRun(t, ctx.users.ops, runId))).toEqual({ added: 0, needsReview: 0 });
+      expect(await ctx.as("ops", (t) => recheckRun(t, ctx.users.ops, runId))).toEqual({ added: 0, needsReview: 0, closedHistory: 0 });
 
       // A trade of this CAS the run has no row for (e.g. not recognised before) is picked up.
       await ctx.asSuper((t) => t`
@@ -43,13 +43,44 @@ describeDb("A newer CAS updates the client's plan", () => {
           scheme_name, isin, folio_number, units, nav, amount, description, dedupe_hash)
         values (${p.clientId}, ${snap}, ${ctx.sec.X}, '2026-09-14', 'OTHER', ${x.scheme_name}, ${x.isin}, 'T1', -100, 150, -15000,
                 'Payment - Units Extinguished', 'test-recheck-1')`);
-      expect(await ctx.as("ops", (t) => recheckRun(t, ctx.users.ops, runId))).toEqual({ added: 1, needsReview: 1 });
+      expect(await ctx.as("ops", (t) => recheckRun(t, ctx.users.ops, runId))).toEqual({ added: 1, needsReview: 1, closedHistory: 0 });
       const run = await ctx.tx<{ status: string }[]>`select status from public.reconciliation_runs where id = ${runId}`;
       expect(run[0].status).toBe("OPEN");
       const added = await ctx.tx<{ classification: string; approx_amount: number; change_type: string }[]>`
         select classification, approx_amount::float8, change_type from public.reconciliation_matches
         where run_id = ${runId} and transaction_date = '2026-09-14'`;
       expect(added).toEqual([{ classification: "UNADVISED", approx_amount: 15000, change_type: "DECREASE" }]);
+    });
+  });
+
+  it("a full-history CAS: trades dated on or before the previous CAS are history, not unadvised changes", async () => {
+    await scenario(async (ctx) => {
+      const p = await clientWithActivePlan(ctx); // previous CAS dated 2026-09-01
+      const x = (await ctx.tx<{ scheme_name: string; isin: string }[]>`select scheme_name, isin from public.security_master where id = ${ctx.sec.X}`)[0];
+      const snap = await ctx.as("ops", async (t) => {
+        const pr = parsed("2026-10-01", [{ security: ctx.sec.X, name: x.scheme_name, units: 9000, nav: 150 }], [
+          { date: "2021-03-10", type: "PURCHASE", scheme_name: x.scheme_name, isin: x.isin, folio_number: "T1", amount: 500000, units: 5000, nav: 100, balance_units: 5000 },
+          { date: "2026-09-01", type: "SIP", scheme_name: x.scheme_name, isin: x.isin, folio_number: "T1", amount: 5000, units: 40, nav: 125, balance_units: 10000 },
+          { date: "2026-09-20", type: "REDEMPTION", scheme_name: x.scheme_name, isin: x.isin, folio_number: "T1", amount: -150000, units: -1000, nav: 150, balance_units: 9000 },
+        ]);
+        pr.holdings[0].isin = x.isin;
+        const id = await createSnapshotFromParsed(t, { clientId: p.clientId, casDocumentId: null, parsed: pr, source: "CAS", createdBy: ctx.users.ops.id });
+        await confirmSnapshot(t, id, "checked");
+        return id;
+      });
+      const { runId } = await ctx.as("ops", (t) => runReconciliation(t, ctx.users.ops, { clientId: p.clientId, currentSnapshotId: snap }));
+      const rows = await ctx.tx<{ transaction_date: string; classification: string }[]>`
+        select transaction_date::text, classification from public.reconciliation_matches where run_id = ${runId}`;
+      expect(rows).toEqual([{ transaction_date: "2026-09-20", classification: "UNADVISED" }]);
+
+      // A run made by the older engine (rows for history) is cleaned by re-check.
+      await ctx.asSuper((t) => t`
+        insert into public.reconciliation_matches (run_id, client_id, security_id, scheme_name, change_type, classification, detected_change,
+          approx_amount, confidence, status, system_note, cas_transaction_id, transaction_date, transaction_amount, transaction_units)
+        select ${runId}, ${p.clientId}, ${ctx.sec.X}, ${x.scheme_name}, 'INCREASE', 'UNADVISED', 5000, 500000, 'NONE', 'UNEXPLAINED', 'old',
+               t.id, t.transaction_date, 500000, 5000
+        from public.portfolio_transactions t where t.source_snapshot_id = ${snap} and t.transaction_date = '2021-03-10'`);
+      expect(await ctx.as("ops", (t) => recheckRun(t, ctx.users.ops, runId))).toEqual({ added: 0, needsReview: 0, closedHistory: 1 });
     });
   });
 });
