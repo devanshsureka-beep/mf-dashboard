@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { num, optStr, reqStr, runAction, type ActionResult } from "@/lib/actions";
 import { AppError } from "@/lib/errors";
 import { actionTx } from "@/lib/server";
-import { cancelRun, recordAdvisedOffline, resolveMatch, type MatchDecision } from "@/services/reconciliation";
+import { cancelRun, recheckRun, recordAdvisedOffline, resolveMatch, type MatchDecision } from "@/services/reconciliation";
 import { fromISTDateTimeLocal } from "@/lib/format";
 import { CHANNELS, type Channel } from "@/types/domain";
 
@@ -49,5 +49,16 @@ export async function recordAdvisedAction(runId: string, matchId: string, _p: Ac
     revalidatePath(`/reconciliation/${runId}`);
     revalidatePath("/");
     return `Call recorded and the CAS trade confirmed as its execution${out.planItemId ? " (linked to the plan line)" : " (off-plan: no matching plan line)"}.`;
+  });
+}
+
+/** Re-check the run's CAS: match transactions it has no row for yet (e.g. after a reader fix, or a call recorded since). */
+export async function recheckRunAction(runId: string, _p: ActionResult | null, _fd: FormData): Promise<ActionResult> {
+  return runAction("recheckRun", async () => {
+    const out = await actionTx((tx, actor) => recheckRun(tx, actor, runId));
+    revalidatePath(`/reconciliation/${runId}`);
+    revalidatePath("/");
+    if (!out.added) return "Nothing new: every transaction in this CAS is already matched.";
+    return `${out.added} transaction row(s) added${out.needsReview ? `, ${out.needsReview} need your decision` : ", all matched automatically"}.`;
   });
 }

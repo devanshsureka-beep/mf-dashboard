@@ -74,6 +74,16 @@ describe("CAS parser (KFintech + CAMS consolidated, detailed)", () => {
     expect(classifyTransaction("*** SIP Cancelled ***")).toEqual({ type: "OTHER", sipCancelled: true });
     expect(classifyTransaction("Purchase - INZ000031633").type).toBe("PURCHASE");
     expect(classifyTransaction("*** Stamp Duty ***").type).toBe("STAMP_DUTY");
+    // A tax line moves no units; a trade that mentions the tax is the trade.
+    expect(classifyTransaction("*** STT Paid ***").type).toBe("STT");
+    expect(classifyTransaction("*** STT Paid ***", null).type).toBe("STT");
+    expect(classifyTransaction("*Redemption - NEFT/RTGS PAYOUT-BSE - , less STT", -3537.867).type).toBe("REDEMPTION");
+    expect(classifyTransaction("Redemption less TDS, STT", -100).type).toBe("REDEMPTION");
+    expect(classifyTransaction("Switch Out - To L&T Gilt Fund - Growth Plan-BSE - , less STT", -50).type).toBe("SWITCH_OUT");
+    expect(classifyTransaction("Lateral In (From UTI Nifty 50 Index Fund - Regular Plan").type).toBe("SWITCH_IN");
+    expect(classifyTransaction("Initial Allotment").type).toBe("PURCHASE");
+    expect(classifyTransaction("Payment - Units Extinguished").type).toBe("REDEMPTION");
+    expect(classifyTransaction("Payment - Units Extinguished-Reversed").type).toBe("OTHER");
   });
 });
 

@@ -96,23 +96,40 @@ const NOISE = [
   /^@@PAGE_BREAK/,
 ];
 
-export function classifyTransaction(desc: string): { type: CasTxn["type"]; sipCancelled: boolean } {
+export function classifyTransaction(desc: string, units: number | null = null): { type: CasTxn["type"]; sipCancelled: boolean } {
   const d = desc.toLowerCase();
   const sipCancelled = /sip\s*cancel/.test(d);
-  if (/stamp duty/.test(d)) return { type: "STAMP_DUTY", sipCancelled };
-  if (/\bstt\b/.test(d)) return { type: "STT", sipCancelled };
-  if (/\btds\b/.test(d)) return { type: "TDS", sipCancelled };
-  if (/cancel|reversal|rejection|rejected/.test(d)) return { type: "OTHER", sipCancelled };
-  if (/switch[\s-]*(over\s*)?out|lateral shift out|stp[\s-]*out|transfer[\s-]*out/.test(d)) return { type: "SWITCH_OUT", sipCancelled };
-  if (/switch[\s-]*(over\s*)?in|lateral shift in|stp[\s-]*in|transfer[\s-]*in|systematic transfer/.test(d)) return { type: "SWITCH_IN", sipCancelled };
-  if (/redemption|redeem|repurchase|\bswp\b|systematic withdrawal/.test(d)) return { type: "REDEMPTION", sipCancelled };
+  const tax = /stamp duty/.test(d) ? "STAMP_DUTY" : /\bstt\b/.test(d) ? "STT" : /\btds\b/.test(d) ? "TDS" : null;
+  if (tax) {
+    // A tax line moves no units. A row with units is the trade itself, its
+    // description only mentions the tax (e.g. "Redemption - STT Paid").
+    if (!units) return { type: tax, sipCancelled };
+    const rest = classifyTransaction(d.replace(/stamp duty|\bstt\b|\btds\b/g, " "), units);
+    if (rest.type !== "OTHER") return rest;
+    return { type: units < 0 ? "REDEMPTION" : "PURCHASE", sipCancelled };
+  }
+  if (/cancel|revers(al|ed)|rejection|rejected/.test(d)) return { type: "OTHER", sipCancelled };
+  if (/switch[\s-]*(over\s*)?out|lateral (shift )?out|stp[\s-]*out|transfer[\s-]*out/.test(d)) return { type: "SWITCH_OUT", sipCancelled };
+  if (/switch[\s-]*(over\s*)?in|lateral (shift )?in|stp[\s-]*in|transfer[\s-]*in|systematic transfer/.test(d)) return { type: "SWITCH_IN", sipCancelled };
+  if (/redemption|redeem|repurchase|\bswp\b|systematic withdrawal|units extinguished/.test(d)) return { type: "REDEMPTION", sipCancelled };
   if (/(dividend|idcw).*(reinvest)/.test(d)) return { type: "DIVIDEND_REINVESTMENT", sipCancelled };
   if (/dividend|idcw/.test(d)) return { type: "DIVIDEND_PAYOUT", sipCancelled };
   if (/bonus/.test(d)) return { type: "BONUS", sipCancelled };
   if (/merger|amalgamation/.test(d)) return { type: "MERGER", sipCancelled };
   if (/\bsip\b|systematic investment/.test(d)) return { type: "SIP", sipCancelled };
-  if (/purchase|nfo|investment|new fund offer|subscription/.test(d)) return { type: "PURCHASE", sipCancelled };
+  if (/purchase|nfo|investment|new fund offer|subscription|initial allotment/.test(d)) return { type: "PURCHASE", sipCancelled };
   return { type: "OTHER", sipCancelled };
+}
+
+/**
+ * The type a stored transaction is matched and shown as. Rows read before a
+ * reader fix may carry a tax or unknown type although they moved units
+ * ("Redemption … less STT"); those are read again from their description.
+ */
+export function effectiveTxnType(type: string, description: string | null, units: number | string | null): string {
+  const u = units === null || units === undefined ? 0 : Number(units);
+  if (!description || !u || !["STT", "TDS", "STAMP_DUTY", "OTHER"].includes(type)) return type;
+  return classifyTransaction(description, u).type;
 }
 
 function cleanSchemeName(raw: string): string {
@@ -324,7 +341,7 @@ export function parseCasLines(rawLines: string[]): CasParseOutput {
       const desc = cells[k + 1];
       if (!date || !desc) continue; // a lone date line
       const nums = cells.slice(k + 2).map(parseNumber);
-      const { type, sipCancelled } = classifyTransaction(desc);
+      const { type, sipCancelled } = classifyTransaction(desc, nums.length >= 4 ? nums[1] : null);
       const txn: CasTxn = {
         date, description: desc, type,
         amount: nums[0] ?? null,

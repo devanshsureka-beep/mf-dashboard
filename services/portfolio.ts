@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Tx } from "@/lib/db/tx";
 import { CAS_STORED_NAME } from "@/lib/cas/password";
+import { effectiveTxnType } from "@/lib/parsers/cas";
 import { AppError } from "@/lib/errors";
 import type { CasParsed, CasParseResult, CasTransactionInput } from "@/lib/integrations/contracts";
 import type { CasDocumentRow, HoldingRow, SnapshotRow } from "@/types/domain";
@@ -44,12 +45,13 @@ export async function listCasDocuments(tx: Tx, clientId?: string): Promise<(CasD
 
 export async function listRecentTransactions(tx: Tx, clientId: string, limit = 200) {
   return tx<{
-    id: string; transaction_date: string; transaction_type: string; scheme_name: string; folio_number: string | null;
+    id: string; transaction_date: string; transaction_type: string; description: string | null; scheme_name: string; folio_number: string | null;
     units: number | null; nav: number | null; amount: number | null; balance_units: number | null;
   }[]>`
-    select id, transaction_date, transaction_type, scheme_name, folio_number, units, nav, amount, balance_units
+    select id, transaction_date, transaction_type, description, scheme_name, folio_number, units, nav, amount, balance_units
     from public.portfolio_transactions where client_id = ${clientId}
-    order by transaction_date desc, created_at desc limit ${limit}`;
+    order by transaction_date desc, created_at desc limit ${limit}`
+    .then((rows) => rows.map(({ description, ...t }) => ({ ...t, transaction_type: effectiveTxnType(t.transaction_type, description, t.units) })));
 }
 
 // -----------------------------------------------------------------------------

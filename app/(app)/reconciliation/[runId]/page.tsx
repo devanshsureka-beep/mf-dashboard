@@ -12,7 +12,7 @@ import { pageData } from "@/lib/server";
 import { formatDate, formatDateTime, formatINRCompact, formatUnits, humanize } from "@/lib/format";
 import { getMatches, getRun, RECORDED_AS_ADVISED } from "@/services/reconciliation";
 import type { ReconciliationMatchRow } from "@/types/domain";
-import { cancelRunAction, recordAdvisedAction, resolveMatchAction } from "../actions";
+import { cancelRunAction, recheckRunAction, recordAdvisedAction, resolveMatchAction } from "../actions";
 
 export const metadata = { title: "CAS matching run" };
 
@@ -202,6 +202,20 @@ export default async function RunPage(props: PageProps<"/reconciliation/[runId]"
               ))}
             </TBody>
           </Table>
+        </Card>
+      ) : null}
+
+      {byTxn && run.status !== "CANCELLED" ? (
+        <Card className="mt-4">
+          <CardHeader>
+            <CardTitle>Re-check this CAS</CardTitle>
+            <span className="text-xs text-muted">Matches any transaction of this CAS that has no row above yet. Rows already here, and anything confirmed, stay as they are.</span>
+          </CardHeader>
+          <CardContent>
+            <ActionForm action={recheckRunAction.bind(null, runId)} className="flex gap-2">
+              <SubmitButton size="sm" variant="outline">Re-check transactions</SubmitButton>
+            </ActionForm>
+          </CardContent>
         </Card>
       ) : null}
 

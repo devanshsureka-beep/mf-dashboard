@@ -10,6 +10,7 @@ import {
 } from "@/lib/domain/reconciliation";
 import { matchTransactions, istDate, type MatchCall, type MatchTxn, type SwitchTarget, type TxnProposal } from "@/lib/domain/txn-matching";
 import type { Channel, ReconciliationMatchRow, ReconciliationRunRow } from "@/types/domain";
+import { effectiveTxnType } from "@/lib/parsers/cas";
 import { issueAdvice } from "./advice";
 
 export const TXN_ENGINE_VERSION = "v2-transactions";
@@ -157,15 +158,8 @@ export interface TxnRunSummary {
   sip_items_completed: number;
 }
 
-async function runTransactionReconciliation(
-  tx: Tx,
-  actor: Actor | null,
-  args: {
-    clientId: string;
-    previous: { id: string; snapshot_date: string; total_current_value: number };
-    current: { id: string; snapshot_date: string; total_current_value: number };
-  },
-): Promise<{ runId: string; existing: boolean }> {
+/** Open calls (and calls with unverified executions) a CAS transaction may match. */
+async function loadMatchCalls(tx: Tx, clientId: string): Promise<{ calls: MatchCall[]; switchTargets: SwitchTarget[] }> {
   const callRows = await tx<{
     id: string; security_id: string; isin: string | null; action: "BUY" | "SELL" | "SWITCH";
     status: "ISSUED" | "PARTIALLY_EXECUTED" | "EXECUTED"; quantity_basis: "AMOUNT" | "UNITS";
@@ -183,7 +177,7 @@ async function runTransactionReconciliation(
       where e.advice_item_id = v.id and e.status in ('EXECUTED', 'PARTIAL')
         and e.cas_verified_at is null and e.verification_type <> 'CAS_VERIFIED'
     ) u on true
-    where v.client_id = ${args.clientId}
+    where v.client_id = ${clientId}
       and (v.is_open or (v.status = 'EXECUTED' and coalesce(u.amount, 0) > 0))`;
   const calls: MatchCall[] = callRows.map((a) => ({
     id: a.id, securityId: a.security_id, isin: a.isin, action: a.action, status: a.status,
@@ -200,34 +194,82 @@ async function runTransactionReconciliation(
     from public.v_advice_items v
     join public.advisory_plan_items pi on pi.id = v.plan_item_id
     join public.security_master sm on sm.id = pi.switch_to_security_id
-    where v.client_id = ${args.clientId} and v.action = 'SWITCH'
+    where v.client_id = ${clientId} and v.action = 'SWITCH'
       and v.status in ('ISSUED', 'PARTIALLY_EXECUTED', 'EXECUTED')`)
     .map((r) => ({ securityId: r.security_id, isin: r.isin, communicatedAt: new Date(r.communicated_at) }));
+  return { calls, switchTargets };
+}
 
-  // Only transactions first seen in this CAS (overlapping statements are de-duplicated on insert).
+/** Transactions first seen in a CAS (overlapping statements are de-duplicated on insert), optionally only those a run has not matched yet. */
+async function loadSnapshotTxns(tx: Tx, snapshotId: string, notInRunId: string | null = null) {
   const txnRows = await tx<{
     id: string; security_id: string | null; isin: string | null; scheme_name: string; folio_number: string | null;
     transaction_date: string; transaction_type: string; description: string | null;
     amount: number | null; units: number | null; nav: number | null;
   }[]>`
-    select id, security_id, isin, scheme_name, folio_number, transaction_date::text as transaction_date,
-           transaction_type, description, amount, units, nav
-    from public.portfolio_transactions
-    where source_snapshot_id = ${args.current.id}
-    order by transaction_date, created_at`;
+    select t.id, t.security_id, t.isin, t.scheme_name, t.folio_number, t.transaction_date::text as transaction_date,
+           t.transaction_type, t.description, t.amount, t.units, t.nav
+    from public.portfolio_transactions t
+    where t.source_snapshot_id = ${snapshotId}
+      and (${notInRunId}::uuid is null or not exists (
+        select 1 from public.reconciliation_matches m where m.run_id = ${notInRunId} and m.cas_transaction_id = t.id))
+    order by t.transaction_date, t.created_at`;
   const txns: MatchTxn[] = txnRows.map((t) => ({
     id: t.id, securityId: t.security_id, isin: t.isin, schemeName: t.scheme_name, date: t.transaction_date,
-    type: t.transaction_type, description: t.description,
+    type: effectiveTxnType(t.transaction_type, t.description, t.units), description: t.description,
     amount: t.amount === null ? null : Number(t.amount), units: t.units === null ? null : Number(t.units),
     nav: t.nav === null ? null : Number(t.nav), folio: t.folio_number,
   }));
-  const folioOf = new Map(txnRows.map((t) => [t.id, t.folio_number]));
+  return { txns, folioOf: new Map(txnRows.map((t) => [t.id, t.folio_number])) };
+}
+
+const needsPerson = (p: TxnProposal) => (p.kind === "ADVICE_MATCH" && !p.autoConfirm) || p.kind === "UNADVISED";
+
+/** Writes the proposals into a run; clear matches are confirmed right away. */
+async function saveTxnProposals(
+  tx: Tx, actor: Actor | null, runId: string, clientId: string, proposals: TxnProposal[], folioOf: Map<string, string | null>,
+): Promise<void> {
+  const toConfirm: string[] = [];
+  for (const p of proposals) {
+    if (p.kind === "SIP_CANCELLED") continue; // no units moved; handled via SIP plan items
+    const sign = p.direction === "SELL" ? -1 : 1;
+    const classification = p.kind === "ADVICE_MATCH" ? "ADVICE_MATCH" : p.kind === "SIP_INSTALMENT" ? "SIP_INSTALMENT" : "UNADVISED";
+    const status = p.kind === "ADVICE_MATCH" ? "SUGGESTED" : "UNEXPLAINED";
+    const ins = await tx<{ id: string }[]>`
+      insert into public.reconciliation_matches
+        (run_id, client_id, advice_item_id, security_id, scheme_name, folio_numbers, change_type, classification,
+         detected_change, approx_amount, reference_nav, expected_amount, allocated_units, confidence, status,
+         system_note, reviewed_at, cas_transaction_id, transaction_date, transaction_amount, transaction_units,
+         transaction_nav, auto_confirmed)
+      values (${runId}, ${clientId}, ${p.callId}, ${p.securityId}, ${p.schemeName},
+              ${folioOf.get(p.txnId) ? [folioOf.get(p.txnId) as string] : []},
+              ${sign < 0 ? "DECREASE" : "INCREASE"}, ${classification}, ${sign * p.txnUnits}, ${p.allocatedAmount},
+              ${p.nav}, ${p.expectedAmount}, ${p.allocatedUnits}, ${p.confidence}, ${status}, ${p.note},
+              ${p.kind === "SIP_INSTALMENT" ? new Date() : null}, ${p.txnId}, ${p.date}, ${p.txnAmount}, ${p.txnUnits},
+              ${p.nav}, ${p.kind === "ADVICE_MATCH" && p.autoConfirm})
+      returning id`;
+    if (p.kind === "ADVICE_MATCH" && p.autoConfirm) toConfirm.push(ins[0].id);
+  }
+  for (const id of toConfirm) {
+    await resolveMatch(tx, actor, id, "CONFIRM", { auto: true });
+  }
+}
+
+async function runTransactionReconciliation(
+  tx: Tx,
+  actor: Actor | null,
+  args: {
+    clientId: string;
+    previous: { id: string; snapshot_date: string; total_current_value: number };
+    current: { id: string; snapshot_date: string; total_current_value: number };
+  },
+): Promise<{ runId: string; existing: boolean }> {
+  const { calls, switchTargets } = await loadMatchCalls(tx, args.clientId);
+  const { txns, folioOf } = await loadSnapshotTxns(tx, args.current.id);
 
   const proposals = matchTransactions(calls, txns, switchTargets);
   const sipItemsCompleted = await completeSipItemsFromTransactions(tx, args.clientId, proposals);
 
-  const needsPerson = (p: TxnProposal) =>
-    (p.kind === "ADVICE_MATCH" && !p.autoConfirm) || p.kind === "UNADVISED";
   const summary: TxnRunSummary = {
     transactions: new Set(proposals.map((p) => p.txnId)).size,
     advice_matches: proposals.filter((p) => p.kind === "ADVICE_MATCH").length,
@@ -248,32 +290,35 @@ async function runTransactionReconciliation(
             ${open ? "OPEN" : "COMPLETED"}, ${open ? null : new Date()}, ${actor?.id ?? null})
     returning id`;
 
-  const toConfirm: string[] = [];
-  for (const p of proposals) {
-    if (p.kind === "SIP_CANCELLED") continue; // no units moved; handled via SIP plan items
-    const sign = p.direction === "SELL" ? -1 : 1;
-    const classification = p.kind === "ADVICE_MATCH" ? "ADVICE_MATCH" : p.kind === "SIP_INSTALMENT" ? "SIP_INSTALMENT" : "UNADVISED";
-    const status = p.kind === "ADVICE_MATCH" ? "SUGGESTED" : "UNEXPLAINED";
-    const ins = await tx<{ id: string }[]>`
-      insert into public.reconciliation_matches
-        (run_id, client_id, advice_item_id, security_id, scheme_name, folio_numbers, change_type, classification,
-         detected_change, approx_amount, reference_nav, expected_amount, allocated_units, confidence, status,
-         system_note, reviewed_at, cas_transaction_id, transaction_date, transaction_amount, transaction_units,
-         transaction_nav, auto_confirmed)
-      values (${run[0].id}, ${args.clientId}, ${p.callId}, ${p.securityId}, ${p.schemeName},
-              ${folioOf.get(p.txnId) ? [folioOf.get(p.txnId) as string] : []},
-              ${sign < 0 ? "DECREASE" : "INCREASE"}, ${classification}, ${sign * p.txnUnits}, ${p.allocatedAmount},
-              ${p.nav}, ${p.expectedAmount}, ${p.allocatedUnits}, ${p.confidence}, ${status}, ${p.note},
-              ${p.kind === "SIP_INSTALMENT" ? new Date() : null}, ${p.txnId}, ${p.date}, ${p.txnAmount}, ${p.txnUnits},
-              ${p.nav}, ${p.kind === "ADVICE_MATCH" && p.autoConfirm})
-      returning id`;
-    if (p.kind === "ADVICE_MATCH" && p.autoConfirm) toConfirm.push(ins[0].id);
-  }
-
-  for (const id of toConfirm) {
-    await resolveMatch(tx, actor, id, "CONFIRM", { auto: true });
-  }
+  await saveTxnProposals(tx, actor, run[0].id, args.clientId, proposals, folioOf);
   return { runId: run[0].id, existing: false };
+}
+
+/**
+ * Re-check a CAS: match the transactions of the run's CAS that have no row in
+ * the run yet (e.g. ones an older reader did not recognise, or calls recorded
+ * since). Rows already in the run, and anything already confirmed, stay.
+ */
+export async function recheckRun(tx: Tx, actor: Actor | null, runId: string): Promise<{ added: number; needsReview: number }> {
+  const run = (await tx<{ client_id: string; current_snapshot_id: string; status: string; engine_version: string }[]>`
+    select client_id, current_snapshot_id, status, engine_version from public.reconciliation_runs where id = ${runId} for update`)[0];
+  if (!run) throw new AppError("Reconciliation run not found.", "NOT_FOUND");
+  if (run.status === "CANCELLED") throw new AppError("This reconciliation run was cancelled.");
+  if (run.engine_version !== TXN_ENGINE_VERSION) throw new AppError("Only a CAS with transactions can be re-checked.");
+
+  const { calls, switchTargets } = await loadMatchCalls(tx, run.client_id);
+  const { txns, folioOf } = await loadSnapshotTxns(tx, run.current_snapshot_id, runId);
+  const proposals = matchTransactions(calls, txns, switchTargets).filter((p) => p.kind !== "SIP_CANCELLED");
+  if (!proposals.length) return { added: 0, needsReview: 0 };
+
+  await completeSipItemsFromTransactions(tx, run.client_id, proposals);
+  const needsReview = proposals.filter(needsPerson).length;
+  if (needsReview > 0) {
+    await setAuditReason(tx, "CAS re-checked: new transactions to review");
+    await tx`update public.reconciliation_runs set status = 'OPEN', completed_at = null where id = ${runId} and status <> 'OPEN'`;
+  }
+  await saveTxnProposals(tx, actor, runId, run.client_id, proposals, folioOf);
+  return { added: proposals.length, needsReview };
 }
 
 /**
