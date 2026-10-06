@@ -167,14 +167,14 @@ export default async function MonthlyReportPage(props: PageProps<"/clients/[id]/
         <Section title={`Calls advised in ${r.label}`}>
           {r.calls.length ? (
             <table className="w-full text-[12.5px] [&_td]:px-1.5 [&_th]:px-1.5">
-              <thead className="text-left text-[11px] uppercase tracking-wide text-slate-500"><tr><th className="py-1">Date</th><th>Action</th><th>Fund</th><th className="text-right">Advised</th><th className="text-right">Executed</th><th>Status</th></tr></thead>
+              <thead className="text-left text-[11px] uppercase tracking-wide text-slate-500"><tr><th className="py-1">Date</th><th>Action</th><th>Fund</th><th className="text-right">Advised (counts)</th><th className="text-right">Executed</th><th>Status</th></tr></thead>
               <tbody>
                 {r.calls.map((x) => (
                   <tr key={x.id} className="border-t border-slate-100 align-top">
                     <td className="whitespace-nowrap py-1">{formatDate(x.at)}</td>
                     <td className={cn("font-semibold", x.action === "BUY" ? "text-emerald-700" : "text-red-700")}>{x.action}</td>
                     <td className="max-w-[18rem] truncate">{x.scheme_name}{x.on_plan ? "" : <span className="text-slate-400"> · off-plan</span>}</td>
-                    <td className="text-right">{formatINR(x.advised_amount)}</td>
+                    <td className="text-right">{x.counted_amount !== x.advised_amount ? <><s className="text-slate-400">{formatINR(x.advised_amount)}</s> {formatINR(x.counted_amount)}</> : formatINR(x.advised_amount)}</td>
                     <td className="text-right">{formatINR(x.executed_amount)}</td>
                     <td>{humanize(x.status)}</td>
                   </tr>

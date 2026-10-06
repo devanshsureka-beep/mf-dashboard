@@ -13,7 +13,7 @@ export interface MonthlyReport {
   label: string; // "September 2026"
   startValue: { date: string; value: number } | null;
   endValue: { date: string; value: number } | null;
-  calls: { id: string; at: Date; action: string; scheme_name: string; advised_amount: number; status: string; executed_amount: number; on_plan: boolean; channel: string }[];
+  calls: { id: string; at: Date; action: string; scheme_name: string; advised_amount: number; counted_amount: number; status: string; executed_amount: number; on_plan: boolean; channel: string }[];
   executions: { date: string; scheme_name: string; action: string; amount: number; units: number | null; verification: string }[];
   sip: { instalments: number; amount: number; byFund: { scheme_name: string; amount: number; instalments: number }[] };
   unadvised: { date: string | null; scheme_name: string; amount: number; direction: string; review: string }[];
@@ -50,7 +50,8 @@ export async function getMonthlyReport(tx: Tx, clientId: string, ym: string): Pr
   const [s0, s1] = await Promise.all([snap("before"), snap("upto")]);
 
   const calls = await tx<MonthlyReport["calls"]>`
-    select v.id, v.communicated_at as at, v.action, v.scheme_name, v.advised_amount::float8 as advised_amount, v.status,
+    select v.id, v.communicated_at as at, v.action, v.scheme_name, v.advised_amount::float8 as advised_amount,
+           v.effective_advised_amount::float8 as counted_amount, v.status,
            v.executed_amount::float8 as executed_amount, v.plan_item_id is not null as on_plan, b.communication_channel as channel
     from public.v_advice_items v join public.advice_batches b on b.id = v.advice_batch_id
     where v.client_id = ${clientId}
@@ -103,13 +104,14 @@ export async function getMonthlyReport(tx: Tx, clientId: string, ym: string): Pr
     holdings: holdings.map((h) => ({ ...h, weight: h.value / total })),
     categories: [...cat.entries()].map(([category, value]) => ({ category, value, weight: value / total })).sort((a, b) => b.value - a.value),
     totals: {
-      advised: sum(calls.map((c) => c.advised_amount)),
-      advisedSell: sum(calls.filter((c) => c.action !== "BUY").map((c) => c.advised_amount)),
-      advisedBuy: sum(calls.filter((c) => c.action === "BUY").map((c) => c.advised_amount)),
+      // A revised call counts once (its new total); a cancelled one only for what was executed.
+      advised: sum(calls.map((c) => c.counted_amount)),
+      advisedSell: sum(calls.filter((c) => c.action !== "BUY").map((c) => c.counted_amount)),
+      advisedBuy: sum(calls.filter((c) => c.action === "BUY").map((c) => c.counted_amount)),
       executed: sum(executions.map((e) => e.amount)),
       executedSell: sum(executions.filter((e) => e.action !== "BUY").map((e) => e.amount)),
       executedBuy: sum(executions.filter((e) => e.action === "BUY").map((e) => e.amount)),
-      callCount: calls.length,
+      callCount: calls.filter((c) => c.status !== "REVISED").length,
     },
   };
 }

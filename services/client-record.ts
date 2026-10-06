@@ -92,12 +92,18 @@ export interface AgreementInput {
   notes?: string | null;
 }
 
-export async function addAgreement(tx: Tx, actor: Actor, clientId: string, a: AgreementInput): Promise<string> {
+/** Checks an agreement before anything is stored (so a bad form never leaves a file behind). */
+export function validateAgreement(a: AgreementInput): void {
   if (!(AGREEMENT_TYPES as readonly string[]).includes(a.agreementType)) throw new AppError("Choose the agreement type.");
-  const status = a.status ?? "SIGNED";
-  if (!(AGREEMENT_STATUSES as readonly string[]).includes(status)) throw new AppError("Invalid status.");
+  if (!(AGREEMENT_STATUSES as readonly string[]).includes(a.status ?? "SIGNED")) throw new AppError("Invalid status.");
   if (!a.title.trim()) throw new AppError("Give the agreement a title.");
-  if (status === "SIGNED" && !iso(a.signedOn)) throw new AppError("Enter the date it was signed.");
+  if ((a.status ?? "SIGNED") === "SIGNED" && !iso(a.signedOn)) throw new AppError("Enter the date it was signed.");
+  if (iso(a.validFrom) && iso(a.validTo) && (a.validTo as string) < (a.validFrom as string)) throw new AppError("'Valid till' is before 'valid from'.");
+}
+
+export async function addAgreement(tx: Tx, actor: Actor, clientId: string, a: AgreementInput): Promise<string> {
+  validateAgreement(a);
+  const status = a.status ?? "SIGNED";
   const rows = await tx<{ id: string }[]>`
     insert into public.client_agreements (client_id, agreement_type, title, reference_no, signed_on, valid_from, valid_to, status, document_id, notes, created_by)
     values (${clientId}, ${a.agreementType}, ${a.title.trim()}, ${a.referenceNo || null}, ${iso(a.signedOn)}, ${iso(a.validFrom)},
@@ -282,7 +288,8 @@ export async function getTimeline(tx: Tx, clientId: string, opts: { kinds?: stri
 // What needs attention on a client, for the header of the client page.
 // -----------------------------------------------------------------------------
 export interface ClientAlerts {
-  unadvised: { runId: string; count: number; amount: number } | null;
+  /** runId: the newest run with trades to review; runs: how many runs have some. */
+  unadvised: { runId: string; runs: number; count: number; amount: number } | null;
   draftPlan: { id: string; name: string; kind: string } | null;
   followUpsDue: number;
   openCalls: number;
@@ -304,7 +311,7 @@ export async function getClientAlerts(tx: Tx, clientId: string): Promise<ClientA
       and follow_up_done_at is null`)[0];
   const calls = (await tx<{ n: number }[]>`select count(*)::int as n from public.v_advice_items where client_id = ${clientId} and is_open`)[0];
   return {
-    unadvised: un.length ? { runId: un[0].run_id, count: un.reduce((t, r) => t + r.n, 0), amount: un.reduce((t, r) => t + r.amount, 0) } : null,
+    unadvised: un.length ? { runId: un[0].run_id, runs: un.length, count: un.reduce((t, r) => t + r.n, 0), amount: un.reduce((t, r) => t + r.amount, 0) } : null,
     draftPlan: draft ? { id: draft.id, name: draft.plan_name, kind: draft.plan_kind } : null,
     followUpsDue: fu?.n ?? 0,
     openCalls: calls?.n ?? 0,

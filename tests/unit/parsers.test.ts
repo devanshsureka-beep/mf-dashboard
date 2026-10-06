@@ -84,6 +84,9 @@ describe("CAS parser (KFintech + CAMS consolidated, detailed)", () => {
     expect(classifyTransaction("Initial Allotment").type).toBe("PURCHASE");
     expect(classifyTransaction("Payment - Units Extinguished").type).toBe("REDEMPTION");
     expect(classifyTransaction("Payment - Units Extinguished-Reversed").type).toBe("OTHER");
+    expect(classifyTransaction("*** Redemption Reversed - STT Paid ***", 10.5).type).toBe("OTHER");
+    expect(classifyTransaction("Purchase Reversal - Stamp Duty", -10.5).type).toBe("OTHER");
+    expect(classifyTransaction("Units Extinguished on Merger", -100).type).toBe("MERGER");
   });
 });
 

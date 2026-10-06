@@ -88,7 +88,14 @@ export async function bulkUnadvisedAction(runId: string, input: BulkUnadvisedInp
     at = fromISTDateTimeLocal(input.communicatedAt);
     if (Number.isNaN(at.getTime())) return { ok: 0, failed: [{ id: "", error: "Invalid call time." }] };
   }
+  // Only rows of this run (the page never sends others; this keeps it that way).
+  const inRun = new Set((await actionTx((tx) => tx<{ id: string }[]>`
+    select id from public.reconciliation_matches where run_id = ${runId} and id = any(${ids}::uuid[])`)).map((r) => r.id));
   for (const id of ids) {
+    if (!inRun.has(id)) {
+      out.failed.push({ id, error: "This trade is not part of this CAS matching run." });
+      continue;
+    }
     try {
       if (input.decision === "ADVISED") {
         await actionTx((tx, actor) => recordAdvisedOffline(tx, actor, id, { channel, communicatedAt: at, note }), { roles: ["ADMIN", "ADVISOR"] });

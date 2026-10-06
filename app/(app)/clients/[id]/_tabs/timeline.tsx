@@ -48,7 +48,7 @@ export async function TimelineTab({ clientId, actor, kind }: { clientId: string;
                     <span className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full", DOT[e.kind])} aria-hidden />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-baseline gap-x-2">
-                        {e.href ? <Link href={e.href} className="truncate text-sm font-medium hover:underline">{e.title}</Link> : <span className="truncate text-sm font-medium">{e.title}</span>}
+                        {e.href ? <Link href={e.href} prefetch={e.href.startsWith("/api/") ? false : undefined} className="truncate text-sm font-medium hover:underline">{e.title}</Link> : <span className="truncate text-sm font-medium">{e.title}</span>}
                         {e.amount !== null ? <span className="text-sm font-semibold"><Money value={e.amount} full /></span> : null}
                       </div>
                       {e.detail ? <div className="truncate text-xs text-muted" title={e.detail}>{e.detail}</div> : null}

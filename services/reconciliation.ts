@@ -165,10 +165,12 @@ async function loadMatchCalls(tx: Tx, clientId: string): Promise<{ calls: MatchC
     status: "ISSUED" | "PARTIALLY_EXECUTED" | "EXECUTED"; quantity_basis: "AMOUNT" | "UNITS";
     advised_amount: number; advised_units: number | null; executed_amount: number; executed_units: number;
     communicated_at: Date; unverified_amount: number; unverified_units: number; folio_number: string | null;
+    suggested_amount: number; suggested_units: number;
   }[]>`
     select v.id, v.security_id, sm.isin, v.action, v.status, v.quantity_basis, v.advised_amount, v.advised_units, v.folio_number,
            v.executed_amount, v.executed_units, v.communicated_at,
-           coalesce(u.amount, 0) as unverified_amount, coalesce(u.units, 0) as unverified_units
+           coalesce(u.amount, 0) as unverified_amount, coalesce(u.units, 0) as unverified_units,
+           coalesce(sg.amount, 0) as suggested_amount, coalesce(sg.units, 0) as suggested_units
     from public.v_advice_items v
     join public.security_master sm on sm.id = v.security_id
     left join lateral (
@@ -177,13 +179,20 @@ async function loadMatchCalls(tx: Tx, clientId: string): Promise<{ calls: MatchC
       where e.advice_item_id = v.id and e.status in ('EXECUTED', 'PARTIAL')
         and e.cas_verified_at is null and e.verification_type <> 'CAS_VERIFIED'
     ) u on true
+    -- Matches already proposed for this call and still awaiting a decision: that part is spoken for.
+    left join lateral (
+      select sum(m.approx_amount) as amount, sum(abs(coalesce(m.allocated_units, 0))) as units
+      from public.reconciliation_matches m join public.reconciliation_runs r on r.id = m.run_id
+      where m.advice_item_id = v.id and m.status = 'SUGGESTED' and r.status <> 'CANCELLED'
+    ) sg on true
     where v.client_id = ${clientId}
       and (v.is_open or (v.status = 'EXECUTED' and coalesce(u.amount, 0) > 0))`;
   const calls: MatchCall[] = callRows.map((a) => ({
     id: a.id, securityId: a.security_id, isin: a.isin, action: a.action, status: a.status,
     quantityBasis: a.quantity_basis, advisedAmount: Number(a.advised_amount),
     advisedUnits: a.advised_units === null ? null : Number(a.advised_units),
-    executedAmount: Number(a.executed_amount), executedUnits: Number(a.executed_units),
+    executedAmount: Number(a.executed_amount) + Number(a.suggested_amount),
+    executedUnits: Number(a.executed_units) + Number(a.suggested_units),
     unverifiedExecutedAmount: Number(a.unverified_amount), unverifiedExecutedUnits: Number(a.unverified_units),
     communicatedAt: new Date(a.communicated_at), folio: a.folio_number,
   }));
@@ -319,7 +328,7 @@ export async function recheckRun(tx: Tx, actor: Actor | null, runId: string): Pr
   const closed = await tx`
     update public.reconciliation_matches set status = 'REJECTED', resolved_at = now(), resolved_by = ${actor?.id ?? null},
       reviewed_at = coalesce(reviewed_at, now()), reviewed_by = coalesce(reviewed_by, ${actor?.id ?? null}),
-      resolution_note = ${HISTORY_BEFORE_PREVIOUS_CAS}
+      resolution_note = ${HISTORY_BEFORE_PREVIOUS_CAS} || coalesce(E'\n' || resolution_note, '')
     where run_id = ${runId} and transaction_date <= ${run.previous_date}::date
       and classification in ('UNADVISED', 'SIP_INSTALMENT') and status in ('UNEXPLAINED', 'SUGGESTED')`;
 

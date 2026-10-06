@@ -147,7 +147,7 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
       {alerts.unadvised || unchecked || alerts.draftPlan || !c.active_plan_id || alerts.followUpsDue || premium.premium_status !== "ACTIVE" || premium.renewal_due || premium.agreement_status !== "VALID" ? (
         <div className="mt-2 flex flex-wrap gap-1.5">
           {alerts.unadvised ? (
-            <Alert href={`/reconciliation/${alerts.unadvised.runId}`} tone="red">
+            <Alert href={alerts.unadvised.runs > 1 ? `/clients/${id}?tab=cas` : `/reconciliation/${alerts.unadvised.runId}`} tone="red">
               Review {alerts.unadvised.count} unadvised trade(s) · {formatINRCompact(alerts.unadvised.amount)}
             </Alert>
           ) : null}

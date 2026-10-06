@@ -65,7 +65,8 @@ export function UnadvisedReview({ rows, canAdvise, act }: {
   }, [rows, q, filter, side]);
 
   const selectable = visible.filter((r) => r.state === "TO_REVIEW");
-  const chosen = rows.filter((r) => selected.has(r.id) && r.state === "TO_REVIEW");
+  // Only what is on screen is acted on: a search or filter never hides a selected trade.
+  const chosen = visible.filter((r) => selected.has(r.id) && r.state === "TO_REVIEW");
   const allChosen = selectable.length > 0 && selectable.every((r) => selected.has(r.id));
   const chosenTotal = chosen.reduce((t, r) => t + r.approx_amount, 0);
   const notRecordable = chosen.filter((r) => !r.canRecordAdvised).length;

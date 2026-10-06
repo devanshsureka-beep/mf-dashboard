@@ -83,4 +83,37 @@ describeDb("A newer CAS updates the client's plan", () => {
       expect(await ctx.as("ops", (t) => recheckRun(t, ctx.users.ops, runId))).toEqual({ added: 0, needsReview: 0, closedHistory: 1 });
     });
   });
+
+  it("re-check never gives a call more than it advised (a match awaiting a decision counts as taken)", async () => {
+    await scenario(async (ctx) => {
+      const p = await clientWithActivePlan(ctx);
+      const x = (await ctx.tx<{ scheme_name: string; isin: string }[]>`select scheme_name, isin from public.security_master where id = ${ctx.sec.X}`)[0];
+      const call = await ctx.as("advisor", (t) => issueAdvice(t, ctx.users.advisor, {
+        clientId: p.clientId, communicatedAt: new Date("2026-08-01T10:00:00+05:30"), channel: "PHONE",
+        items: [{ plan_item_id: p.sellItem, security_id: ctx.sec.X, action: "SELL", quantity_basis: "AMOUNT", advised_amount: 300000 }],
+      }));
+      const snap = await ctx.as("ops", async (t) => {
+        const pr = parsed("2026-09-20", [{ security: ctx.sec.X, name: x.scheme_name, units: 6000, nav: 150 }], [
+          { date: "2026-09-05", type: "REDEMPTION", scheme_name: x.scheme_name, isin: x.isin, folio_number: "T1", amount: -300000, units: -2000, nav: 150, balance_units: 8000 },
+        ]);
+        pr.holdings[0].isin = x.isin;
+        const id = await createSnapshotFromParsed(t, { clientId: p.clientId, casDocumentId: null, parsed: pr, source: "CAS", createdBy: ctx.users.ops.id });
+        await confirmSnapshot(t, id, "checked");
+        return id;
+      });
+      const { runId } = await ctx.as("ops", (t) => runReconciliation(t, ctx.users.ops, { clientId: p.clientId, currentSnapshotId: snap }));
+      // More than 30 days after the call: proposed, not auto-confirmed.
+      expect((await ctx.tx<{ status: string }[]>`select status from public.reconciliation_matches where run_id = ${runId}`).map((r) => r.status)).toEqual(["SUGGESTED"]);
+      await ctx.asSuper((t) => t`
+        insert into public.portfolio_transactions (client_id, source_snapshot_id, security_id, transaction_date, transaction_type,
+          scheme_name, isin, folio_number, units, nav, amount, description, dedupe_hash)
+        values (${p.clientId}, ${snap}, ${ctx.sec.X}, '2026-09-06', 'STT', ${x.scheme_name}, ${x.isin}, 'T1', -2000, 150, -300000,
+                'Redemption less STT', 'test-recheck-double')`);
+      await ctx.as("ops", (t) => recheckRun(t, ctx.users.ops, runId));
+      const rows = await ctx.tx<{ classification: string; advice_item_id: string | null }[]>`
+        select classification, advice_item_id from public.reconciliation_matches where run_id = ${runId} and transaction_date = '2026-09-06'`;
+      expect(rows).toEqual([{ classification: "UNADVISED", advice_item_id: null }]);
+      expect(call.itemIds).toHaveLength(1);
+    });
+  });
 });

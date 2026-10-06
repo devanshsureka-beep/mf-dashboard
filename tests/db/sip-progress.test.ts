@@ -54,4 +54,26 @@ describeDb("SIP alongside lump sums", () => {
       expect(sip.sip_monthly_target).toBe(0);
     });
   });
+
+  it("an instalment counts once even when two SIP lines are on the same fund", async () => {
+    await scenario(async (ctx) => {
+      const p = await clientWithActivePlan(ctx);
+      const y = (await ctx.tx<{ scheme_name: string; isin: string }[]>`select scheme_name, isin from public.security_master where id = ${ctx.sec.Y}`)[0];
+      await ctx.as("advisor", (t) => convertBuyToSip(t, ctx.users.advisor, p.buyItem, { monthlyAmount: 10000, lumpsumAmount: 100000, reason: "part 1" }));
+      await ctx.as("advisor", (t) => convertBuyToSip(t, ctx.users.advisor, p.buyItem, { monthlyAmount: 10000, lumpsumAmount: 100000, reason: "part 2" }));
+      await ctx.as("ops", async (t) => {
+        const pr = parsed("2026-10-01", [{ security: ctx.sec.Y, name: y.scheme_name, units: 200, nav: 100 }], [
+          { date: "2026-09-30", type: "SIP", scheme_name: y.scheme_name, isin: y.isin, folio_number: "T1", amount: 20000, units: 200, nav: 100, balance_units: 200 },
+        ]);
+        pr.holdings[0].isin = y.isin;
+        const id = await createSnapshotFromParsed(t, { clientId: p.clientId, casDocumentId: null, parsed: pr, source: "CAS", createdBy: ctx.users.ops.id });
+        await confirmSnapshot(t, id, "checked");
+      });
+      // Plan approved in the harness before 30-Sep, so the instalment is after both lines start.
+      await ctx.tx`update public.sip_plan_items set advised_at = '2026-09-01T10:00:00+05:30' where plan_id = ${p.planId}`;
+      const sip = await ctx.as("advisor", (t) => getClientSip(t, p.clientId));
+      expect(sip.sip_invested).toBe(20000);
+      expect(sip.sip_monthly_target).toBe(20000);
+    });
+  });
 });

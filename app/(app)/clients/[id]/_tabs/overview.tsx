@@ -42,7 +42,7 @@ export async function OverviewTab({ client: c, actor }: { client: ClientSummary;
                 <li key={i} className="flex items-baseline gap-3 px-4 py-2 text-sm">
                   <span className="w-28 shrink-0 text-[11px] text-muted">{formatDateTime(e.at)}</span>
                   <span className="min-w-0 flex-1 truncate">
-                    {e.href ? <Link href={e.href} className="font-medium hover:underline">{e.title}</Link> : <span className="font-medium">{e.title}</span>}
+                    {e.href ? <Link href={e.href} prefetch={e.href.startsWith("/api/") ? false : undefined} className="font-medium hover:underline">{e.title}</Link> : <span className="font-medium">{e.title}</span>}
                     {e.detail ? <span className="text-muted"> · {e.detail}</span> : null}
                   </span>
                   {e.amount !== null ? <span className="shrink-0 font-medium">{formatINRCompact(e.amount)}</span> : null}

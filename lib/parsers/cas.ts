@@ -100,6 +100,8 @@ export function classifyTransaction(desc: string, units: number | null = null): 
   const d = desc.toLowerCase();
   const sipCancelled = /sip\s*cancel/.test(d);
   const tax = /stamp duty/.test(d) ? "STAMP_DUTY" : /\bstt\b/.test(d) ? "STT" : /\btds\b/.test(d) ? "TDS" : null;
+  // Reversals, cancellations and rejections are never a new trade, whatever they mention.
+  if (/cancel|revers(al|ed)|rejection|rejected/.test(d)) return { type: "OTHER", sipCancelled };
   if (tax) {
     // A tax line moves no units. A row with units is the trade itself, its
     // description only mentions the tax (e.g. "Redemption - STT Paid").
@@ -108,14 +110,13 @@ export function classifyTransaction(desc: string, units: number | null = null): 
     if (rest.type !== "OTHER") return rest;
     return { type: units < 0 ? "REDEMPTION" : "PURCHASE", sipCancelled };
   }
-  if (/cancel|revers(al|ed)|rejection|rejected/.test(d)) return { type: "OTHER", sipCancelled };
   if (/switch[\s-]*(over\s*)?out|lateral (shift )?out|stp[\s-]*out|transfer[\s-]*out/.test(d)) return { type: "SWITCH_OUT", sipCancelled };
   if (/switch[\s-]*(over\s*)?in|lateral (shift )?in|stp[\s-]*in|transfer[\s-]*in|systematic transfer/.test(d)) return { type: "SWITCH_IN", sipCancelled };
+  if (/merger|amalgamation/.test(d)) return { type: "MERGER", sipCancelled };
   if (/redemption|redeem|repurchase|\bswp\b|systematic withdrawal|units extinguished/.test(d)) return { type: "REDEMPTION", sipCancelled };
   if (/(dividend|idcw).*(reinvest)/.test(d)) return { type: "DIVIDEND_REINVESTMENT", sipCancelled };
   if (/dividend|idcw/.test(d)) return { type: "DIVIDEND_PAYOUT", sipCancelled };
   if (/bonus/.test(d)) return { type: "BONUS", sipCancelled };
-  if (/merger|amalgamation/.test(d)) return { type: "MERGER", sipCancelled };
   if (/\bsip\b|systematic investment/.test(d)) return { type: "SIP", sipCancelled };
   if (/purchase|nfo|investment|new fund offer|subscription|initial allotment/.test(d)) return { type: "PURCHASE", sipCancelled };
   return { type: "OTHER", sipCancelled };

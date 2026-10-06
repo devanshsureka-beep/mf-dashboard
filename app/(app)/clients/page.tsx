@@ -28,7 +28,9 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
   const sp = await props.searchParams;
   const one = (k: string) => (typeof sp[k] === "string" && sp[k] ? (sp[k] as string) : undefined);
   const f: DeskFilters = {
-    q: one("q"), advisorId: one("advisor"), status: one("status"), risk: one("risk"),
+    q: one("q"), advisorId: /^[0-9a-f-]{36}$/i.test(one("advisor") ?? "") ? one("advisor") : undefined,
+    status: (CLIENT_STATUSES as readonly string[]).includes(one("status") ?? "") ? one("status") : undefined,
+    risk: (RISK_PROFILES as readonly string[]).includes(one("risk") ?? "") ? one("risk") : undefined,
     plan: one("plan") as DeskFilters["plan"], premium: one("premium") as DeskFilters["premium"],
     agreement: one("agreement") as DeskFilters["agreement"], attention: one("attention") as DeskFilters["attention"],
     minValue: lakh(one("min")), maxValue: lakh(one("max")), sort: (one("sort") as DeskFilters["sort"]) ?? "name",

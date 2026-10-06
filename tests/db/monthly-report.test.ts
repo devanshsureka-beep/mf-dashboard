@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { issueAdvice } from "@/services/advice";
+import { issueAdvice, reviseAdvice } from "@/services/advice";
 import { recordExecution } from "@/services/executions";
 import { getMonthlyReport, monthBounds } from "@/services/monthly-report";
 import { clientWithActivePlan, scenario, sql, TEST_DB } from "./harness";
@@ -37,6 +37,22 @@ describeDb("Monthly client report", () => {
       const empty = await ctx.as("advisor", (t) => getMonthlyReport(t, p.clientId, "2026-08"));
       expect(empty.calls).toHaveLength(0);
       expect(empty.endValue).toBeNull();
+    });
+  });
+
+  it("a revised call counts once, at its new total", async () => {
+    await scenario(async (ctx) => {
+      const p = await clientWithActivePlan(ctx);
+      const call = await ctx.as("advisor", (t) => issueAdvice(t, ctx.users.advisor, {
+        clientId: p.clientId, communicatedAt: new Date("2026-09-10T10:00:00+05:30"), channel: "PHONE",
+        items: [{ plan_item_id: p.sellItem, security_id: ctx.sec.X, action: "SELL", quantity_basis: "AMOUNT", advised_amount: 300000 }],
+      }));
+      await ctx.as("advisor", (t) => reviseAdvice(t, ctx.users.advisor, {
+        adviceItemId: call.itemIds[0], newTotalAmount: 400000, reason: "client wants more", communicatedAt: new Date("2026-09-11T10:00:00+05:30"), channel: "PHONE",
+      }));
+      const r = await ctx.as("advisor", (t) => getMonthlyReport(t, p.clientId, "2026-09"));
+      expect(r.calls).toHaveLength(2);
+      expect(r.totals).toMatchObject({ advised: 400000, advisedSell: 400000, callCount: 1 });
     });
   });
 });
