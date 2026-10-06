@@ -122,7 +122,7 @@ export function Sidebar({ name, role, signOut }: { name: string; role: AppRole; 
   return (
     <>
       {/* Phone / tablet top bar */}
-      <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-white/10 bg-sidebar px-4 lg:hidden">
+      <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-white/10 bg-sidebar px-4 lg:hidden print:hidden">
         <BrandMark />
         <button
           type="button"
@@ -138,7 +138,7 @@ export function Sidebar({ name, role, signOut }: { name: string; role: AppRole; 
 
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-40 flex w-64 flex-col bg-sidebar transition-transform lg:translate-x-0",
+          "fixed inset-y-0 left-0 z-40 flex w-64 flex-col bg-sidebar transition-transform lg:translate-x-0 print:hidden",
           open ? "translate-x-0" : "-translate-x-full",
         )}
       >

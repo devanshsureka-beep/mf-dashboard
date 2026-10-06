@@ -4,60 +4,56 @@ import { Field, Select, Input } from "@/components/ui/form";
 import { AdviceTable } from "@/components/app/advice-table";
 import { ActionForm, SubmitButton } from "@/components/app/action-form";
 import { ClientFields } from "@/components/app/client-form";
-import { SipTable } from "@/components/app/sip-table";
-import { StatCard } from "@/components/app/stat-card";
 import { EmptyState } from "@/components/app/page-header";
 import { withUserTx, type Actor } from "@/lib/db/tx";
 import { formatDateTime, formatINRCompact } from "@/lib/format";
 import { listAdviceLedger } from "@/services/advice";
 import { listAdvisors } from "@/services/clients";
-import { getSipItems } from "@/services/plans";
+import { getTimeline } from "@/services/client-record";
 import { listNotes } from "@/services/notes";
 import type { ClientSummary } from "@/types/domain";
 import { reassignAdvisorAction, updateClientAction } from "../../actions";
-import { setSipStatusAction } from "../actions";
 
 export async function OverviewTab({ client: c, actor }: { client: ClientSummary; actor: Actor }) {
   const data = await withUserTx(actor, async (tx) => ({
     open: await listAdviceLedger(tx, { clientId: c.client_id, status: "OPEN" }),
-    sips: c.active_plan_id ? await getSipItems(tx, c.active_plan_id) : [],
+    activity: await getTimeline(tx, c.client_id, { limit: 10 }),
     notes: (await listNotes(tx, c.client_id)).slice(0, 4),
     advisors: actor.role === "ADMIN" ? await listAdvisors(tx) : [],
   }));
-  const sip = {
-    toStop: data.sips.filter((s) => s.action === "STOP" && s.status !== "CANCELLED"),
-    toStart: data.sips.filter((s) => s.action !== "STOP" && s.status !== "CANCELLED"),
-  };
   const canAdvise = actor.role !== "OPERATIONS";
 
   return (
-    <div className="grid gap-4 xl:grid-cols-3">
-      <div className="space-y-4 xl:col-span-2">
+    <div className="grid gap-3 xl:grid-cols-3">
+      <div className="space-y-3 xl:col-span-2">
         <Card>
           <CardHeader><CardTitle>Open calls awaiting execution ({data.open.length})</CardTitle></CardHeader>
           {data.open.length ? <AdviceTable rows={data.open} showClient={false} compact /> : <CardContent><EmptyState title="No open calls" /></CardContent>}
         </Card>
 
         <Card>
-          <CardHeader><CardTitle>SIP transition</CardTitle></CardHeader>
-          <CardContent>
-            <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-5">
-              <StatCard label="SIPs to stop" value={sip.toStop.length} hint={formatINRCompact(sip.toStop.reduce((s, x) => s + (x.old_amount ?? 0), 0)) + "/mo"} />
-              <StatCard label="SIPs stopped" value={sip.toStop.filter((s) => s.status === "COMPLETED").length} tone="success" />
-              <StatCard label="SIPs to start" value={sip.toStart.length} hint={formatINRCompact(sip.toStart.reduce((s, x) => s + (x.new_amount ?? 0), 0)) + "/mo"} />
-              <StatCard label="SIPs started" value={sip.toStart.filter((s) => s.status === "COMPLETED").length} tone="success" />
-              <StatCard label="Pending SIP actions" value={data.sips.filter((s) => s.status === "PLANNED" || s.status === "ADVISED").length} tone="attention" />
-            </div>
-            {data.sips.length ? (
-              <SipTable rows={data.sips} canUpdate action={setSipStatusAction.bind(null, c.client_id)} />
-            ) : (
-              <p className="text-sm text-muted">No SIP actions in the active plan.</p>
-            )}
-          </CardContent>
+          <CardHeader>
+            <CardTitle>Recent activity</CardTitle>
+            <Link className="text-xs text-brand hover:underline" href={`/clients/${c.client_id}?tab=timeline`}>Full timeline →</Link>
+          </CardHeader>
+          {data.activity.length ? (
+            <ol className="divide-y divide-border">
+              {data.activity.map((e, i) => (
+                <li key={i} className="flex items-baseline gap-3 px-4 py-2 text-sm">
+                  <span className="w-28 shrink-0 text-[11px] text-muted">{formatDateTime(e.at)}</span>
+                  <span className="min-w-0 flex-1 truncate">
+                    {e.href ? <Link href={e.href} className="font-medium hover:underline">{e.title}</Link> : <span className="font-medium">{e.title}</span>}
+                    {e.detail ? <span className="text-muted"> · {e.detail}</span> : null}
+                  </span>
+                  {e.amount !== null ? <span className="shrink-0 font-medium">{formatINRCompact(e.amount)}</span> : null}
+                </li>
+              ))}
+            </ol>
+          ) : <CardContent><EmptyState title="Nothing recorded yet" /></CardContent>}
         </Card>
       </div>
 
-      <div className="space-y-4">
+      <div className="space-y-3">
         <Card>
           <CardHeader>
             <CardTitle>Recent notes</CardTitle>

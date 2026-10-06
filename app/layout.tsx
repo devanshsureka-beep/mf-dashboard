@@ -22,8 +22,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-full">
         {isStaging ? (
           <>
-            <div className="fixed inset-x-0 top-0 z-50 h-1 bg-amber-500" aria-hidden />
-            <div className="fixed bottom-3 left-1/2 z-50 -translate-x-1/2 rounded-full border border-amber-300 bg-amber-100 px-4 py-1.5 text-xs font-semibold text-amber-900 shadow">
+            <div className="fixed inset-x-0 top-0 z-50 h-1 bg-amber-500 print:hidden" aria-hidden />
+            <div className="fixed bottom-3 left-1/2 z-50 -translate-x-1/2 print:hidden rounded-full border border-amber-300 bg-amber-100 px-4 py-1.5 text-xs font-semibold text-amber-900 shadow">
               TEST SITE · separate test database · nothing here affects live clients
             </div>
           </>
