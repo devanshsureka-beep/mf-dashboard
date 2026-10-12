@@ -9,7 +9,11 @@ import { formatDate, formatINRCompact, humanize } from "@/lib/format";
 import { pageData } from "@/lib/server";
 import { cn } from "@/lib/utils";
 import { listAdvisors, listDeskClients, type DeskFilters } from "@/services/clients";
+import { listDeletedClients } from "@/services/client-admin";
 import { CLIENT_STATUSES, RISK_PROFILES } from "@/types/domain";
+import { ActionForm, SubmitButton } from "@/components/app/action-form";
+import { SelectAll } from "@/components/app/select-all";
+import { deleteClientsAction, restoreClientsAction } from "./actions";
 
 export const metadata = { title: "Premium clients" };
 
@@ -35,11 +39,15 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
     agreement: one("agreement") as DeskFilters["agreement"], attention: one("attention") as DeskFilters["attention"],
     minValue: lakh(one("min")), maxValue: lakh(one("max")), sort: (one("sort") as DeskFilters["sort"]) ?? "name",
   };
-  const { clients, all, advisors, actor } = await pageData(async (tx) => ({
+  const showDeleted = one("deleted") === "1";
+  const { clients, all, advisors, deleted, actor } = await pageData(async (tx, a) => ({
     clients: await listDeskClients(tx, f),
     all: await listDeskClients(tx, {}),
     advisors: await listAdvisors(tx),
+    deleted: a.role === "ADMIN" ? await listDeletedClients(tx) : [],
   }));
+  const isAdmin = actor.role === "ADMIN";
+  if (isAdmin && showDeleted) return <DeletedClients rows={deleted} />;
 
   const count = (pred: (c: (typeof all)[number]) => boolean) => all.filter(pred).length;
   const qs = (patch: Record<string, string | undefined>) => {
@@ -56,7 +64,12 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
       <PageHeader
         title="Premium clients"
         subtitle={<>{clients.length} of {all.length} clients · <Money value={totals.value} /> under advice · <Money value={totals.pending} /> pending execution · <Money value={totals.premium} /> premium received</>}
-        actions={actor.role !== "OPERATIONS" ? <LinkButton href="/clients/new">New client</LinkButton> : null}
+        actions={
+          <div className="flex items-center gap-2">
+            {isAdmin && deleted.length ? <Link href="/clients?deleted=1" className="text-xs text-muted hover:underline">Deleted clients · {deleted.length}</Link> : null}
+            {actor.role !== "OPERATIONS" ? <LinkButton href="/clients/new">New client</LinkButton> : null}
+          </div>
+        }
       />
 
       {/* One-click views of what needs work */}
@@ -107,6 +120,25 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
         </div>
       </form>
 
+      {isAdmin ? (
+        <ActionForm action={deleteClientsAction}>
+          <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-red-200 bg-red-50/50 p-2 text-xs">
+            <span className="font-medium text-red-800">Admin · delete clients</span>
+            <span className="text-muted">Tick clients below, give a reason, then delete. History is kept and an admin can restore them.</span>
+            <Input name="reason" required placeholder="Reason (e.g. duplicate onboarding)" className="h-8 w-64" aria-label="Reason for deleting" />
+            <SubmitButton variant="danger" size="sm" confirm="Delete the ticked clients? They will be hidden from every screen (an admin can restore them).">Delete selected</SubmitButton>
+          </div>
+          <ClientTable clients={clients} selectable />
+        </ActionForm>
+      ) : <ClientTable clients={clients} />}
+    </>
+  );
+}
+
+type Row = Awaited<ReturnType<typeof listDeskClients>>[number];
+
+function ClientTable({ clients, selectable = false }: { clients: Row[]; selectable?: boolean }) {
+  return (
       <Card>
         {clients.length === 0 ? (
           <div className="p-4"><EmptyState title="No clients match these filters" /></div>
@@ -115,6 +147,7 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
             <table className="w-full text-[13px]">
               <thead className="border-b border-border bg-slate-50 text-left text-[10.5px] font-semibold uppercase tracking-wide text-muted">
                 <tr>
+                  {selectable ? <th className="w-8 py-2 pl-3"><SelectAll label="" /></th> : null}
                   <th className="px-3 py-2">Client</th>
                   <th className="px-2 py-2">Advisor · risk</th>
                   <th className="px-2 py-2 text-right">Value today</th>
@@ -132,6 +165,7 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
                   const advised = target > 0 ? Math.round(((c.advised_sell + c.advised_buy) / target) * 100) : 0;
                   return (
                     <tr key={c.client_id} className="hover:bg-slate-50/70">
+                      {selectable ? <td className="py-2 pl-3 align-top"><input type="checkbox" name="ids" value={c.client_id} aria-label={`Select ${c.full_name}`} /></td> : null}
                       <td className="px-3 py-2">
                         <Link href={`/clients/${c.client_id}`} className="font-medium text-ink hover:underline">{c.full_name}</Link>
                         <div className="flex flex-wrap items-center gap-1 text-[11px] text-muted">
@@ -175,6 +209,40 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
           </div>
         )}
       </Card>
+  );
+}
+
+function DeletedClients({ rows }: { rows: Awaited<ReturnType<typeof listDeletedClients>> }) {
+  return (
+    <>
+      <PageHeader title="Deleted clients" subtitle="Hidden from every screen. Their full history is kept; restore brings everything back." actions={<LinkButton href="/clients" variant="outline">Back to clients</LinkButton>} />
+      {rows.length === 0 ? <Card><div className="p-4"><EmptyState title="No deleted clients" /></div></Card> : (
+        <ActionForm action={restoreClientsAction}>
+          <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-white p-2 text-xs">
+            <Input name="reason" required placeholder="Reason for restoring" className="h-8 w-64" aria-label="Reason for restoring" />
+            <SubmitButton size="sm">Restore selected</SubmitButton>
+          </div>
+          <Card>
+            <table className="w-full text-[13px]">
+              <thead className="border-b border-border bg-slate-50 text-left text-[10.5px] font-semibold uppercase tracking-wide text-muted">
+                <tr><th className="w-8 py-2 pl-3"><SelectAll label="" /></th><th className="px-3 py-2">Client</th><th className="px-2 py-2">PAN</th><th className="px-2 py-2">Deleted</th><th className="px-2 py-2">By</th><th className="px-2 py-2">Reason</th></tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {rows.map((r) => (
+                  <tr key={r.id}>
+                    <td className="py-2 pl-3"><input type="checkbox" name="ids" value={r.id} aria-label={`Select ${r.full_name}`} /></td>
+                    <td className="px-3 py-2 font-medium">{r.full_name}<div className="font-mono text-[11px] text-muted">{r.client_code}</div></td>
+                    <td className="px-2 py-2 font-mono text-xs">{r.pan ?? "—"}</td>
+                    <td className="whitespace-nowrap px-2 py-2 text-xs">{formatDate(r.deleted_at)}</td>
+                    <td className="px-2 py-2 text-xs">{r.deleted_by_name ?? "—"}</td>
+                    <td className="px-2 py-2 text-xs">{r.deleted_reason ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Card>
+        </ActionForm>
+      )}
     </>
   );
 }

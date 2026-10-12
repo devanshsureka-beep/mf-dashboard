@@ -73,3 +73,23 @@ export async function signedUrlForService(path: string, seconds = 600): Promise<
   if (error || !data) throw new AppError(`Could not sign storage URL: ${error?.message ?? "unknown"}`);
   return data.signedUrl;
 }
+
+/**
+ * Client exports (ZIP of everything about a client) live in their own private
+ * bucket with no user policies: only the server writes them, after the
+ * RLS-checked export was built, and hands out a short signed URL. Earlier
+ * exports of the same client are removed so copies don't pile up.
+ */
+export const EXPORT_BUCKET = "client-exports";
+
+export async function storeClientExport(clientId: string, bytes: Uint8Array, downloadName: string): Promise<string> {
+  const store = createSupabaseAdminClient().storage.from(EXPORT_BUCKET);
+  const old = await store.list(clientId);
+  if (old.data?.length) await store.remove(old.data.map((o) => `${clientId}/${o.name}`));
+  const path = `${clientId}/${Date.now()}.zip`;
+  const up = await store.upload(path, bytes, { contentType: "application/zip", upsert: true });
+  if (up.error) throw new AppError(`Could not store the export: ${up.error.message}`);
+  const { data, error } = await store.createSignedUrl(path, 300, { download: downloadName });
+  if (error || !data) throw new AppError(`Could not sign the export URL: ${error?.message ?? "unknown"}`);
+  return data.signedUrl;
+}

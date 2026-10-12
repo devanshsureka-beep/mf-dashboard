@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { LinkButton } from "@/components/ui/button";
+import { buttonVariants, LinkButton } from "@/components/ui/button";
 import { Money } from "@/components/app/money";
 import { StatusBadge } from "@/components/app/status-badge";
 import { TransitionSummary } from "@/components/app/transition-summary";
@@ -139,6 +139,7 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
           <LinkButton href={`/clients/${id}/cas/upload`} variant="outline" size="sm">Upload CAS</LinkButton>
           <LinkButton href={`/clients/${id}?tab=notes#add-note`} variant="outline" size="sm">Add note</LinkButton>
           <LinkButton href={`/clients/${id}/report?month=${thisMonth}`} variant="outline" size="sm">Monthly report</LinkButton>
+          <a href={`/api/clients/${id}/export`} download className={buttonVariants({ variant: "outline", size: "sm" })} title="All records as spreadsheets plus every CAS, advisory report and document">Download everything (ZIP)</a>
           {canAdvise && c.active_plan_id ? <LinkButton href={`/clients/${id}/plans/${c.active_plan_id}`} size="sm">Open portfolio plan</LinkButton> : null}
         </div>
       </section>

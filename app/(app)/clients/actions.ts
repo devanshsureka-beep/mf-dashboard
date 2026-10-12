@@ -7,6 +7,7 @@ import { runAction, type ActionResult } from "@/lib/actions";
 import { AppError } from "@/lib/errors";
 import { actionTx, ADVISORY_ROLES } from "@/lib/server";
 import { createClient, reassignPrimaryAdvisor, updateClient } from "@/services/clients";
+import { deleteClients, restoreClients } from "@/services/client-admin";
 import { RISK_PROFILES, CLIENT_STATUSES } from "@/types/domain";
 
 const clientSchema = z.object({
@@ -59,5 +60,28 @@ export async function reassignAdvisorAction(clientId: string, _p: ActionResult |
     });
     revalidatePath(`/clients/${clientId}`);
     return "Primary advisor updated.";
+  });
+}
+
+/** Admin: delete the ticked clients (hidden everywhere, history kept, can be restored). */
+export async function deleteClientsAction(_p: ActionResult | null, fd: FormData): Promise<ActionResult> {
+  return runAction("deleteClients", async () => {
+    const ids = fd.getAll("ids").map(String);
+    const reason = String(fd.get("reason") ?? "");
+    const n = await actionTx((tx, actor) => deleteClients(tx, actor, ids, reason), { roles: ["ADMIN"] });
+    revalidatePath("/clients");
+    revalidatePath("/");
+    return `${n} client(s) deleted. They are hidden everywhere; restore them from "Deleted clients" if needed.`;
+  });
+}
+
+/** Admin: restore deleted clients. */
+export async function restoreClientsAction(_p: ActionResult | null, fd: FormData): Promise<ActionResult> {
+  return runAction("restoreClients", async () => {
+    const ids = fd.getAll("ids").map(String);
+    const n = await actionTx((tx, actor) => restoreClients(tx, actor, ids, String(fd.get("reason") ?? "")), { roles: ["ADMIN"] });
+    revalidatePath("/clients");
+    revalidatePath("/");
+    return `${n} client(s) restored.`;
   });
 }
