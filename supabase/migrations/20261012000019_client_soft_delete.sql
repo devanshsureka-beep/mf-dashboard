@@ -67,7 +67,7 @@ begin
 end;
 $$;
 
-create trigger clients_guard_delete before update on public.clients
+create or replace trigger clients_guard_delete before update on public.clients
   for each row execute function app.guard_client_delete();
 
 -- Private bucket for "Download everything (ZIP)" client exports. No storage
