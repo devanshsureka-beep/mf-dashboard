@@ -614,7 +614,7 @@ export async function recordAdvisedOffline(
     throw new AppError(`The call must have been given on or before the trade (${m.transaction_date}).`);
   }
 
-  // The plan line for this fund: Sell / Switch, else Migrate to Direct (redeem leg), or Buy.
+  // The plan line for this fund: Sell or Buy.
   const planItemId = await findPlanLine(tx, m.client_id, m.security_id, action);
 
   await setAuditReason(tx, opts.note?.trim() || "Call given outside the dashboard; recorded from the CAS trade");

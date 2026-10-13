@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/form";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { formatDate, humanize } from "@/lib/format";
+import { asBuySellKeep } from "@/lib/domain/report-plan";
 import { checkDocumentsAction, type CheckResult } from "./actions";
 
 const ICON = {
@@ -17,7 +18,8 @@ const ICON = {
   WARN: <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600" />,
   FAIL: <XCircle className="h-5 w-5 shrink-0 text-red-600" />,
 };
-const ACTION_TONE = { SELL: "danger", SWITCH: "purple", BUY: "success", RETAIN: "muted", MIGRATE: "info" } as const;
+const ACTION_TONE = { SELL: "danger", BUY: "success", RETAIN: "muted" } as const;
+const ACTION_LABEL = { SELL: "SELL", BUY: "BUY", RETAIN: "KEEP" } as const;
 const SIP_TONE = { START: "success", STOP: "danger", CHANGE: "info" } as const;
 
 export function Checker() {
@@ -78,9 +80,11 @@ export function Checker() {
 function Result({ r }: { r: Extract<CheckResult, { ok: true }> }) {
   const fails = r.checks.filter((c) => c.status === "FAIL");
   const warns = r.checks.filter((c) => c.status === "WARN");
-  const sells = r.items.filter((i) => i.action === "SELL" || i.action === "SWITCH");
-  const buys = r.items.filter((i) => i.action === "BUY");
-  const retains = r.items.filter((i) => i.action === "RETAIN");
+  // As the plan will store it: Buy, Sell or Keep (a Migrate to Direct is a Sell + a Buy).
+  const items = asBuySellKeep(r.items);
+  const sells = items.filter((i) => i.action === "SELL");
+  const buys = items.filter((i) => i.action === "BUY");
+  const retains = items.filter((i) => i.action === "RETAIN");
   return (
     <>
       <div className={`rounded-lg border p-4 ${r.canOnboard ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"}`}>
@@ -132,15 +136,15 @@ function Result({ r }: { r: Extract<CheckResult, { ok: true }> }) {
           <CardHeader>
             <CardTitle>Plan that would be created (draft)</CardTitle>
             <span className="text-xs text-muted">
-              Sell <Money value={sells.reduce((t, i) => t + i.target_amount, 0)} full /> · Buy <Money value={buys.reduce((t, i) => t + i.target_amount, 0)} full /> · {retains.length} retained
+              Sell <Money value={sells.reduce((t, i) => t + i.target_amount, 0)} full /> · Buy <Money value={buys.reduce((t, i) => t + i.target_amount, 0)} full /> · {retains.length} kept
             </span>
           </CardHeader>
           <Table className="text-[13px]">
             <THead><TR><TH>Action</TH><TH>Fund (as in the CAS)</TH><TH>ISIN</TH><TH>Folio</TH><TH className="text-right">Amount</TH><TH className="text-right">CAS value</TH><TH>From the report</TH></TR></THead>
             <TBody>
-              {r.items.map((i, k) => (
+              {items.map((i, k) => (
                 <TR key={k}>
-                  <TD><Badge tone={ACTION_TONE[i.action]}>{i.action}</Badge></TD>
+                  <TD><Badge tone={ACTION_TONE[i.action]}>{ACTION_LABEL[i.action]}</Badge></TD>
                   <TD className="max-w-72"><div className="truncate" title={i.scheme_name}>{i.scheme_name}</div></TD>
                   <TD className="num text-xs">{i.isin ?? <span className="text-muted">new fund</span>}</TD>
                   <TD className="num text-xs">{i.folio_number ?? "—"}</TD>

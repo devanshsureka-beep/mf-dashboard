@@ -1,71 +1,107 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { advisoryReportResultSchema } from "@/lib/integrations/contracts";
-import { recordExecution } from "@/services/executions";
-import { convertMigrateNotes, countMigrateNotes, getMigrations, issueMigrationCalls } from "@/services/migrations";
+import { convertMigrateNotes, countMigrateNotes } from "@/services/migrations";
+import { issueAdvice, linkCallsToPlan } from "@/services/advice";
 import { addPlanItem, approvePlan, ingestAdvisoryReport } from "@/services/plans";
 import { ingestNavFeed } from "@/services/nav";
 import { resolveFundRef } from "@/services/fund-search";
 import { confirmSnapshot, createSnapshotFromParsed } from "@/services/portfolio";
-import { runReconciliation } from "@/services/reconciliation";
-import { clientWithActivePlan, parsed, scenario, sql, TEST_DB } from "./harness";
+import { recordAdvisedOffline, runReconciliation } from "@/services/reconciliation";
+import { clientWithActivePlan, parsed, scenario, sql, TEST_DB, type Ctx } from "./harness";
 
 const describeDb = TEST_DB ? describe : describe.skip;
 afterAll(async () => {
   await sql?.end();
 });
 
-describeDb("Migrate to Direct checklist", () => {
-  it("is a plan line outside the sell/buy targets, executed through a switch call", async () => {
-    await scenario(async (ctx) => {
-      const p = await clientWithActivePlan(ctx); // holds X (10,000 units)
-      const names = await ctx.tx<{ id: string; scheme_name: string }[]>`select id, scheme_name from public.security_master where id in (${ctx.sec.X}, ${ctx.sec.Y})`;
-      const nameOf = (id: string) => names.find((n) => n.id === id)!.scheme_name;
-      const payload = advisoryReportResultSchema.parse({
-        client_id: p.clientId, status: "PARSED",
-        plan: { plan_name: "Rebalancing with migration" },
-        items: [
-          { action: "MIGRATE", scheme_name: nameOf(ctx.sec.X), target_amount: 1500000, current_amount: 1500000, switch_to_scheme_name: nameOf(ctx.sec.Y), reason: "MIGRATE TO DIRECT; Hold" },
-          { action: "BUY", scheme_name: nameOf(ctx.sec.Y), target_amount: 100000 },
-        ],
-      });
-      const ids = { [nameOf(ctx.sec.X).toLowerCase()]: ctx.sec.X, [nameOf(ctx.sec.Y).toLowerCase()]: ctx.sec.Y };
-      const draft = await ctx.as("advisor", (t) => ingestAdvisoryReport(t, payload, ctx.users.advisor.id, { extractionSource: "IMPORT", securityIds: ids }));
-      await ctx.as("advisor", (t) => approvePlan(t, ctx.users.advisor, draft.planId!, "replace with migration plan"));
-      const planId = draft.planId!;
+/** Replace the plan with: Migrate X (Regular) to Y (Direct), ₹15L; buy Y ₹1L. */
+async function migratePlan(ctx: Ctx, clientId: string) {
+  const names = await ctx.tx<{ id: string; scheme_name: string }[]>`select id, scheme_name from public.security_master where id in (${ctx.sec.X}, ${ctx.sec.Y})`;
+  const nameOf = (id: string) => names.find((n) => n.id === id)!.scheme_name;
+  const payload = advisoryReportResultSchema.parse({
+    client_id: clientId, status: "PARSED",
+    plan: { plan_name: "Rebalancing with migration" },
+    items: [
+      { action: "MIGRATE", scheme_name: nameOf(ctx.sec.X), target_amount: 1500000, current_amount: 1500000, switch_to_scheme_name: nameOf(ctx.sec.Y), reason: "MIGRATE TO DIRECT; Hold" },
+      { action: "BUY", scheme_name: nameOf(ctx.sec.Y), target_amount: 100000 },
+    ],
+    declared_totals: { exit_value: 0, buy_value: 100000 },
+  });
+  const ids = { [nameOf(ctx.sec.X).toLowerCase()]: ctx.sec.X, [nameOf(ctx.sec.Y).toLowerCase()]: ctx.sec.Y };
+  const draft = await ctx.as("advisor", (t) => ingestAdvisoryReport(t, payload, ctx.users.advisor.id, { extractionSource: "IMPORT", securityIds: ids }));
+  await ctx.as("advisor", (t) => approvePlan(t, ctx.users.advisor, draft.planId!, "replace with migration plan"));
+  return { planId: draft.planId!, warnings: draft.warnings };
+}
 
-      // Not in the lump-sum targets.
+describeDb("Plan lines are Buy, Sell or Keep", () => {
+  it("stores a Migrate to Direct from the report as a Sell of the Regular plan and a Buy of the Direct plan", async () => {
+    await scenario(async (ctx) => {
+      const p = await clientWithActivePlan(ctx);
+      const { planId, warnings } = await migratePlan(ctx, p.clientId);
+      // The report's totals leave out the migration: no false mismatch.
+      expect(warnings).toEqual([]);
+      const lines = await ctx.tx<{ action: string; security_id: string; target_amount: number; reason: string | null }[]>`
+        select action, security_id, target_amount::float8, reason from public.advisory_plan_items where plan_id = ${planId} order by priority, action desc`;
+      expect(lines).toEqual([
+        { action: "SELL", security_id: ctx.sec.X, target_amount: 1500000, reason: "Migrate to Direct: redeem the Regular plan; Hold" },
+        { action: "BUY", security_id: ctx.sec.Y, target_amount: 1500000, reason: "Migrate to Direct: buy the Direct plan with the Regular redemption" },
+        { action: "BUY", security_id: ctx.sec.Y, target_amount: 100000, reason: null },
+      ]);
       const t = (await ctx.tx<{ sell_target: number; buy_target: number }[]>`
         select sell_target::float8, buy_target::float8 from public.v_plan_transition where plan_id = ${planId}`)[0];
-      expect(t).toEqual({ sell_target: 0, buy_target: 100000 });
+      expect(t).toEqual({ sell_target: 1500000, buy_target: 1600000 });
 
-      let m = await ctx.as("advisor", (tx) => getMigrations(tx, planId));
-      expect(m).toHaveLength(1);
-      expect(m[0]).toMatchObject({ migration_status: "TO_DO", switch_to_security_id: ctx.sec.Y, regular_units_now: 10000 });
-
-      const r = await ctx.as("advisor", (tx) => issueMigrationCalls(tx, ctx.users.advisor, {
-        clientId: p.clientId, planId, planItemIds: [m[0].plan_item_id], channel: "PHONE", communicatedAt: new Date("2026-09-30T11:00:00+05:30"),
-      }));
-      expect(r.count).toBe(1);
-      const call = (await ctx.tx<{ id: string; action: string; quantity_basis: string; advised_units: number }[]>`
-        select id, action, quantity_basis, advised_units::float8 from public.advice_items where plan_item_id = ${m[0].plan_item_id}`)[0];
-      expect(call).toMatchObject({ action: "SWITCH", quantity_basis: "UNITS", advised_units: 10000 });
-      m = await ctx.as("advisor", (tx) => getMigrations(tx, planId));
-      expect(m[0].migration_status).toBe("CALL_ISSUED");
-      // Issuing again does nothing for a line that already has a call.
-      await expect(ctx.as("advisor", (tx) => issueMigrationCalls(tx, ctx.users.advisor, {
-        clientId: p.clientId, planId, planItemIds: [m[0].plan_item_id], channel: "PHONE", communicatedAt: new Date("2026-09-30T11:00:00+05:30"),
-      }))).rejects.toThrow(/already have a call/);
-
-      await ctx.as("ops", (tx) => recordExecution(tx, ctx.users.ops, { adviceItemId: call.id, executionDate: "2026-09-30", executedAmount: 1510000, executedUnits: 10000, verificationType: "CLIENT_CONFIRMED" }));
-      m = await ctx.as("advisor", (tx) => getMigrations(tx, planId));
-      expect(m[0].migration_status).toBe("DONE");
-      // A switch moves money fund to fund: money left is unchanged.
-      const cash = await ctx.tx<{ money_left: number }[]>`select money_left::float8 from public.v_client_summary where client_id = ${p.clientId}`;
-      expect(cash[0].money_left).toBe(0);
+      // No Migrate or Switch lines can be added any more.
+      await expect(ctx.asSuper((tx) => tx`
+        insert into public.advisory_plan_items (plan_id, security_id, scheme_name, action, target_amount)
+        values (${planId}, ${ctx.sec.X}, 'x', 'MIGRATE', 1)`)).rejects.toThrow(/Buy, Sell or Keep/);
     });
   });
 
-  it("turns Migrate to Direct notes of an approved plan into checklist lines, pointing at the AMFI Direct plan", async () => {
+  it("links a CAS redemption and the Direct buy to the Sell and Buy lines; an admin links earlier calls by fund", async () => {
+    await scenario(async (ctx) => {
+      const p = await clientWithActivePlan(ctx); // X 10,000 units @150
+      const { planId } = await migratePlan(ctx, p.clientId);
+      const x = (await ctx.tx<{ scheme_name: string; isin: string }[]>`select scheme_name, isin from public.security_master where id = ${ctx.sec.X}`)[0];
+      const snap = await ctx.as("ops", async (t) => {
+        const pr = parsed("2026-09-16", [{ security: ctx.sec.X, name: x.scheme_name, units: 8000, nav: 150 }], [
+          { date: "2026-09-12", type: "REDEMPTION", scheme_name: x.scheme_name, isin: x.isin, folio_number: "T1", amount: -300000, units: -2000, nav: 150, balance_units: 8000 },
+        ]);
+        pr.holdings[0].isin = x.isin;
+        const id = await createSnapshotFromParsed(t, { clientId: p.clientId, casDocumentId: null, parsed: pr, source: "CAS", createdBy: ctx.users.ops.id });
+        await confirmSnapshot(t, id, "checked");
+        return id;
+      });
+      const { runId } = await ctx.as("ops", (t) => runReconciliation(t, ctx.users.ops, { clientId: p.clientId, currentSnapshotId: snap }));
+      const unadvised = (await ctx.tx<{ id: string }[]>`
+        select id from public.reconciliation_matches where run_id = ${runId} and classification = 'UNADVISED'`)[0];
+      const out = await ctx.as("advisor", (t) => recordAdvisedOffline(t, ctx.users.advisor, unadvised.id, { channel: "PHONE" }));
+      const sellLine = (await ctx.tx<{ id: string }[]>`select id from public.advisory_plan_items where plan_id = ${planId} and action = 'SELL'`)[0].id;
+      expect(out.planItemId).toBe(sellLine);
+
+      // Calls given outside any plan line: the Direct buy, and a buy of a fund not in the plan.
+      const loose = await ctx.as("advisor", (t) => issueAdvice(t, ctx.users.advisor, {
+        clientId: p.clientId, communicatedAt: new Date("2026-09-17T10:00:00+05:30"), channel: "PHONE",
+        items: [
+          { security_id: ctx.sec.Y, action: "BUY", quantity_basis: "AMOUNT", advised_amount: 300000 },
+          { security_id: ctx.sec.Z, action: "BUY", quantity_basis: "AMOUNT", advised_amount: 50000 },
+        ],
+      }));
+      const offPlan = async () => (await ctx.as("advisor", (t) => t<{ sell: number; buy: number }[]>`
+        select off_plan_sell_advised::float8 as sell, off_plan_buy_advised::float8 as buy from public.v_client_rebalance_extra where client_id = ${p.clientId}`))[0];
+      expect(await offPlan()).toEqual({ sell: 0, buy: 350000 });
+
+      await expect(ctx.as("advisor", (t) => linkCallsToPlan(t, ctx.users.advisor, p.clientId))).rejects.toThrow(/Only an admin/);
+      expect(await ctx.as("admin", (t) => linkCallsToPlan(t, ctx.users.admin, p.clientId))).toEqual({ linked: 1, left: 1 });
+      const linked = (await ctx.tx<{ action: string; target_amount: number }[]>`
+        select pi.action, pi.target_amount::float8 from public.advice_items ai join public.advisory_plan_items pi on pi.id = ai.plan_item_id
+        where ai.id = ${loose.itemIds[0]}`)[0];
+      expect(linked).toEqual({ action: "BUY", target_amount: 1500000 });
+      expect(await offPlan()).toEqual({ sell: 0, buy: 50000 });
+    });
+  });
+
+  it("turns Migrate to Direct notes on Keep lines into a Sell + a Buy of the AMFI Direct plan", async () => {
     await scenario(async (ctx) => {
       const p = await clientWithActivePlan(ctx);
       const tag = String(Math.floor(Math.random() * 1e6)).padStart(6, "0");
@@ -78,25 +114,28 @@ describeDb("Migrate to Direct checklist", () => {
         { ...base, isin: `INFZD${tag}3`, scheme_name: `Zeta ${tag} Small Cap Fund - Direct Plan - Growth`, plan_type: "DIRECT", category: "Equity Scheme - Small Cap Fund" },
       ] }, "test"));
       const regSec = await ctx.as("advisor", (t) => resolveFundRef(t, `isin:${reg}`, ctx.users.advisor.id));
-      await ctx.as("advisor", (t) => addPlanItem(t, ctx.users.advisor, p.planId, {
+      const keep = await ctx.as("advisor", (t) => addPlanItem(t, ctx.users.advisor, p.planId, {
         security_id: regSec, scheme_name: `Zeta ${tag} Flexi Cap Fund - Regular Plan - Growth`, action: "RETAIN", target_amount: 0,
         current_amount: 300000, reason: "Kept for now: Migrate to Direct; Hold",
       }, "test: old-style plan line"));
       expect(await ctx.as("advisor", (t) => countMigrateNotes(t, p.planId))).toBe(1);
 
       expect(await ctx.as("advisor", (t) => convertMigrateNotes(t, ctx.users.advisor, p.planId))).toBe(1);
-      const m = await ctx.as("advisor", (t) => getMigrations(t, p.planId));
-      expect(m).toHaveLength(1);
       const dirSec = (await ctx.tx<{ id: string }[]>`select id from public.security_master where isin = ${dir}`)[0].id;
-      expect(m[0]).toMatchObject({ switch_to_security_id: dirSec, current_value: 300000, reason: "Migrate to Direct; Hold", migration_status: "TO_DO" });
+      const lines = await ctx.tx<{ id: string; action: string; security_id: string; target_amount: number; reason: string }[]>`
+        select id, action, security_id, target_amount::float8, reason from public.advisory_plan_items
+        where plan_id = ${p.planId} and security_id in (${regSec}, ${dirSec}) order by action desc`;
+      expect(lines).toEqual([
+        { id: keep, action: "SELL", security_id: regSec, target_amount: 300000, reason: "Migrate to Direct: redeem the Regular plan; Hold" },
+        { id: expect.any(String), action: "BUY", security_id: dirSec, target_amount: 300000, reason: "Migrate to Direct: buy the Direct plan with the Regular redemption" },
+      ]);
       expect(await ctx.as("advisor", (t) => countMigrateNotes(t, p.planId))).toBe(0);
-      // Audited with a reason; the lump-sum targets are unchanged.
-      const t = (await ctx.tx<{ sell_target: number }[]>`select sell_target::float8 from public.v_plan_transition where plan_id = ${p.planId}`)[0];
-      expect(t.sell_target).toBe(1000000);
+      const t = (await ctx.tx<{ sell_target: number; buy_target: number }[]>`select sell_target::float8, buy_target::float8 from public.v_plan_transition where plan_id = ${p.planId}`)[0];
+      expect(t).toEqual({ sell_target: 1300000, buy_target: 900000 });
     });
   });
 
-  it("advises each folio's own units, and the switch-in to Direct is not an unadvised purchase", async () => {
+  it("keeps a Sell line per folio; a switch done by the client matches the sell and buy calls", async () => {
     await scenario(async (ctx) => {
       const p = await clientWithActivePlan(ctx);
       const sm = await ctx.tx<{ id: string; scheme_name: string; isin: string }[]>`select id, scheme_name, isin from public.security_master where id in (${ctx.sec.X}, ${ctx.sec.Y})`;
@@ -122,13 +161,20 @@ describeDb("Migrate to Direct checklist", () => {
       const draft = await ctx.as("advisor", (t) => ingestAdvisoryReport(t, payload, ctx.users.advisor.id, { extractionSource: "IMPORT", securityIds: ids }));
       await ctx.as("advisor", (t) => approvePlan(t, ctx.users.advisor, draft.planId!, "migration plan"));
       const planId = draft.planId!;
-      const m = await ctx.as("advisor", (tx) => getMigrations(tx, planId));
-      expect(m.map((x) => [x.folio_number, Number(x.regular_units_now)]).sort()).toEqual([["T1", 6000], ["T2", 4000]]);
-      await ctx.as("advisor", (tx) => issueMigrationCalls(tx, ctx.users.advisor, {
-        clientId: p.clientId, planId, planItemIds: m.map((x) => x.plan_item_id), channel: "PHONE", communicatedAt: new Date("2026-09-21T11:00:00+05:30"),
+      const sells = await ctx.tx<{ id: string; folio_number: string }[]>`
+        select id, folio_number from public.advisory_plan_items where plan_id = ${planId} and action = 'SELL' order by folio_number`;
+      expect(sells.map((x) => x.folio_number)).toEqual(["T1", "T2"]);
+      const buy = (await ctx.tx<{ id: string }[]>`select id from public.advisory_plan_items where plan_id = ${planId} and action = 'BUY'`)[0].id;
+      // Sell each folio of the Regular plan, buy the Direct plan: the client does it as a switch.
+      await ctx.as("advisor", (tx) => issueAdvice(tx, ctx.users.advisor, {
+        clientId: p.clientId, communicatedAt: new Date("2026-09-21T11:00:00+05:30"), channel: "PHONE",
+        items: [
+          ...sells.map((x, k) => ({ plan_item_id: x.id, security_id: X.id, folio_number: x.folio_number, action: "SELL" as const, quantity_basis: "UNITS" as const, advised_units: k ? 4000 : 6000, advised_amount: k ? 600000 : 900000 })),
+          { plan_item_id: buy, security_id: Y.id, action: "BUY" as const, quantity_basis: "AMOUNT" as const, advised_amount: 1500000 },
+        ],
       }));
       const calls = await ctx.tx<{ folio_number: string; advised_units: number }[]>`
-        select folio_number, advised_units::float8 from public.advice_items where client_id = ${p.clientId} and action = 'SWITCH' order by folio_number`;
+        select folio_number, advised_units::float8 from public.advice_items where client_id = ${p.clientId} and action = 'SELL' order by folio_number`;
       expect(calls).toEqual([{ folio_number: "T1", advised_units: 6000 }, { folio_number: "T2", advised_units: 4000 }]);
 
       // The CAS shows both switch-outs and the switch-ins to Direct.
@@ -146,8 +192,9 @@ describeDb("Migrate to Direct checklist", () => {
       const { runId } = await ctx.as("ops", (t) => runReconciliation(t, ctx.users.ops, { clientId: p.clientId, currentSnapshotId: snap }));
       const rows = await ctx.tx<{ classification: string; n: number }[]>`
         select classification, count(*)::int as n from public.reconciliation_matches where run_id = ${runId} group by 1`;
-      expect(rows).toEqual([{ classification: "ADVICE_MATCH", n: 2 }]);
-      const open = await ctx.tx<{ n: number }[]>`select count(*)::int as n from public.v_advice_items where client_id = ${p.clientId} and action = 'SWITCH' and is_open`;
+      // Both switch-outs match the sells, the switch-in matches the buy: nothing unadvised.
+      expect(rows).toEqual([{ classification: "ADVICE_MATCH", n: 3 }]);
+      const open = await ctx.tx<{ n: number }[]>`select count(*)::int as n from public.v_advice_items where client_id = ${p.clientId} and is_open`;
       expect(open[0].n).toBe(0);
     });
   });

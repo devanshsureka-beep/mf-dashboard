@@ -10,10 +10,8 @@ import {
   deleteDraftSipItem, updatePlanItem, type PlanItemInput,
 } from "@/services/plans";
 import type { Tx } from "@/lib/db/tx";
-import { fromISTDateTimeLocal } from "@/lib/format";
-import { convertMigrateNotes, issueMigrationCalls } from "@/services/migrations";
+import { convertMigrateNotes } from "@/services/migrations";
 import { convertBuyToSip, convertSipToLumpsum, updateSipAmounts } from "@/services/sip";
-import type { Channel } from "@/types/domain";
 
 const opts = { roles: ADVISORY_ROLES };
 
@@ -25,7 +23,7 @@ async function securityName(tx: Tx, id: string | null): Promise<string | null> {
 
 async function readItem(tx: Tx, fd: FormData): Promise<PlanItemInput> {
   const action = reqStr(fd, "action", "Action") as PlanItemInput["action"];
-  if (!["SELL", "BUY", "RETAIN", "SWITCH"].includes(action)) throw new AppError("Invalid action.");
+  if (!["SELL", "BUY", "RETAIN"].includes(action)) throw new AppError("Invalid action.");
   const securityId = optStr(fd, "security_id");
   const name = (await securityName(tx, securityId)) ?? optStr(fd, "scheme_name");
   if (!name) throw new AppError("Choose a security.");
@@ -156,29 +154,12 @@ export async function closePlanAction(clientId: string, planId: string, _p: Acti
   });
 }
 
-const CHANNELS: Channel[] = ["PHONE", "WHATSAPP", "EMAIL", "IN_PERSON", "OTHER"];
-
-/** Switch calls (Regular -> Direct) for the ticked migration lines, in one batch. */
-export async function issueMigrationCallsAction(clientId: string, planId: string, _p: ActionResult | null, fd: FormData): Promise<ActionResult> {
-  return runAction("issueMigrationCalls", async () => {
-    const ids = fd.getAll("item").map(String).filter((x) => /^[0-9a-f-]{36}$/i.test(x));
-    if (!ids.length) throw new AppError("Tick at least one fund to migrate.");
-    const channel = str(fd, "channel") as Channel;
-    if (!CHANNELS.includes(channel)) throw new AppError("Choose how the client was told.");
-    const at = str(fd, "communicated_at");
-    const communicatedAt = at ? fromISTDateTimeLocal(at) : new Date();
-    const r = await actionTx((tx, actor) => issueMigrationCalls(tx, actor, { clientId, planId, planItemIds: ids, channel, communicatedAt }), opts);
-    refresh(clientId, planId);
-    return `${r.count} switch call(s) issued (${r.batchCode}). They complete when the client's CAS shows the switch, or when execution is recorded.`;
-  });
-}
-
-/** Turn "Migrate to Direct" notes on Keep lines (plans approved before the checklist) into checklist lines. */
+/** Turn "Migrate to Direct" notes on Keep lines into a Sell of the Regular plan + a Buy of the Direct plan. */
 export async function convertMigrateNotesAction(clientId: string, planId: string, _p: ActionResult | null, _fd: FormData): Promise<ActionResult> {
   return runAction("convertMigrateNotes", async () => {
     const n = await actionTx((tx, actor) => convertMigrateNotes(tx, actor, planId), opts);
     refresh(clientId, planId);
-    return n ? `${n} fund(s) moved to the Migrate to Direct checklist.` : "Nothing to convert: no Regular holding has a Migrate to Direct note.";
+    return n ? `${n} Regular fund(s) now a Sell + a Buy of the Direct plan.` : "Nothing to convert: no Regular holding has a Migrate to Direct note.";
   });
 }
 

@@ -20,7 +20,10 @@ export interface PlanHolding {
 }
 
 export interface PlanItemDraft {
-  /** MIGRATE: Regular -> Direct plan of the same fund (not a sell or buy; tracked as a checklist). */
+  /**
+   * As read from the report. MIGRATE: Regular -> Direct plan of the same fund. The plan
+   * itself stores Buy, Sell or Keep only (asBuySellKeep, services/plans.ts ingest).
+   */
   action: "SELL" | "SWITCH" | "BUY" | "RETAIN" | "MIGRATE";
   /** MIGRATE: the Direct plan to move to. */
   switch_to_scheme_name?: string | null;
@@ -516,4 +519,29 @@ export function buildPlanFromReport(
     drift,
     warnings: staleCas ? [staleCas] : problems,
   };
+}
+
+/**
+ * The draft as the plan stores it: Buy, Sell or Keep. A Migrate to Direct is a
+ * Sell of the Regular plan and a Buy of the Direct plan (same amount); a Switch
+ * is a Sell (plus a Buy of the fund it goes to, when named). Mirrors the ingest
+ * in services/plans.ts.
+ */
+export function asBuySellKeep(items: PlanItemDraft[]): (PlanItemDraft & { action: "SELL" | "BUY" | "RETAIN" })[] {
+  const out: (PlanItemDraft & { action: "SELL" | "BUY" | "RETAIN" })[] = [];
+  for (const i of items) {
+    if (i.action !== "MIGRATE" && i.action !== "SWITCH") {
+      out.push({ ...i, action: i.action });
+      continue;
+    }
+    out.push({ ...i, action: "SELL", switch_to_scheme_name: null, reason: i.action === "MIGRATE" ? `Migrate to Direct: redeem the Regular plan${i.reason ? `; ${i.reason}` : ""}` : i.reason });
+    if (i.switch_to_scheme_name && i.target_amount > 0) {
+      out.push({
+        action: "BUY", scheme_name: i.switch_to_scheme_name, isin: null, folio_number: null, target_amount: i.target_amount, current_amount: null,
+        reason: i.action === "MIGRATE" ? "Migrate to Direct: buy the Direct plan" : `Switch: buy with the money from ${i.scheme_name}`,
+        priority: i.priority + 1, plan_type: i.action === "MIGRATE" ? "DIRECT" : i.plan_type ?? null,
+      });
+    }
+  }
+  return out;
 }

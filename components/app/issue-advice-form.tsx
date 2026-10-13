@@ -26,7 +26,7 @@ export interface AdvisablePlanItem {
 export interface HoldingLite { security_id: string; scheme_name: string; units: number; nav: number | null; folio: string | null }
 
 interface PlanRow { include: boolean; basis: "AMOUNT" | "UNITS"; amount: string; units: string; price: string }
-interface OffRow { key: number; fund: PickedFund | null; action: "BUY" | "SELL" | "SWITCH"; basis: "AMOUNT" | "UNITS"; amount: string; units: string; price: string }
+interface OffRow { key: number; fund: PickedFund | null; action: "BUY" | "SELL"; basis: "AMOUNT" | "UNITS"; amount: string; units: string; price: string }
 
 type Action = (prev: ActionResult | null, fd: FormData) => Promise<ActionResult>;
 
@@ -72,7 +72,7 @@ export function IssueAdviceForm({
         return {
           plan_item_id: p.id,
           security_id: p.security_id,
-          action: p.action === "BUY" ? "BUY" : p.action === "SWITCH" ? "SWITCH" : "SELL",
+          action: p.action === "BUY" ? "BUY" : "SELL",
           quantity_basis: r.basis,
           advised_amount: Math.round(estimate(r.basis, r.amount, r.units, r.price) * 100) / 100,
           advised_units: r.basis === "UNITS" ? Number(r.units) || null : null,
@@ -175,7 +175,7 @@ export function IssueAdviceForm({
                     onChange={(f) => upd({ fund: f, price: f?.nav ? String(f.nav) : o.price })}
                     suggestions={holdings.map((h) => ({ value: `sec:${h.security_id}`, scheme_name: h.scheme_name, nav: h.nav, note: `holds ${h.units.toFixed(3)} units${h.folio ? ` · folio ${h.folio}` : ""}` }))}
                   />
-                  <Select className="h-8 w-24 text-xs" value={o.action} onChange={(e) => upd({ action: e.target.value as OffRow["action"] })}><option>SELL</option><option>BUY</option><option>SWITCH</option></Select>
+                  <Select className="h-8 w-24 text-xs" value={o.action} onChange={(e) => upd({ action: e.target.value as OffRow["action"] })}><option>SELL</option><option>BUY</option></Select>
                   <Select className="h-8 w-28 text-xs" value={o.basis} onChange={(e) => upd({ basis: e.target.value as OffRow["basis"] })}><option value="AMOUNT">Amount</option><option value="UNITS">Units</option></Select>
                   <Input className="h-8 w-28 text-xs" placeholder="Amount ₹" value={o.amount} onChange={(e) => upd({ amount: e.target.value })} />
                   <Input className="h-8 w-24 text-xs" placeholder="Units" value={o.units} disabled={o.basis === "AMOUNT"} onChange={(e) => upd({ units: e.target.value })} />

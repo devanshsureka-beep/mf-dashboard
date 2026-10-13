@@ -102,7 +102,7 @@ export interface PlanItemInput {
   security_id: string | null;
   scheme_name: string;
   folio_number?: string | null;
-  action: "SELL" | "BUY" | "RETAIN" | "SWITCH";
+  action: "SELL" | "BUY" | "RETAIN";
   target_amount: number;
   target_units?: number | null;
   current_amount?: number | null;
@@ -411,23 +411,43 @@ export async function ingestAdvisoryReport(
     return id ? { id, confident: true } : null;
   };
   const itemRows = [];
+  // Plan lines are Buy, Sell or Keep. A Migrate to Direct (Regular -> Direct of the same
+  // fund) is a Sell of the Regular plan and a Buy of the Direct plan; a Switch is a Sell,
+  // plus a Buy of the fund it goes to when the report names it.
+  let migratedAmount = 0;
+  let switchedInAmount = 0;
   for (const it of payload.items) {
     const sug = known(it.scheme_name) ?? (await suggestSecurity(tx, it.scheme_name, it.isin, pool));
     const flag = !sug.confident && it.action !== "RETAIN";
     if (flag) needsReview++;
-    // MIGRATE / SWITCH: the fund to move to (resolved by the caller, or a confident match).
-    let switchTo: string | null = null;
-    if (it.switch_to_scheme_name) {
-      const to = known(it.switch_to_scheme_name) ?? (await suggestSecurity(tx, it.switch_to_scheme_name, null, pool));
-      switchTo = to.confident ? to.id : null;
-    }
+    const moves = it.action === "MIGRATE" || it.action === "SWITCH";
+    const reason = it.action === "MIGRATE"
+      ? `Migrate to Direct: redeem the Regular plan${it.reason ? `; ${it.reason.replace(/^(Kept for now: )?(MIGRATE TO DIRECT;?\s*)?/i, "")}` : ""}`.replace(/; $/, "")
+      : it.reason ?? null;
     itemRows.push({
-      switch_to_security_id: switchTo,
+      switch_to_security_id: null,
       plan_id: planId, client_id: clientId, security_id: sug.id, scheme_name: it.scheme_name, folio_number: it.folio_number ?? null,
-      action: it.action, target_amount: it.target_amount, target_units: it.target_units ?? null, current_amount: it.current_amount ?? null,
-      target_weight: it.target_weight ?? null, reason: it.reason ?? null, priority: it.priority ?? priority, needs_review: flag,
+      action: moves ? "SELL" : it.action, target_amount: it.target_amount, target_units: it.target_units ?? null, current_amount: it.current_amount ?? null,
+      target_weight: it.target_weight ?? null, reason, priority: it.priority ?? priority, needs_review: flag,
       notes: flag ? "Security match needs confirmation (extracted from report)." : null, created_by: createdBy,
     });
+    if (moves && it.switch_to_scheme_name && it.target_amount > 0) {
+      // The Buy leg: the fund to move to (resolved by the caller, or a confident match).
+      const to = known(it.switch_to_scheme_name) ?? (await suggestSecurity(tx, it.switch_to_scheme_name, null, pool));
+      if (!to.confident) needsReview++;
+      itemRows.push({
+        switch_to_security_id: null,
+        plan_id: planId, client_id: clientId, security_id: to.id, scheme_name: it.switch_to_scheme_name, folio_number: null,
+        action: "BUY", target_amount: it.target_amount, target_units: null, current_amount: null, target_weight: null,
+        reason: it.action === "MIGRATE" ? "Migrate to Direct: buy the Direct plan with the Regular redemption" : `Switch: buy with the money from ${it.scheme_name}`,
+        priority: (it.priority ?? priority) + 1, needs_review: !to.confident,
+        notes: to.confident ? null : "Security match needs confirmation (extracted from report).", created_by: createdBy,
+      });
+      if (it.action === "MIGRATE") migratedAmount += it.target_amount;
+      switchedInAmount += it.target_amount;
+    } else if (it.action === "MIGRATE") {
+      migratedAmount += it.target_amount;
+    }
     priority += 10;
   }
   // One insert for all lines (the database may be far from the app server).
@@ -454,8 +474,9 @@ export async function ingestAdvisoryReport(
       warnings.push(`${label}: report says ₹${Math.round(declared).toLocaleString("en-IN")}, items add up to ₹${Math.round(actual).toLocaleString("en-IN")}.`);
     }
   };
-  check("Total exit", d?.exit_value, t[0].target_exit_value);
-  check("Total buy", d?.buy_value, t[0].target_buy_value);
+  // The report's totals leave out migrations (and switch-ins), which are now Sell / Buy lines.
+  check("Total exit", d?.exit_value == null ? null : d.exit_value + migratedAmount, t[0].target_exit_value);
+  check("Total buy", d?.buy_value == null ? null : d.buy_value + switchedInAmount, t[0].target_buy_value);
   check("Total SIP", d?.sip_value, t[0].target_sip_value);
 
   if (warnings.length) {

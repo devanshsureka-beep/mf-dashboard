@@ -64,9 +64,8 @@ export async function issueAdvice(tx: Tx, actor: Actor, input: IssueAdviceInput)
 
 /**
  * The open line of the client's ACTIVE plan that a call on this fund belongs to,
- * or null. A sell / switch goes to a Sell / Switch line first, else to a
- * Migrate-to-Direct line of the same (Regular) fund: redeeming it is the first
- * leg of the migration. A buy goes to a Buy line.
+ * or null: a sell goes to a Sell line, a buy to a Buy line (plan lines are
+ * Buy, Sell or Keep only).
  */
 export async function findPlanLine(tx: Tx, clientId: string, securityId: string, action: "BUY" | "SELL" | "SWITCH"): Promise<string | null> {
   const row = (await tx<{ id: string }[]>`
@@ -75,8 +74,8 @@ export async function findPlanLine(tx: Tx, clientId: string, securityId: string,
     join public.advisory_plans p on p.id = pi.plan_id and p.status = 'ACTIVE'
     left join public.v_plan_item_progress v on v.plan_item_id = pi.id
     where pi.client_id = ${clientId} and pi.security_id = ${securityId} and pi.status = 'OPEN'
-      and case when ${action} = 'BUY' then pi.action = 'BUY' else pi.action in ('SELL', 'SWITCH', 'MIGRATE') end
-    order by (pi.action = 'MIGRATE'), coalesce(v.yet_to_advise_amount, pi.target_amount) desc, pi.created_at
+      and case when ${action} = 'BUY' then pi.action = 'BUY' else pi.action in ('SELL', 'SWITCH') end
+    order by coalesce(v.yet_to_advise_amount, pi.target_amount) desc, pi.created_at
     limit 1`)[0];
   return row?.id ?? null;
 }
@@ -84,7 +83,7 @@ export async function findPlanLine(tx: Tx, clientId: string, securityId: string,
 /**
  * Admin repair: link a client's calls that sit outside the plan to the open
  * plan line for the same fund (see findPlanLine), e.g. calls recorded from CAS
- * trades before Migrate-to-Direct lines could take a redemption. Audited.
+ * trades before the plan had a line for that fund. Audited.
  */
 export async function linkCallsToPlan(tx: Tx, actor: Actor, clientId: string): Promise<{ linked: number; left: number }> {
   if (actor.role !== "ADMIN") throw new AppError("Only an admin can re-link recorded calls.", "FORBIDDEN");

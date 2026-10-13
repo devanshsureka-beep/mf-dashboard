@@ -17,7 +17,7 @@ const itemSchema = z.object({
   plan_item_id: z.uuid().nullable().optional(),
   // A known fund (uuid / "sec:<uuid>") or an AMFI scheme picked by ISIN ("isin:<ISIN>").
   security_id: z.string().regex(/^(sec:)?[0-9a-f-]{36}$|^isin:[A-Z]{2}[A-Z0-9]{9}[0-9]$/i, "Choose a fund for every call"),
-  action: z.enum(["BUY", "SELL", "SWITCH"]),
+  action: z.enum(["BUY", "SELL"]),
   quantity_basis: z.enum(["AMOUNT", "UNITS"]),
   advised_amount: z.coerce.number().positive("Every call needs a rupee amount (estimate for unit calls)"),
   advised_units: z.coerce.number().positive().nullable().optional(),

@@ -38,8 +38,7 @@ export default async function AdviceItemPage(props: PageProps<"/advice/items/[it
         where pi.id = ai.plan_item_id
            or (p.status = 'ACTIVE' and pi.status <> 'CANCELLED'
                and ((ai.action = 'BUY' and pi.action = 'BUY')
-                    or (ai.action <> 'BUY' and pi.action in ('SELL', 'SWITCH'))
-                    or (ai.action <> 'BUY' and pi.action = 'MIGRATE')))
+                    or (ai.action <> 'BUY' and pi.action = 'SELL')))
         order by pi.scheme_name`,
       funds: await tx<{ id: string; scheme_name: string }[]>`
         select distinct sm.id, sm.scheme_name from public.security_master sm

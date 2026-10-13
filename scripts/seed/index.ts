@@ -106,7 +106,7 @@ async function baselineSnapshot(advisor: string, clientId: string, clientKey: st
 // Plan helper
 // ---------------------------------------------------------------------------
 interface PlanSpec {
-  sells: [secKey: string, amount: number, action?: "SELL" | "SWITCH", units?: number][];
+  sells: [secKey: string, amount: number, action?: "SELL", units?: number][];
   buys: [secKey: string, amount: number][];
   sips?: [secKey: string, action: "START" | "STOP", amount: number][];
   approvedDaysAgo: number;
@@ -155,7 +155,7 @@ async function planItemId(clientId: string, secKey: string): Promise<string> {
   return rows[0].id;
 }
 
-type CallSpec = [secKey: string, action: "BUY" | "SELL" | "SWITCH", amount: number, units?: number, refPrice?: number];
+type CallSpec = [secKey: string, action: "BUY" | "SELL", amount: number, units?: number, refPrice?: number];
 async function call(advisor: string, clientId: string, when: Date, channel: "PHONE" | "WHATSAPP" | "EMAIL" | "IN_PERSON", calls: CallSpec[], notes?: string) {
   const items: IssueAdviceItemInput[] = [];
   for (const [k, action, amount, units, ref] of calls) {
@@ -383,10 +383,10 @@ async function main() {
   ]);
   await activePlan("karan", c5, c5snap, {
     approvedDaysAgo: 25,
-    sells: [["AXIS_BLUE_REG", 1500000], ["PPFAS_FLEXI_REG", 1000000, "SWITCH"]],
+    sells: [["AXIS_BLUE_REG", 1500000], ["PPFAS_FLEXI_REG", 1000000]],
     buys: [["AXIS_BLUE_DIR", 800000], ["PPFAS_FLEXI_DIR", 1000000], ["UTI_NIFTY_DIR", 700000]],
   });
-  const c5b1 = await call("karan", c5, at(7, 16, 10), "EMAIL", [["AXIS_BLUE_REG", "SELL", 800000], ["PPFAS_FLEXI_REG", "SWITCH", 1000000]]);
+  const c5b1 = await call("karan", c5, at(7, 16, 10), "EMAIL", [["AXIS_BLUE_REG", "SELL", 800000], ["PPFAS_FLEXI_REG", "SELL", 1000000]]);
   await execute("karan", c5b1.itemIds[1], 5, 1000000, "PROOF_VERIFIED", undefined, "Switch statement attached by client");
   await call("karan", c5, at(4, 11, 45), "PHONE", [["PPFAS_FLEXI_DIR", "BUY", 1000000]]);
   await as("karan", (tx) => addNote(tx, users.karan, { clientId: c5, noteType: "FOLLOW_UP", body: "Client has not redeemed Axis yet — follow up.", followUpDate: istDate(1) }));

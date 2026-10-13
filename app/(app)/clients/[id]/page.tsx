@@ -49,8 +49,6 @@ function Figure({ label, value, hint, big, className }: { label: string; value: 
 }
 
 interface RebalanceExtra {
-  migrate_target: number; migrate_advised: number; migrate_executed: number; migrate_pending: number; migrate_left: number;
-  migrate_buy_advised: number; migrate_buy_executed: number; migrate_buy_pending: number;
   off_plan_sell_advised: number; off_plan_sell_executed: number; off_plan_sell_pending: number;
   off_plan_buy_advised: number; off_plan_buy_executed: number; off_plan_buy_pending: number;
 }
@@ -59,7 +57,7 @@ interface RebalanceRow { name: string; hint?: string; tone: string; target: numb
 
 /**
  * Sell, buy and SIP: target → advised → done (CAS) → waiting → left to advise, in one card.
- * Below them, Migrate to Direct (not part of the sell/buy targets) and calls linked to no plan line.
+ * Below them, calls linked to no plan line (every plan line is Buy, Sell or Keep).
  */
 function Rebalancing({ c, sip, x, closedBy, relink }: { c: ClientSummary; sip: ClientSip; x: RebalanceExtra; closedBy: string | null; relink: React.ReactNode }) {
   const rows: RebalanceRow[] = [
@@ -67,13 +65,6 @@ function Rebalancing({ c, sip, x, closedBy, relink }: { c: ClientSummary; sip: C
     { name: "Buy", tone: "text-blue-700", target: c.target_buy, advised: c.advised_buy, executed: c.executed_buy, pending: c.pending_buy, remaining: c.yet_to_advise_buy },
     { name: "SIP / month", tone: "text-violet-700", target: sip.sip_monthly_target, advised: sip.sip_monthly_advised, executed: sip.sip_monthly_started, pending: Math.max(0, sip.sip_monthly_advised - sip.sip_monthly_started), remaining: sip.sip_monthly_yet_to_advise },
   ];
-  if (x.migrate_target > 0.5 || x.migrate_advised > 0.5) {
-    rows.push({
-      name: "Migrate to Direct", tone: "text-sky-700", target: x.migrate_target, advised: x.migrate_advised, executed: x.migrate_executed,
-      pending: x.migrate_pending, remaining: x.migrate_left,
-      hint: x.migrate_buy_advised > 0.5 ? `Regular redeemed or switched · ${formatINRCompact(x.migrate_buy_executed)} of ${formatINRCompact(x.migrate_buy_advised)} re-bought in Direct` : "Regular redeemed or switched",
-    });
-  }
   if (x.off_plan_sell_advised > 0.5) {
     rows.push({ name: "Sold, not in plan", tone: "text-slate-600", target: null, advised: x.off_plan_sell_advised, executed: x.off_plan_sell_executed, pending: x.off_plan_sell_pending, remaining: null, hint: "Calls linked to no plan line" });
   }
@@ -131,8 +122,6 @@ function Rebalancing({ c, sip, x, closedBy, relink }: { c: ClientSummary; sip: C
 }
 
 const EMPTY_EXTRA: RebalanceExtra = {
-  migrate_target: 0, migrate_advised: 0, migrate_executed: 0, migrate_pending: 0, migrate_left: 0,
-  migrate_buy_advised: 0, migrate_buy_executed: 0, migrate_buy_pending: 0,
   off_plan_sell_advised: 0, off_plan_sell_executed: 0, off_plan_sell_pending: 0,
   off_plan_buy_advised: 0, off_plan_buy_executed: 0, off_plan_buy_pending: 0,
 };
@@ -146,10 +135,7 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
   const { c, bank, extra, unchecked, sip, premium, alerts, casCount, actor } = await pageData(async (tx) => ({
     c: await getClientSummary(tx, id),
     extra: (await tx<RebalanceExtra[]>`
-      select migrate_target::float8 as migrate_target, migrate_advised::float8 as migrate_advised, migrate_executed::float8 as migrate_executed,
-             migrate_pending::float8 as migrate_pending, migrate_left::float8 as migrate_left,
-             migrate_buy_advised::float8 as migrate_buy_advised, migrate_buy_executed::float8 as migrate_buy_executed, migrate_buy_pending::float8 as migrate_buy_pending,
-             off_plan_sell_advised::float8 as off_plan_sell_advised, off_plan_sell_executed::float8 as off_plan_sell_executed, off_plan_sell_pending::float8 as off_plan_sell_pending,
+      select off_plan_sell_advised::float8 as off_plan_sell_advised, off_plan_sell_executed::float8 as off_plan_sell_executed, off_plan_sell_pending::float8 as off_plan_sell_pending,
              off_plan_buy_advised::float8 as off_plan_buy_advised, off_plan_buy_executed::float8 as off_plan_buy_executed, off_plan_buy_pending::float8 as off_plan_buy_pending
       from public.v_client_rebalance_extra where client_id = ${id}`)[0],
     bank: (await tx<{ in_bank: number; fresh_money: number }[]>`
@@ -238,7 +224,6 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
                   <MenuItem href={`/advice/new?client=${id}&side=SELL`} hint={`${formatINRCompact(c.yet_to_advise_sell)} of sells left to advise`}><b className="text-red-700">Sell call</b></MenuItem>
                   <MenuItem href={`/advice/new?client=${id}&side=BUY`} hint={`${formatINRCompact(c.yet_to_advise_buy)} of buys left to advise`}><b className="text-blue-700">Buy call</b></MenuItem>
                   <MenuItem href={tabHref("sip")} hint={`Start / stop / change a SIP · ${formatINRCompact(sip.sip_monthly_yet_to_advise)}/mo left`}><b className="text-violet-700">SIP</b></MenuItem>
-                  {c.active_plan_id ? <MenuItem href={`/clients/${id}/plans/${c.active_plan_id}`} hint="Regular → Direct of the same fund, from the plan"><b>Switch call</b></MenuItem> : null}
                 </DropMenu>
               ) : null}
               <LinkButton href={`/clients/${id}/cas/upload`} variant="outline" size="sm">Upload CAS</LinkButton>
@@ -281,7 +266,7 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
         closedBy={casCount > 1 ? `Tranche ${casCount - 1} closed by CAS ${formatDate(c.latest_cas_date)}` : null}
         relink={isAdmin && c.active_plan_id ? (
           <ActionForm action={linkCallsToPlanAction.bind(null, id)} className="inline">
-            <SubmitButton size="sm" variant="outline" confirm="Link the calls outside the plan to the plan line of the same fund (Sell, Migrate to Direct or Buy)?">Link calls to plan</SubmitButton>
+            <SubmitButton size="sm" variant="outline" confirm="Link the calls outside the plan to the plan line of the same fund (Sell or Buy)?">Link calls to plan</SubmitButton>
           </ActionForm>
         ) : null}
       />
