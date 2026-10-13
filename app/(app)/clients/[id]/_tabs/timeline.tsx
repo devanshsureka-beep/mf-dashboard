@@ -17,7 +17,7 @@ const monthOf = (d: Date) => new Intl.DateTimeFormat("en-IN", { month: "long", y
 export async function TimelineTab({ clientId, actor, kind }: { clientId: string; actor: Actor; kind: string | null }) {
   const valid = kind && (TIMELINE_KINDS as readonly string[]).includes(kind) ? kind : null;
   const events = await withUserTx(actor, (tx) => getTimeline(tx, clientId, { kinds: valid ? [valid] : undefined, limit: 1000 }));
-  const href = (k: string | null) => `/clients/${clientId}?tab=timeline${k ? `&kind=${k}` : ""}`;
+  const href = (k: string | null) => `/clients/${clientId}?tab=history${k ? `&kind=${k}` : ""}`;
 
   const groups: { month: string; items: typeof events }[] = [];
   for (const e of events) {
