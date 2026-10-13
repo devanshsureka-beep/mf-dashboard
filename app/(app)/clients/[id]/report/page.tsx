@@ -85,7 +85,7 @@ export default async function MonthlyReportPage(props: PageProps<"/clients/[id]/
     <div className="mx-auto max-w-5xl print:max-w-none">
       {/* Toolbar (not printed) */}
       <div className="mb-3 flex flex-wrap items-center gap-2 print:hidden">
-        <Link href={`/clients/${id}?tab=reports`} className="text-xs text-muted hover:underline">← {c.full_name}</Link>
+        <Link href={`/clients/${id}?tab=file#reports`} className="text-xs text-muted hover:underline">← {c.full_name}</Link>
         <div className="ml-auto flex items-center gap-1 text-sm">
           <Link className="rounded-md px-2 py-1 ring-1 ring-border hover:bg-slate-50" href={`/clients/${id}/report?month=${shiftMonth(ym, -1)}`}>‹ Previous</Link>
           <span className="px-2 font-medium">{r.label}</span>

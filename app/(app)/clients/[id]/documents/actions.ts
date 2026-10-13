@@ -64,5 +64,5 @@ export async function importAdvisoryJsonAction(clientId: string, _p: ActionResul
     notify({ event: "plan.draft_created", client: { id: clientId, client_code: "", full_name: "" }, data: { plan_id: planId, items_needing_review: out.itemsNeedingReview } });
   });
   if (!res.ok) return res;
-  redirect(planId ? `/clients/${clientId}/plans/${planId}` : `/clients/${clientId}?tab=plan`);
+  redirect(planId ? `/clients/${clientId}/plans/${planId}` : `/clients/${clientId}?tab=tranches`);
 }

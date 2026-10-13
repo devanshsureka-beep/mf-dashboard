@@ -52,7 +52,7 @@ export default async function RunPage(props: PageProps<"/reconciliation/[runId]"
   return (
     <>
       <div className="mb-4">
-        <div className="text-xs text-muted"><Link href="/reconciliation" className="hover:underline">Reconciliation</Link> / <Link href={`/clients/${run.client_id}?tab=cas`} className="hover:underline">{run.client_name}</Link></div>
+        <div className="text-xs text-muted"><Link href="/reconciliation" className="hover:underline">CAS inbox</Link> / <Link href={`/clients/${run.client_id}?tab=cas`} className="hover:underline">{run.client_name}</Link></div>
         <h1 className="mt-0.5 flex items-center gap-2 text-xl font-semibold">CAS reconciliation · {run.client_name} <StatusBadge status={run.status} /></h1>
         <div className="mt-1 text-sm text-muted">
           Snapshot {formatDate(run.previous_snapshot_date)} → {formatDate(run.current_snapshot_date)} · created {formatDateTime(run.created_at)}

@@ -45,7 +45,7 @@ export default async function CasDocumentPage(props: PageProps<"/cas/[casId]">) 
   return (
     <>
       <div className="mb-4">
-        <div className="text-xs text-muted"><Link href={`/clients/${d.client_id}?tab=cas`} className="hover:underline">{d.client_name}</Link> / CAS</div>
+        <div className="text-xs text-muted"><Link href={`/clients/${d.client_id}?tab=tranches`} className="hover:underline">{d.client_name}</Link> / CAS</div>
         <h1 className="mt-0.5 flex items-center gap-2 text-xl font-semibold">{d.file_name} <StatusBadge status={d.parse_status} /></h1>
         <div className="mt-1 flex flex-wrap gap-x-4 text-sm text-muted">
           <span>Uploaded {formatDateTime(d.uploaded_at)}</span><span>Source {humanize(d.source)}</span>

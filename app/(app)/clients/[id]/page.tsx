@@ -23,7 +23,7 @@ const TABS = ["portfolio", "tranches", "sip", "file", "notes", "history"] as con
 type Tab = (typeof TABS)[number];
 // Links from elsewhere in the app still use the old tab names.
 const LEGACY: Record<string, Tab> = {
-  overview: "portfolio", plan: "portfolio", calls: "tranches", executions: "tranches", cas: "tranches",
+  overview: "portfolio", plan: "tranches", calls: "tranches", executions: "tranches", cas: "tranches",
   agreements: "file", reports: "file", documents: "file", timeline: "history", audit: "history",
 };
 

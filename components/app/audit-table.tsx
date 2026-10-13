@@ -26,7 +26,7 @@ export function AuditTable({ rows, showClient = false }: { rows: AuditLogRow[]; 
             <TR key={r.id}>
               <TD className="whitespace-nowrap text-xs">{formatDateTime(r.occurred_at)}</TD>
               <TD className="whitespace-nowrap text-xs">{r.actor_name ?? r.actor_label ?? "system"}</TD>
-              {showClient ? <TD className="whitespace-nowrap text-xs">{r.client_id ? <Link className="hover:underline" href={`/clients/${r.client_id}?tab=audit`}>{r.client_name}</Link> : "—"}</TD> : null}
+              {showClient ? <TD className="whitespace-nowrap text-xs">{r.client_id ? <Link className="hover:underline" href={`/clients/${r.client_id}?tab=history&view=audit`}>{r.client_name}</Link> : "—"}</TD> : null}
               <TD className="whitespace-nowrap text-xs">{humanize(r.entity_type)}<div className="text-[10px] text-muted num">{r.entity_id?.slice(0, 8)}</div></TD>
               <TD><Badge tone={r.action === "INSERT" ? "success" : r.action === "DELETE" ? "danger" : "info"}>{r.action}</Badge></TD>
               <TD className="max-w-[520px] text-xs">
