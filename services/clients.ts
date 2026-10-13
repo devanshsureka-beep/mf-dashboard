@@ -103,7 +103,7 @@ export interface DeskFilters {
   attention?: "pending" | "unadvised" | "cas_review" | "follow_up" | "no_plan" | "tranche" | "needs";
   minValue?: number | null;
   maxValue?: number | null;
-  sort?: "name" | "value" | "pending" | "onboarded" | "renewal" | "code" | "action";
+  sort?: "name" | "value" | "pending" | "onboarded" | "renewal" | "code" | "action" | "left";
 }
 
 export type DeskClient = ClientSummary & {
@@ -125,6 +125,8 @@ export type DeskClient = ClientSummary & {
   remaining_to_advise: number;
   /** Things the desk must do for this client (executions, CAS, unadvised, draft, follow-ups, next tranche). */
   action_count: number;
+  /** Money from sells the latest CAS shows, not bought back yet (plus fresh money): v_client_bank. */
+  in_bank: number;
 };
 
 export async function listDeskClients(tx: Tx, f: DeskFilters = {}): Promise<DeskClient[]> {
@@ -133,6 +135,7 @@ export async function listDeskClients(tx: Tx, f: DeskFilters = {}): Promise<Desk
     select s.*, p.premium_paid_total::float8 as premium_paid_total, p.paid_until::text as paid_until, p.premium_status, p.renewal_due,
            p.agreement_status, p.agreement_valid_to::text as agreement_valid_to,
            coalesce(sp.sip_monthly_target, 0)::float8 as sip_monthly_target, coalesce(sp.sip_invested, 0)::float8 as sip_invested,
+           coalesce(bk.in_bank, 0)::float8 as in_bank,
            coalesce(un.n, 0)::int as unadvised_to_review, coalesce(cr.n, 0)::int as cas_to_review, coalesce(fu.n, 0)::int as follow_ups_due,
            exists (select 1 from public.advisory_plans d where d.client_id = s.client_id and d.status = 'DRAFT') as has_draft_plan,
            (select count(*)::int from public.portfolio_snapshots ps2 where ps2.client_id = s.client_id and ps2.review_status = 'CONFIRMED'
@@ -140,6 +143,7 @@ export async function listDeskClients(tx: Tx, f: DeskFilters = {}): Promise<Desk
     from public.v_client_summary s
     left join public.v_client_premium p on p.client_id = s.client_id
     left join public.v_client_sip sp on sp.client_id = s.client_id
+    left join public.v_client_bank bk on bk.client_id = s.client_id
     left join lateral (
       select count(*) as n from public.reconciliation_matches m join public.reconciliation_runs r on r.id = m.run_id
       where m.client_id = s.client_id and r.status <> 'CANCELLED' and m.classification = 'UNADVISED'
@@ -193,6 +197,7 @@ export async function listDeskClients(tx: Tx, f: DeskFilters = {}): Promise<Desk
     pending: (a, b) => b.pending_total - a.pending_total,
     onboarded: (a, b) => b.onboarding_date.localeCompare(a.onboarding_date),
     renewal: (a, b) => (a.paid_until ?? "9999").localeCompare(b.paid_until ?? "9999"),
+    left: (a, b) => b.remaining_to_advise - a.remaining_to_advise,
     action: (a, b) => b.action_count - a.action_count || b.pending_total - a.pending_total || a.full_name.localeCompare(b.full_name),
   };
   return out.sort(by[f.sort ?? "name"]);

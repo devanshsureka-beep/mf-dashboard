@@ -9,6 +9,7 @@ import { casPasswordTemplate } from "@/lib/cas/password";
 import { formatDate, formatDateTime, formatINRCompact, humanize } from "@/lib/format";
 import { pageData } from "@/lib/server";
 import { cn } from "@/lib/utils";
+import { askCasHref } from "@/lib/ask-cas";
 import { getCasInbox } from "@/services/cas-inbox";
 import { listCasDocuments } from "@/services/portfolio";
 import { listRuns } from "@/services/reconciliation";
@@ -47,7 +48,7 @@ export default async function CasInboxPage() {
     <>
       <PageHeader
         title={PAGES.casInbox}
-        subtitle="Drop new CAS files. Each is read, matched to its client by PAN and checked against the calls. You only see what needs you."
+        subtitle="Drop new CAS files (or a whole folder). Each is read, matched to its client and checked against the calls; advised trades it shows are marked done by itself. You only see what needs you."
       />
       {!templateSet ? (
         <p className="mb-3 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
@@ -70,7 +71,15 @@ export default async function CasInboxPage() {
           ))}
         </Column>
 
-        <Column n={2} title="Check what we read" count={inbox.check.length} tone="text-amber-700" empty="No CAS waiting for a check.">
+        <Column n={2} title="Check what we read" count={inbox.check.length + inbox.confirm.length} tone="text-amber-700" empty="No CAS waiting for a check.">
+          {inbox.confirm.map((c) => (
+            <Item key={c.run_id} accent="border-l-amber-500">
+              <Link href={`/clients/${c.client_id}`} className="font-semibold hover:underline">{c.client_name}</Link> <span className="text-xs text-muted">{c.client_code}</span>
+              <div className="text-xs text-muted">CAS of {formatDate(c.snapshot_date)}</div>
+              <div className="mt-1 text-xs text-amber-800">{c.matches} advised trade(s) to confirm{c.first ? ` · ${c.first}` : ""}</div>
+              <Link href={`/reconciliation/${c.run_id}`} className="mt-1 inline-block text-xs font-medium text-brand hover:underline">Confirm done / part done →</Link>
+            </Item>
+          ))}
           {inbox.check.map((c) => (
             <Item key={c.snapshot_id} accent="border-l-amber-500">
               <Link href={`/clients/${c.client_id}`} className="font-semibold hover:underline">{c.client_name}</Link> <span className="text-xs text-muted">{c.client_code}</span>
@@ -81,7 +90,7 @@ export default async function CasInboxPage() {
           ))}
         </Column>
 
-        <Column n={3} title="Trades without advice" count={inbox.unadvised.length} tone="text-red-700" empty="Nothing to review.">
+        <Column n={3} title="Unadvised Trades" count={inbox.unadvised.length} tone="text-red-700" empty="Nothing to review.">
           {inbox.unadvised.map((u) => (
             <Item key={u.run_id} accent="border-l-red-500">
               <Link href={`/clients/${u.client_id}`} className="font-semibold hover:underline">{u.client_name}</Link> <span className="text-xs text-muted">{u.client_code}</span>
@@ -98,7 +107,7 @@ export default async function CasInboxPage() {
               <Link href={`/clients/${d.client_id}`} className="font-semibold hover:underline">{d.client_name}</Link>
               <div className="text-xs text-muted">CAS of {formatDate(d.snapshot_date)}</div>
               <div className="mt-1 text-xs text-emerald-700">
-                {d.run_id ? `${d.verified} execution(s) verified ✓${d.unadvised_reviewed ? ` · ${d.unadvised_reviewed} unadvised reviewed` : ""}` : "Portfolio updated ✓"}
+                {d.run_id && d.verified ? `${d.verified} advised trade(s) marked done ✓${d.unadvised_reviewed ? ` · ${d.unadvised_reviewed} unadvised reviewed` : ""}` : "Portfolio updated ✓"}
               </div>
             </Item>
           ))}
@@ -110,7 +119,7 @@ export default async function CasInboxPage() {
         <CardHeader>
           <div>
             <CardTitle>CAS to collect · {inbox.collect.length}</CardTitle>
-            <p className="mt-0.5 text-xs text-muted">Clients with executions no CAS has shown yet, or no CAS for more than 30 days.</p>
+            <p className="mt-0.5 text-xs text-muted">Clients with advice no CAS has shown yet, or no CAS for more than 30 days. Their &ldquo;Waiting&rdquo; only clears when a new CAS comes in.</p>
           </div>
         </CardHeader>
         {inbox.collect.length === 0 ? <CardContent><EmptyState title="Every client's CAS is up to date" /></CardContent> : (
@@ -121,8 +130,11 @@ export default async function CasInboxPage() {
                 <TR key={c.client_id}>
                   <TD><Link href={`/clients/${c.client_id}`} className="font-medium hover:underline">{c.client_name}</Link> <span className="text-xs text-muted">{c.client_code}</span></TD>
                   <TD className="text-xs">{c.latest_cas ? `${formatDate(c.latest_cas)} (${c.days} days ago)` : "None yet"}</TD>
-                  <TD className="text-xs">{c.unverified_amount >= 0.5 ? <><Money value={c.unverified_amount} /> executed, not yet seen in a CAS</> : c.latest_cas ? `${c.days} days without a CAS` : "No CAS uploaded"}</TD>
-                  <TD className="text-right"><Link className="text-xs font-medium text-brand hover:underline" href={`/clients/${c.client_id}/cas/upload`}>Upload CAS</Link></TD>
+                  <TD className="text-xs">{c.waiting_amount >= 0.5 ? <><Money value={c.waiting_amount} /> advised, not seen in a CAS yet</> : c.unverified_amount >= 0.5 ? <><Money value={c.unverified_amount} /> recorded by hand, not yet seen in a CAS</> : c.latest_cas ? `${c.days} days without a CAS` : "No CAS uploaded"}</TD>
+                  <TD className="whitespace-nowrap text-right text-xs">
+                    <a className="font-medium text-brand hover:underline" href={askCasHref({ client_id: c.client_id, full_name: c.client_name, phone: c.phone })} target="_blank" rel="noreferrer">Ask client</a>
+                    {" · "}<Link className="font-medium text-brand hover:underline" href={`/clients/${c.client_id}/cas/upload`}>Upload</Link>
+                  </TD>
                 </TR>
               ))}
             </TBody>

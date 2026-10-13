@@ -1,8 +1,7 @@
 import Link from "next/link";
-import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import type { ClientSummary } from "@/types/domain";
 
-/** One report per month since onboarding (latest first). */
+/** Monthly reports tile: the latest two months, older ones folded. */
 export function ReportsTab({ client: c }: { client: ClientSummary }) {
   const now = new Date();
   const ist = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit" }).format(now);
@@ -15,19 +14,21 @@ export function ReportsTab({ client: c }: { client: ClientSummary }) {
   }
   const label = (ym: string) => new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${ym}-01T00:00:00Z`));
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Monthly reports</CardTitle>
-        <span className="text-xs text-muted">What we advised, what was executed, SIPs and the plan, month by month. Open one, add your outlook, then print or save as PDF.</span>
-      </CardHeader>
-      <div className="grid gap-2 p-4 sm:grid-cols-3 lg:grid-cols-6">
-        {months.map((m, i) => (
-          <Link key={m} href={`/clients/${c.client_id}/report?month=${m}`} className="rounded-lg border border-border bg-white px-3 py-2 text-sm hover:border-brand-200 hover:bg-brand-50">
-            <div className="font-medium">{label(m)}</div>
-            <div className="text-[11px] text-muted">{i === 0 ? "This month (so far)" : "Monthly report"}</div>
-          </Link>
+    <section id="reports" className="scroll-mt-14 rounded-xl border border-border bg-surface px-4 py-3">
+      <div className="text-[10.5px] font-semibold uppercase tracking-wide text-muted">Monthly reports</div>
+      <ul className="mt-1 space-y-0.5 text-sm">
+        {months.slice(0, 2).map((m, i) => (
+          <li key={m}><Link href={`/clients/${c.client_id}/report?month=${m}`} className="font-medium text-brand hover:underline">{label(m)}{i === 0 ? " (so far)" : ""} →</Link></li>
         ))}
-      </div>
-    </Card>
+      </ul>
+      {months.length > 2 ? (
+        <details className="mt-1">
+          <summary className="cursor-pointer text-xs text-muted">Older months · {months.length - 2}</summary>
+          <ul className="mt-1 space-y-0.5 text-xs">
+            {months.slice(2).map((m) => <li key={m}><Link href={`/clients/${c.client_id}/report?month=${m}`} className="text-brand hover:underline">{label(m)}</Link></li>)}
+          </ul>
+        </details>
+      ) : null}
+    </section>
   );
 }

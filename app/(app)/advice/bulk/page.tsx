@@ -28,7 +28,9 @@ export default async function BulkCallPage(props: PageProps<"/advice/bulk">) {
   }), ADVISORY_ROLES);
 
   const minValue = lakh(f.minValue), maxValue = lakh(f.maxValue);
-  const matching = clients
+  // Clients ticked on the Clients list arrive as ?ids=…: show them whatever the filters say.
+  const picked = (one("ids") ?? "").split(",").filter((x) => /^[0-9a-f-]{36}$/i.test(x));
+  const matching = picked.length ? clients.filter((c) => picked.includes(c.client_id)) : clients
     .filter((c) => minValue == null || (c.live_portfolio_value ?? 0) >= minValue)
     .filter((c) => maxValue == null || (c.live_portfolio_value ?? 0) <= maxValue)
     .filter((c) => !f.risk || c.risk_profile === f.risk)
@@ -43,6 +45,7 @@ export default async function BulkCallPage(props: PageProps<"/advice/bulk">) {
       />
       <HubTabs hub="calls" active="bulk" role={actor.role} />
 
+      {picked.length ? <p className="mb-3 rounded-md bg-brand-50 px-3 py-2 text-sm text-brand-700">{matching.length} client(s) picked on the Clients list. <Link href="/advice/bulk" className="underline">Pick by filters instead</Link></p> : null}
       <form method="get" className="mb-4 grid gap-2 rounded-xl border border-border bg-white p-3 sm:grid-cols-2 lg:grid-cols-7">
         <label className="text-xs text-muted">Value today ≥ (₹ lakh)<Input name="min_value" inputMode="decimal" defaultValue={f.minValue} /></label>
         <label className="text-xs text-muted">Value today ≤ (₹ lakh)<Input name="max_value" inputMode="decimal" defaultValue={f.maxValue} /></label>
@@ -77,6 +80,7 @@ export default async function BulkCallPage(props: PageProps<"/advice/bulk">) {
           value: c.live_portfolio_value ?? 0, moneyLeft: c.money_left, hasPlan: Boolean(c.active_plan_id),
         }))}
         searchFunds={searchFundsAction}
+        initial={picked}
       />
     </>
   );

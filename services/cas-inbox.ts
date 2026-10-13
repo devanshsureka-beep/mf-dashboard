@@ -1,16 +1,18 @@
 import type { Tx } from "@/lib/db/tx";
 
 /**
- * The CAS inbox: every CAS moves Reading → Check what we read → Trades
- * without advice → Done. Plus the clients whose CAS we should collect. RLS
- * decides which clients the user sees.
+ * The CAS inbox: every CAS moves Reading → Check what we read → Unadvised
+ * Trades → Done. A CAS marks advised trades done by itself; unclear matches
+ * wait under "Check" for one click. Plus the clients whose CAS we should
+ * collect. RLS decides which clients the user sees.
  */
 
 export interface InboxReading { cas_id: string; client_id: string; client_name: string; uploaded_at: Date; status: string; error: string | null }
 export interface InboxCheck { snapshot_id: string; cas_id: string | null; client_id: string; client_name: string; client_code: string; snapshot_date: string; value: number; funds: number; warnings: number }
 export interface InboxUnadvised { run_id: string; client_id: string; client_name: string; client_code: string; snapshot_date: string; trades: number; amount: number; matched: number }
 export interface InboxDone { client_id: string; client_name: string; snapshot_date: string; run_id: string | null; verified: number; unadvised_reviewed: number }
-export interface InboxCollect { client_id: string; client_name: string; client_code: string; latest_cas: string | null; unverified_amount: number; days: number | null }
+export interface InboxConfirm { run_id: string; client_id: string; client_name: string; client_code: string; snapshot_date: string; matches: number; first: string | null }
+export interface InboxCollect { client_id: string; client_name: string; client_code: string; phone: string | null; latest_cas: string | null; waiting_amount: number; unverified_amount: number; days: number | null }
 
 export async function getCasInbox(tx: Tx) {
   const reading = await tx<InboxReading[]>`
@@ -31,6 +33,17 @@ export async function getCasInbox(tx: Tx) {
     left join public.cas_documents cd on cd.id = s.cas_document_id
     where s.review_status = 'PENDING_REVIEW'
     order by s.client_id, s.snapshot_date desc, s.created_at desc`;
+
+  // Advised trades the CAS seems to show, but not clearly enough to mark done alone.
+  const confirm = await tx<InboxConfirm[]>`
+    select r.id as run_id, r.client_id, c.full_name as client_name, c.client_code, cs.snapshot_date::text as snapshot_date,
+           count(m.id)::int as matches, min(m.scheme_name) as first
+    from public.reconciliation_runs r join public.clients c on c.id = r.client_id
+    join public.portfolio_snapshots cs on cs.id = r.current_snapshot_id
+    join public.reconciliation_matches m on m.run_id = r.id and m.classification = 'ADVICE_MATCH' and m.status = 'SUGGESTED'
+    where r.status <> 'CANCELLED'
+    group by r.id, r.client_id, c.full_name, c.client_code, cs.snapshot_date
+    order by cs.snapshot_date desc`;
 
   const unadvised = await tx<InboxUnadvised[]>`
     select r.id as run_id, r.client_id, c.full_name as client_name, c.client_code, cs.snapshot_date::text as snapshot_date,
@@ -57,25 +70,27 @@ export async function getCasInbox(tx: Tx) {
                       and m.status in ('UNEXPLAINED', 'SUGGESTED') and m.reviewed_at is null)
     order by coalesce(s.reviewed_at, s.created_at) desc limit 30`;
 
-  // Executions no CAS has shown yet, or no CAS for 30+ days.
+  // Advice no CAS has shown yet, or no CAS for 30+ days.
   const collect = await tx<InboxCollect[]>`
-    select c.id as client_id, c.full_name as client_name, c.client_code, l.snapshot_date::text as latest_cas,
+    select c.id as client_id, c.full_name as client_name, c.client_code, c.phone, l.snapshot_date::text as latest_cas,
+           coalesce((select sum(p.pending_amount) from public.v_pending_executions p where p.client_id = c.id), 0)::float8 as waiting_amount,
            coalesce((select sum(e.executed_amount) from public.executions e
                      where e.client_id = c.id and e.status in ('EXECUTED', 'PARTIAL') and e.cas_verified_at is null
                        and e.execution_date >= coalesce(l.snapshot_date, '-infinity'::date)), 0)::float8 as unverified_amount,
            (app.today_ist() - l.snapshot_date)::int as days
     from public.clients c
     left join public.v_latest_snapshot l on l.client_id = c.id
-    where c.status <> 'CLOSED'
+    where c.status <> 'CLOSED' and c.deleted_at is null
     order by c.full_name`;
 
   return {
     reading,
     check,
+    confirm,
     unadvised,
     done,
     collect: collect
-      .filter((x) => x.unverified_amount >= 0.5 || x.days == null || x.days > 30)
-      .sort((a, b) => b.unverified_amount - a.unverified_amount || (b.days ?? 9999) - (a.days ?? 9999)),
+      .filter((x) => x.waiting_amount >= 0.5 || x.unverified_amount >= 0.5 || x.days == null || x.days > 30)
+      .sort((a, b) => b.waiting_amount + b.unverified_amount - (a.waiting_amount + a.unverified_amount) || (b.days ?? 9999) - (a.days ?? 9999)),
   };
 }

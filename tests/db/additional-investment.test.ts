@@ -36,7 +36,8 @@ describeDb("Additional investment (fresh money on top of the active plan)", () =
       await ctx.as("advisor", (t) => approvePlan(t, ctx.users.advisor, draftId));
 
       const plans = await ctx.tx<{ id: string; status: string; merged_into_plan_id: string | null }[]>`
-        select id, status, merged_into_plan_id from public.advisory_plans where client_id = ${p.clientId} order by created_at`;
+        select id, status, merged_into_plan_id from public.advisory_plans where client_id = ${p.clientId}
+        order by created_at, (id = ${p.planId}) desc`; // same transaction, same created_at: the original plan first
       expect(plans).toEqual([
         { id: p.planId, status: "ACTIVE", merged_into_plan_id: null },
         { id: draftId, status: "MERGED", merged_into_plan_id: p.planId },

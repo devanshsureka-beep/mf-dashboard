@@ -15,8 +15,8 @@ import { issueBulkAction, previewBulkAction } from "./actions";
 
 export interface BulkClient { id: string; name: string; code: string; advisor: string | null; risk: string | null; value: number; moneyLeft: number; hasPlan: boolean }
 
-export function BulkCallForm({ clients, searchFunds }: { clients: BulkClient[]; searchFunds: (q: string) => Promise<FundOption[]> }) {
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+export function BulkCallForm({ clients, searchFunds, initial = [] }: { clients: BulkClient[]; searchFunds: (q: string) => Promise<FundOption[]>; initial?: string[] }) {
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(initial.filter((id) => clients.some((c) => c.id === id))));
   const [action, setAction] = useState<"BUY" | "SELL">("BUY");
   const [fund, setFund] = useState<PickedFund | null>(null);
   const [mode, setMode] = useState<BulkMode>("FIXED");

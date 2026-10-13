@@ -1,11 +1,8 @@
-import Link from "next/link";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, Input, Select } from "@/components/ui/form";
-import { LinkButton } from "@/components/ui/button";
+import { Button, LinkButton } from "@/components/ui/button";
 import { ActionForm, SubmitButton } from "@/components/app/action-form";
 import { ClientFields } from "@/components/app/client-form";
 import { StatusBadge } from "@/components/app/status-badge";
-import { EmptyState } from "@/components/app/page-header";
 import { withUserTx, type Actor } from "@/lib/db/tx";
 import { formatDateTime, humanize } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -15,6 +12,7 @@ import type { ClientSummary } from "@/types/domain";
 import { reassignAdvisorAction, updateClientAction } from "../../actions";
 import { AgreementsTab } from "./agreements";
 import { ReportsTab } from "./reports";
+import { NotesPanel } from "./notes";
 
 const DOC_GROUPS: { key: string; label: string; types: string[] }[] = [
   { key: "CAS", label: "CAS", types: ["CAS"] },
@@ -28,7 +26,7 @@ const TYPE_TONE: Record<string, string> = {
   EXECUTION_PROOF: "bg-blue-50 text-blue-800",
 };
 
-/** Agreements & premium, monthly reports, documents and the client's details, in one place. */
+/** Premium, agreement and reports tiles, documents, notes & follow-ups, and the client's details folded away. */
 export async function ClientFileTab({ client: c, actor, docType }: { client: ClientSummary; actor: Actor; docType: string | null }) {
   const { docs, advisors } = await withUserTx(actor, async (tx) => ({
     docs: await listDocuments(tx, c.client_id),
@@ -37,28 +35,31 @@ export async function ClientFileTab({ client: c, actor, docType }: { client: Cli
   const group = DOC_GROUPS.find((g) => g.key === docType) ?? null;
   const shown = group ? docs.filter((d) => group.types.includes(d.document_type)) : docs;
   const canAdvise = actor.role !== "OPERATIONS";
-  const chip = (key: string | null, label: string, n: number) => (
-    <Link key={label} href={`/clients/${c.client_id}?tab=file${key ? `&doc=${key}` : ""}#documents`} scroll={false}
-      className={cn("rounded-full px-2.5 py-1 ring-1", (group?.key ?? null) === key ? "bg-ink text-white ring-ink" : "bg-white ring-border hover:bg-slate-50")}>{label} {n}</Link>
-  );
-
   return (
     <div className="space-y-3">
-      <div id="agreements" className="scroll-mt-14"><AgreementsTab clientId={c.client_id} actor={actor} /></div>
-      <div id="reports" className="scroll-mt-14"><ReportsTab client={c} /></div>
+      <div className="grid gap-3 md:grid-cols-3">
+        <AgreementsTab clientId={c.client_id} actor={actor} />
+        <ReportsTab client={c} />
+      </div>
 
-      <Card id="documents" className="scroll-mt-14">
-        <CardHeader>
-          <CardTitle>Documents · {docs.length}</CardTitle>
-          <div className="flex flex-wrap items-center gap-1.5 text-xs">
-            {chip(null, "All", docs.length)}
-            {DOC_GROUPS.map((g) => chip(g.key, g.label, docs.filter((d) => g.types.includes(d.document_type)).length))}
+      <section id="documents" className="scroll-mt-14 overflow-hidden rounded-xl border border-border bg-surface">
+        <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
+          <h3 className="text-sm font-semibold">Documents · {docs.length}</h3>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <form method="get" className="flex items-center gap-1.5">
+              <input type="hidden" name="tab" value="file" />
+              <Select name="doc" defaultValue={group?.key ?? ""} className="h-8 w-40 text-xs" aria-label="Document type">
+                <option value="">All types · {docs.length}</option>
+                {DOC_GROUPS.map((g) => <option key={g.key} value={g.key}>{g.label} · {docs.filter((d) => g.types.includes(d.document_type)).length}</option>)}
+              </Select>
+              <Button type="submit" size="sm" variant="ghost">Show</Button>
+            </form>
             <LinkButton size="sm" variant="outline" href={`/clients/${c.client_id}/documents/upload`}>Upload</LinkButton>
-            <a href={`/api/clients/${c.client_id}/export`} download className="ml-1 font-medium text-brand hover:underline">Download everything (ZIP)</a>
+            <a href={`/api/clients/${c.client_id}/export`} download className="font-medium text-brand hover:underline">Download everything (ZIP)</a>
           </div>
-        </CardHeader>
-        {shown.length === 0 ? <div className="p-4"><EmptyState title="No documents here" /></div> : (
-          <ul className="divide-y divide-border">
+        </div>
+        {shown.length === 0 ? <p className="border-t border-border px-4 py-3 text-sm text-muted">No documents{group ? " of this type" : " yet"}.</p> : (
+          <ul className="divide-y divide-border border-t border-border">
             {shown.map((d) => (
               <li key={d.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2 text-[13px]">
                 <span className={cn("rounded px-1.5 py-px text-[10px] font-semibold", TYPE_TONE[d.document_type] ?? "bg-slate-100 text-slate-700")}>{humanize(d.document_type)}</span>
@@ -70,40 +71,40 @@ export async function ClientFileTab({ client: c, actor, docType }: { client: Cli
             ))}
           </ul>
         )}
-      </Card>
+      </section>
 
-      <div className="grid gap-3 lg:grid-cols-2">
-        {canAdvise ? (
-          <Card id="details" className="scroll-mt-14">
-            <CardHeader><CardTitle>Client details</CardTitle></CardHeader>
-            <CardContent>
-              <details>
-                <summary className="cursor-pointer text-sm text-brand">Edit details</summary>
-                <ActionForm action={updateClientAction.bind(null, c.client_id)} className="mt-3 space-y-3">
+      <NotesPanel clientId={c.client_id} actor={actor} />
+
+      {canAdvise || actor.role === "ADMIN" ? (
+        <details id="details" className="scroll-mt-14 rounded-xl border border-border bg-surface">
+          <summary className="cursor-pointer select-none px-4 py-2.5 text-sm font-semibold">Client details &amp; advisor</summary>
+          <div className="grid gap-4 border-t border-border p-4 lg:grid-cols-2">
+            {canAdvise ? (
+              <div>
+                <div className="mb-2 text-sm font-medium">Edit details <span className="font-normal text-muted">(phone, email, goal, risk)</span></div>
+                <ActionForm action={updateClientAction.bind(null, c.client_id)} className="space-y-3">
                   <ClientFields client={c} />
                   <SubmitButton size="sm">Save details</SubmitButton>
                 </ActionForm>
-              </details>
-            </CardContent>
-          </Card>
-        ) : null}
-        {actor.role === "ADMIN" ? (
-          <Card id="advisor" className="scroll-mt-14">
-            <CardHeader><CardTitle>Advisor assignment</CardTitle></CardHeader>
-            <CardContent>
-              <ActionForm action={reassignAdvisorAction.bind(null, c.client_id)} className="space-y-2">
-                <Field label="Primary advisor">
-                  <Select name="advisor_id" defaultValue={c.advisor_id ?? ""}>
-                    {advisors.map((a) => <option key={a.id} value={a.id}>{a.full_name}</option>)}
-                  </Select>
-                </Field>
-                <Input name="reason" placeholder="Reason for change" />
-                <SubmitButton size="sm" variant="outline">Reassign</SubmitButton>
-              </ActionForm>
-            </CardContent>
-          </Card>
-        ) : null}
-      </div>
+              </div>
+            ) : null}
+            {actor.role === "ADMIN" ? (
+              <div id="advisor">
+                <div className="mb-2 text-sm font-medium">Primary advisor</div>
+                <ActionForm action={reassignAdvisorAction.bind(null, c.client_id)} className="space-y-2">
+                  <Field label="Advisor">
+                    <Select name="advisor_id" defaultValue={c.advisor_id ?? ""}>
+                      {advisors.map((a) => <option key={a.id} value={a.id}>{a.full_name}</option>)}
+                    </Select>
+                  </Field>
+                  <Input name="reason" placeholder="Reason for change" />
+                  <SubmitButton size="sm" variant="outline">Reassign</SubmitButton>
+                </ActionForm>
+              </div>
+            ) : null}
+          </div>
+        </details>
+      ) : null}
     </div>
   );
 }

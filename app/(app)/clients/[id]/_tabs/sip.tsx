@@ -1,102 +1,135 @@
 import Link from "next/link";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
+import { ActionForm, SubmitButton } from "@/components/app/action-form";
 import { Money } from "@/components/app/money";
-import { SipSummary } from "@/components/app/sip-summary";
-import { SipStatusCard } from "@/components/app/sip-status-card";
-import { SipTable } from "@/components/app/sip-table";
 import { withUserTx, type Actor } from "@/lib/db/tx";
-import { formatDate } from "@/lib/format";
+import { formatDate, formatINRCompact, humanize } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { getSipItems } from "@/services/plans";
 import { getClientSip, getSipProgress } from "@/services/sip";
-import { getSipStatus } from "@/services/sip-status";
-import type { ClientSummary } from "@/types/domain";
+import type { ClientSummary, SipItem } from "@/types/domain";
 import { setSipStatusAction } from "../actions";
 
-/** Everything about the client's SIPs: plan lines, progress, what the CAS shows, every instalment. */
+const ACTION_TONE = { START: "bg-emerald-50 text-emerald-800", STOP: "bg-red-50 text-red-800", CHANGE: "bg-violet-50 text-violet-800" } as const;
+
+/** What each SIP line looks like now. Done is set by the CAS (see reconciliation); advising is the only manual step. */
+function status(s: SipItem): { label: string; tone: string } {
+  if (s.status === "COMPLETED") {
+    const fromCas = (s.notes ?? "").includes("Verified from CAS");
+    const what = s.action === "STOP" ? "stopped" : s.action === "CHANGE" ? "changed" : "running";
+    return { label: fromCas ? `Done · ${what} in CAS` : `Done · ${what}`, tone: "bg-emerald-50 text-emerald-800" };
+  }
+  if (s.status === "ADVISED") return { label: "Advised · not in CAS yet", tone: "bg-orange-50 text-orange-800" };
+  if (s.status === "CANCELLED") return { label: "Cancelled", tone: "bg-slate-100 text-slate-500" };
+  return { label: "Not advised yet", tone: "bg-slate-100 text-slate-700" };
+}
+
+function Kpi({ label, value, tone }: { label: string; value: number; tone?: string }) {
+  return (
+    <div>
+      <div className="text-[10.5px] font-semibold uppercase tracking-wide text-muted">{label}</div>
+      <div className={cn("text-xl font-semibold num", tone)}>{formatINRCompact(value)}<span className="text-xs font-normal text-muted">/mo</span></div>
+    </div>
+  );
+}
+
+/** The client's SIPs: one summary row, one table whose status comes from the CAS, and the instalments folded away. */
 export async function SipTab({ client: c, actor }: { client: ClientSummary; actor: Actor }) {
   const d = await withUserTx(actor, async (tx) => ({
     sip: await getClientSip(tx, c.client_id),
     lines: c.active_plan_id ? await getSipItems(tx, c.active_plan_id) : [],
     progress: c.active_plan_id ? await getSipProgress(tx, c.active_plan_id) : [],
-    status: await getSipStatus(tx, c.client_id),
-    byFund: await tx<{ scheme_name: string; instalments: number; total: number; first_date: string; last_date: string; last_amount: number }[]>`
-      select t.scheme_name, count(*)::int as instalments, sum(abs(t.amount))::float8 as total,
-             min(t.transaction_date)::text as first_date, max(t.transaction_date)::text as last_date,
-             (array_agg(abs(t.amount) order by t.transaction_date desc))[1]::float8 as last_amount
-      from public.portfolio_transactions t
-      where t.client_id = ${c.client_id} and t.transaction_type = 'SIP' and coalesce(t.amount, 0) <> 0
-        and t.transaction_date >= (app.today_ist() - interval '24 months')
-      group by t.scheme_name order by max(t.transaction_date) desc`,
-    recent: await tx<{ date: string; scheme_name: string; amount: number; units: number | null; folio_number: string | null }[]>`
-      select t.transaction_date::text as date, t.scheme_name, abs(t.amount)::float8 as amount, t.units::float8 as units, t.folio_number
+    recent: await tx<{ date: string; scheme_name: string; amount: number; units: number | null }[]>`
+      select t.transaction_date::text as date, t.scheme_name, abs(t.amount)::float8 as amount, t.units::float8 as units
       from public.portfolio_transactions t
       where t.client_id = ${c.client_id} and t.transaction_type = 'SIP' and coalesce(t.amount, 0) <> 0
       order by t.transaction_date desc limit 60`,
+    lastCas: (await tx<{ d: string | null }[]>`
+      select max(snapshot_date)::text as d from public.portfolio_snapshots where client_id = ${c.client_id} and review_status = 'CONFIRMED'`)[0]?.d ?? null,
   }));
+  const invested = Object.fromEntries(d.progress.map((r) => [r.sip_item_id, r]));
+  const canAdvise = actor.role !== "OPERATIONS" && Boolean(c.active_plan_id);
+  const s = d.sip;
+  const pct = s.sip_monthly_target > 0 ? Math.min(100, Math.round((s.sip_monthly_started / s.sip_monthly_target) * 100)) : 0;
+  const lines = d.lines.filter((l) => l.status !== "CANCELLED");
 
   return (
     <div className="space-y-3">
-      <SipSummary s={d.sip} planHref={c.active_plan_id ? `/clients/${c.client_id}/plans/${c.active_plan_id}` : null} />
+      <section className="rounded-xl border border-border bg-surface px-4 py-3.5">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <Kpi label="SIP target" value={s.sip_monthly_target} />
+          <Kpi label="Advised" value={s.sip_monthly_advised} tone="text-blue-700" />
+          <Kpi label="Running (CAS)" value={s.sip_monthly_started} tone="text-emerald-700" />
+          <Kpi label="Left to advise" value={s.sip_monthly_yet_to_advise} />
+        </div>
+        <div className="mt-3 h-1.5 rounded-full bg-slate-100"><div className="h-1.5 rounded-full bg-emerald-500" style={{ width: `${pct}%` }} /></div>
+      </section>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>SIP lines in the plan</CardTitle>
-          {c.active_plan_id ? <Link className="text-xs text-brand hover:underline" href={`/clients/${c.client_id}/plans/${c.active_plan_id}`}>Change amounts or move lump sum ↔ SIP in the plan →</Link> : null}
-        </CardHeader>
-        {d.lines.length ? (
-          <SipTable
-            rows={d.lines}
-            canUpdate={Boolean(c.active_plan_id)}
-            action={setSipStatusAction.bind(null, c.client_id)}
-            invested={Object.fromEntries(d.progress.map((r) => [r.sip_item_id, r]))}
-          />
-        ) : <CardContent><p className="text-sm text-muted">{c.active_plan_id ? "The active plan has no SIP lines." : "No active plan."}</p></CardContent>}
-      </Card>
+      <section className="overflow-hidden rounded-xl border border-border bg-surface">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-2.5">
+          <h3 className="text-sm font-semibold">SIPs in the plan · {lines.length}</h3>
+          {c.active_plan_id ? <Link className="text-xs text-brand hover:underline" href={`/clients/${c.client_id}/plans/${c.active_plan_id}`}>Change amounts / move lump sum ↔ SIP</Link> : null}
+        </div>
+        {lines.length === 0 ? <p className="px-4 py-3 text-sm text-muted">{c.active_plan_id ? "The active plan has no SIP lines." : "No active plan."}</p> : (
+          <Table className="text-[13px]">
+            <THead><TR><TH>Action</TH><TH>Fund</TH><TH>Amount</TH><TH className="text-right">Invested so far</TH><TH>Status (from CAS)</TH>{canAdvise ? <TH /> : null}</TR></THead>
+            <TBody>
+              {lines.map((l) => {
+                const st = status(l);
+                const inv = invested[l.id];
+                return (
+                  <TR key={l.id}>
+                    <TD><span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold", ACTION_TONE[l.action])}>{l.action}</span></TD>
+                    <TD className="max-w-80"><div className="truncate font-medium" title={l.scheme_name}>{l.scheme_name}</div></TD>
+                    <TD className="whitespace-nowrap num">
+                      {l.action === "STOP" ? <><Money value={l.old_amount} full /> → stop</>
+                        : l.action === "CHANGE" ? <><Money value={l.old_amount} full /> → <Money value={l.new_amount} full /></>
+                        : <><Money value={l.new_amount} full /> / {l.frequency === "MONTHLY" ? "mo" : humanize(l.frequency).toLowerCase()}</>}
+                    </TD>
+                    <TD className="text-right num">{l.action === "STOP" ? <span className="text-muted">—</span> : <Money value={inv?.invested_amount ?? 0} full />}</TD>
+                    <TD>
+                      <span className={cn("rounded-full px-2 py-0.5 text-[11.5px] font-semibold", st.tone)}>{st.label}</span>
+                      {l.status === "COMPLETED" && l.completed_at ? <span className="ml-1.5 text-[11px] text-muted">{formatDate(l.completed_at)}</span> : null}
+                    </TD>
+                    {canAdvise ? (
+                      <TD className="text-right">
+                        {l.status === "PLANNED" ? (
+                          <ActionForm action={setSipStatusAction.bind(null, c.client_id, l.id)}>
+                            <input type="hidden" name="status" value="ADVISED" />
+                            <SubmitButton size="sm" variant="outline">Mark advised</SubmitButton>
+                          </ActionForm>
+                        ) : null}
+                      </TD>
+                    ) : null}
+                  </TR>
+                );
+              })}
+            </TBody>
+          </Table>
+        )}
+      </section>
 
-      <SipStatusCard sip={d.status} />
-
-      <div className="grid gap-3 xl:grid-cols-2">
-        <Card>
-          <CardHeader><CardTitle>SIPs running (last 24 months, from CAS)</CardTitle></CardHeader>
-          {d.byFund.length ? (
-            <Table className="text-[13px] [&_td]:px-2 [&_th]:px-2">
-              <THead><TR><TH>Fund</TH><TH className="text-right">Last instalment</TH><TH className="text-right">Instalments</TH><TH className="text-right">Invested</TH></TR></THead>
+      <details className="rounded-xl border border-border bg-surface">
+        <summary className="cursor-pointer select-none px-4 py-2.5 text-sm font-semibold">Every SIP instalment seen in CAS{d.recent.length ? ` · ${d.recent.length}` : ""}</summary>
+        {d.recent.length ? (
+          <div className="max-h-96 overflow-y-auto border-t border-border">
+            <Table className="text-[13px]">
+              <THead><TR><TH>Date</TH><TH>Fund</TH><TH className="text-right">Amount</TH><TH className="text-right">Units</TH></TR></THead>
               <TBody>
-                {d.byFund.map((f) => (
-                  <TR key={f.scheme_name}>
-                    <TD className="max-w-72"><div className="truncate" title={f.scheme_name}>{f.scheme_name}</div><div className="text-[11px] text-muted">since {formatDate(f.first_date)}</div></TD>
-                    <TD className="text-right"><Money value={f.last_amount} full /><div className="text-[11px] text-muted">{formatDate(f.last_date)}</div></TD>
-                    <TD className="text-right num">{f.instalments}</TD>
-                    <TD className="text-right font-medium"><Money value={f.total} /></TD>
+                {d.recent.map((r, i) => (
+                  <TR key={`${r.date}-${i}`}>
+                    <TD className="whitespace-nowrap text-xs">{formatDate(r.date)}</TD>
+                    <TD className="max-w-80"><div className="truncate text-xs" title={r.scheme_name}>{r.scheme_name}</div></TD>
+                    <TD className="text-right"><Money value={r.amount} full /></TD>
+                    <TD className="text-right num text-xs">{r.units?.toFixed(3) ?? "—"}</TD>
                   </TR>
                 ))}
               </TBody>
             </Table>
-          ) : <CardContent><p className="text-sm text-muted">No SIP instalments in the CAS statements so far.</p></CardContent>}
-        </Card>
-
-        <Card>
-          <CardHeader><CardTitle>Every SIP instalment (latest 60)</CardTitle></CardHeader>
-          {d.recent.length ? (
-            <div className="max-h-96 overflow-y-auto">
-              <Table className="text-[13px] [&_td]:px-2 [&_th]:px-2">
-                <THead><TR><TH>Date</TH><TH>Fund</TH><TH className="text-right">Amount</TH><TH className="text-right">Units</TH></TR></THead>
-                <TBody>
-                  {d.recent.map((r, i) => (
-                    <TR key={`${r.date}-${i}`}>
-                      <TD className="whitespace-nowrap text-xs">{formatDate(r.date)}</TD>
-                      <TD className="max-w-64"><div className="truncate text-xs" title={r.scheme_name}>{r.scheme_name}</div></TD>
-                      <TD className="text-right"><Money value={r.amount} full /></TD>
-                      <TD className="text-right num text-xs">{r.units?.toFixed(3) ?? "—"}</TD>
-                    </TR>
-                  ))}
-                </TBody>
-              </Table>
-            </div>
-          ) : <CardContent><p className="text-sm text-muted">None yet.</p></CardContent>}
-        </Card>
-      </div>
+          </div>
+        ) : <p className="border-t border-border px-4 py-3 text-sm text-muted">None yet.{d.lastCas ? ` Latest CAS ${formatDate(d.lastCas)}; the next CAS will show what changed.` : ""}</p>}
+      </details>
+      <p className="text-xs text-muted">Status updates by itself from each new CAS. Advising a SIP is the only step done by hand.</p>
     </div>
   );
 }

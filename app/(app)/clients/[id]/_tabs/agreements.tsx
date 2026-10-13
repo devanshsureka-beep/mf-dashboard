@@ -4,7 +4,6 @@ import { Field, Input, Select } from "@/components/ui/form";
 import { Badge } from "@/components/ui/badge";
 import { ActionForm, SubmitButton } from "@/components/app/action-form";
 import { Money } from "@/components/app/money";
-import { StatCard } from "@/components/app/stat-card";
 import { withUserTx, type Actor } from "@/lib/db/tx";
 import { formatDate, humanize } from "@/lib/format";
 import { AGREEMENT_STATUSES, AGREEMENT_TYPES, getPremium, listAgreements, listPayments, PAYMENT_MODES } from "@/services/client-record";
@@ -14,7 +13,7 @@ const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" 
 
 const PREMIUM_TONE = { ACTIVE: "success", PAID: "info", EXPIRED: "danger", UNPAID: "danger" } as const;
 
-/** What the client signed and what they paid for MF Premium, kept for audit. */
+/** Two tiles: premium paid and the advisory agreement, each with its records and add form folded inside. */
 export async function AgreementsTab({ clientId, actor }: { clientId: string; actor: Actor }) {
   const d = await withUserTx(actor, async (tx) => ({
     premium: await getPremium(tx, clientId),
@@ -23,26 +22,73 @@ export async function AgreementsTab({ clientId, actor }: { clientId: string; act
   }));
   const p = d.premium;
 
+  const agreementLabel = p.agreement_status === "VALID" ? "Valid" : p.agreement_status === "EXPIRED" ? "Expired" : "Missing";
   return (
-    <div className="space-y-3">
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard label="Premium paid (total)" value={<Money value={p.premium_paid_total} />} hint={`${p.premium_payments} payment(s)${p.last_paid_on ? ` · last ${formatDate(p.last_paid_on)}` : ""}`} />
-        <StatCard
-          label="Premium status"
-          value={humanize(p.premium_status)}
-          hint={p.paid_until ? `Paid until ${formatDate(p.paid_until)}${p.renewal_due ? " · renewal due" : ""}` : "No period recorded"}
-          tone={p.premium_status === "ACTIVE" ? (p.renewal_due ? "attention" : "success") : p.premium_status === "PAID" ? "default" : "danger"}
-        />
-        <StatCard
-          label="Advisory agreement"
-          value={p.agreement_status === "VALID" ? "Valid" : p.agreement_status === "EXPIRED" ? "Expired" : "Missing"}
-          hint={p.agreement_valid_to ? `Valid till ${formatDate(p.agreement_valid_to)}` : p.agreements_signed ? "No end date" : "Record the signed agreement below"}
-          tone={p.agreement_status === "VALID" ? "success" : "danger"}
-        />
-        <StatCard label="Documents on file" value={d.agreements.filter((a) => a.document_id).length} hint={`of ${d.agreements.length} agreement record(s)`} />
+    <>
+      <section id="premium" className="scroll-mt-14 rounded-xl border border-border bg-surface px-4 py-3">
+        <div className="text-[10.5px] font-semibold uppercase tracking-wide text-muted">Premium</div>
+        <div className={p.premium_status === "ACTIVE" ? (p.renewal_due ? "text-lg font-semibold text-amber-700" : "text-lg font-semibold text-emerald-700") : "text-lg font-semibold text-red-700"}>{humanize(p.premium_status)}</div>
+        <div className="text-xs text-muted"><Money value={p.premium_paid_total} /> paid · {p.paid_until ? `till ${formatDate(p.paid_until)}${p.renewal_due ? " · renewal due" : ""}` : "no period recorded"}</div>
+        <details className="mt-1.5">
+          <summary className="cursor-pointer text-xs font-medium text-brand">+ Record a payment{d.payments.length ? ` · ${d.payments.length} on file` : ""}</summary>
+          <div className="mt-2">
+        <Card>
+          <CardHeader><CardTitle>Premium payments</CardTitle><span className="text-xs text-muted">Total <Money value={p.premium_paid_total} full /></span></CardHeader>
+          {d.payments.length ? (
+            <Table className="text-[13px] [&_td]:px-2 [&_th]:px-2">
+              <THead><TR><TH>Paid on</TH><TH className="text-right">Amount</TH><TH>Covers</TH><TH>Mode</TH>{actor.role === "ADMIN" ? <TH /> : null}</TR></THead>
+              <TBody>
+                {d.payments.map((x) => (
+                  <TR key={x.id} className={x.status === "REFUNDED" ? "opacity-60" : undefined}>
+                    <TD className="whitespace-nowrap text-xs">{formatDate(x.paid_on)}<div className="text-[11px] text-muted">{x.plan_name}</div></TD>
+                    <TD className="text-right font-medium"><Money value={x.amount} full />{x.status === "REFUNDED" ? <div><Badge tone="danger">Refunded</Badge></div> : null}</TD>
+                    <TD className="whitespace-nowrap text-xs">{x.period_from ? formatDate(x.period_from) : "—"} → {x.period_to ? formatDate(x.period_to) : "—"}</TD>
+                    <TD className="text-xs">{x.mode}{x.reference ? <div className="text-[11px] text-muted">{x.reference}</div> : null}</TD>
+                    {actor.role === "ADMIN" ? (
+                      <TD>
+                        {x.status === "RECEIVED" ? (
+                          <details className="text-xs">
+                            <summary className="cursor-pointer text-brand">Refund</summary>
+                            <ActionForm action={refundPaymentAction.bind(null, clientId, x.id)} className="mt-1 flex gap-1">
+                              <Input name="reason" placeholder="Reason" className="h-8 w-36 text-xs" required />
+                              <SubmitButton size="sm" variant="outline" confirm="Mark this payment refunded?">Save</SubmitButton>
+                            </ActionForm>
+                          </details>
+                        ) : null}
+                      </TD>
+                    ) : null}
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
+          ) : <CardContent><p className="text-sm text-muted">No premium payments recorded yet.</p></CardContent>}
+          <CardContent className="border-t border-border">
+            <div>
+              <div className="text-sm font-medium">New payment</div>
+              <ActionForm action={addPaymentAction.bind(null, clientId)} className="mt-3 grid grid-cols-2 gap-2" resetOnSuccess>
+                <Field label="Amount ₹ *"><Input name="amount" inputMode="decimal" required /></Field>
+                <Field label="Paid on *"><Input type="date" name="paid_on" defaultValue={today()} required /></Field>
+                <Field label="Covers from"><Input type="date" name="period_from" /></Field>
+                <Field label="Covers till"><Input type="date" name="period_to" /></Field>
+                <Field label="Plan"><Input name="plan_name" defaultValue="MF Premium" /></Field>
+                <Field label="Mode *"><Select name="mode" defaultValue="UPI">{PAYMENT_MODES.map((m) => <option key={m} value={m}>{m}</option>)}</Select></Field>
+                <Field label="Reference (UTR / txn id)"><Input name="reference" /></Field>
+                <Field label="Notes"><Input name="notes" /></Field>
+                <div className="col-span-2"><SubmitButton size="sm">Save payment</SubmitButton></div>
+              </ActionForm>
+            </div>
+          </CardContent>
+        </Card>
+          </div>
+        </details>
       </section>
-
-      <div className="grid gap-3 xl:grid-cols-2">
+      <section id="agreement" className="scroll-mt-14 rounded-xl border border-border bg-surface px-4 py-3">
+        <div className="text-[10.5px] font-semibold uppercase tracking-wide text-muted">Advisory agreement</div>
+        <div className={p.agreement_status === "VALID" ? "text-lg font-semibold text-emerald-700" : "text-lg font-semibold text-red-700"}>{agreementLabel}</div>
+        <div className="text-xs text-muted">{p.agreement_valid_to ? `Valid till ${formatDate(p.agreement_valid_to)}` : p.agreements_signed ? "No end date" : "No signed agreement on file"}</div>
+        <details className="mt-1.5">
+          <summary className="cursor-pointer text-xs font-medium text-brand">+ Record an agreement{d.agreements.length ? ` · ${d.agreements.length} on file` : ""}</summary>
+          <div className="mt-2">
         <Card>
           <CardHeader><CardTitle>Agreements</CardTitle><Badge tone={PREMIUM_TONE[p.premium_status]}>{humanize(p.premium_status)} premium</Badge></CardHeader>
           {d.agreements.length ? (
@@ -75,8 +121,8 @@ export async function AgreementsTab({ clientId, actor }: { clientId: string; act
             </Table>
           ) : <CardContent><p className="text-sm text-muted">No agreements recorded yet.</p></CardContent>}
           <CardContent className="border-t border-border">
-            <details>
-              <summary className="cursor-pointer text-sm font-medium text-brand">+ Record an agreement</summary>
+            <div>
+              <div className="text-sm font-medium">New agreement</div>
               <ActionForm action={addAgreementAction.bind(null, clientId)} className="mt-3 grid grid-cols-2 gap-2" resetOnSuccess>
                 <Field label="Type *"><Select name="agreement_type" defaultValue="ADVISORY_AGREEMENT">{AGREEMENT_TYPES.map((t) => <option key={t} value={t}>{humanize(t)}</option>)}</Select></Field>
                 <Field label="Title *"><Input name="title" defaultValue="MF Premium advisory agreement" required /></Field>
@@ -89,58 +135,13 @@ export async function AgreementsTab({ clientId, actor }: { clientId: string; act
                 <Field label="Notes" className="col-span-2"><Input name="notes" /></Field>
                 <div className="col-span-2"><SubmitButton size="sm">Save agreement</SubmitButton></div>
               </ActionForm>
-            </details>
+            </div>
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader><CardTitle>Premium payments</CardTitle><span className="text-xs text-muted">Total <Money value={p.premium_paid_total} full /></span></CardHeader>
-          {d.payments.length ? (
-            <Table className="text-[13px] [&_td]:px-2 [&_th]:px-2">
-              <THead><TR><TH>Paid on</TH><TH className="text-right">Amount</TH><TH>Covers</TH><TH>Mode</TH>{actor.role === "ADMIN" ? <TH /> : null}</TR></THead>
-              <TBody>
-                {d.payments.map((x) => (
-                  <TR key={x.id} className={x.status === "REFUNDED" ? "opacity-60" : undefined}>
-                    <TD className="whitespace-nowrap text-xs">{formatDate(x.paid_on)}<div className="text-[11px] text-muted">{x.plan_name}</div></TD>
-                    <TD className="text-right font-medium"><Money value={x.amount} full />{x.status === "REFUNDED" ? <div><Badge tone="danger">Refunded</Badge></div> : null}</TD>
-                    <TD className="whitespace-nowrap text-xs">{x.period_from ? formatDate(x.period_from) : "—"} → {x.period_to ? formatDate(x.period_to) : "—"}</TD>
-                    <TD className="text-xs">{x.mode}{x.reference ? <div className="text-[11px] text-muted">{x.reference}</div> : null}</TD>
-                    {actor.role === "ADMIN" ? (
-                      <TD>
-                        {x.status === "RECEIVED" ? (
-                          <details className="text-xs">
-                            <summary className="cursor-pointer text-brand">Refund</summary>
-                            <ActionForm action={refundPaymentAction.bind(null, clientId, x.id)} className="mt-1 flex gap-1">
-                              <Input name="reason" placeholder="Reason" className="h-8 w-36 text-xs" required />
-                              <SubmitButton size="sm" variant="outline" confirm="Mark this payment refunded?">Save</SubmitButton>
-                            </ActionForm>
-                          </details>
-                        ) : null}
-                      </TD>
-                    ) : null}
-                  </TR>
-                ))}
-              </TBody>
-            </Table>
-          ) : <CardContent><p className="text-sm text-muted">No premium payments recorded yet.</p></CardContent>}
-          <CardContent className="border-t border-border">
-            <details>
-              <summary className="cursor-pointer text-sm font-medium text-brand">+ Record a payment</summary>
-              <ActionForm action={addPaymentAction.bind(null, clientId)} className="mt-3 grid grid-cols-2 gap-2" resetOnSuccess>
-                <Field label="Amount ₹ *"><Input name="amount" inputMode="decimal" required /></Field>
-                <Field label="Paid on *"><Input type="date" name="paid_on" defaultValue={today()} required /></Field>
-                <Field label="Covers from"><Input type="date" name="period_from" /></Field>
-                <Field label="Covers till"><Input type="date" name="period_to" /></Field>
-                <Field label="Plan"><Input name="plan_name" defaultValue="MF Premium" /></Field>
-                <Field label="Mode *"><Select name="mode" defaultValue="UPI">{PAYMENT_MODES.map((m) => <option key={m} value={m}>{m}</option>)}</Select></Field>
-                <Field label="Reference (UTR / txn id)"><Input name="reference" /></Field>
-                <Field label="Notes"><Input name="notes" /></Field>
-                <div className="col-span-2"><SubmitButton size="sm">Save payment</SubmitButton></div>
-              </ActionForm>
-            </details>
-          </CardContent>
-        </Card>
-      </div>
-    </div>
+          </div>
+        </details>
+      </section>
+    </>
   );
 }

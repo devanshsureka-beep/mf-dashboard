@@ -23,7 +23,7 @@ export async function recordExecutionAction(adviceItemId: string, _p: ActionResu
     // Upload proof first (outside the DB transaction); the DB row references it.
     let prepared: Awaited<ReturnType<typeof prepareUpload>> | null = null;
     let path: string | null = null;
-    const advice = await actionTx((tx) => getAdviceItem(tx, adviceItemId));
+    const advice = await actionTx((tx) => getAdviceItem(tx, adviceItemId), { roles: ["ADMIN"] });
     if (hasProof) {
       prepared = await prepareUpload(proof as File);
       path = objectPath(advice.client_id, "EXECUTION_PROOF", prepared);
@@ -52,7 +52,8 @@ export async function recordExecutionAction(adviceItemId: string, _p: ActionResu
         proofDocumentId: proofId,
         allowOverExecution: str(fd, "allow_over") === "yes",
       });
-    });
+      // Done comes from the CAS; recording by hand is an admin fallback.
+    }, { roles: ["ADMIN"] });
     revalidatePath("/executions/pending");
     revalidatePath(`/advice/items/${adviceItemId}`);
     revalidatePath(`/clients/${advice.client_id}`);

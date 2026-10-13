@@ -14,7 +14,7 @@ export const BRAND = {
 export const PAGES = {
   overview: "Today",
   clients: "Clients",
-  calls: "Calls & executions",
+  calls: "Calls & tranches",
   casInbox: "CAS inbox",
   onboardHub: "Onboard clients",
   onboard: "Onboard Client",

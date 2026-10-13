@@ -26,6 +26,16 @@ export function BulkUploader() {
   const [rows, setRows] = useState<Row[]>([]);
   const [busy, setBusy] = useState(false);
 
+  // Loose PDFs and folders add up; only PDFs are kept, each file once.
+  function add(list: File[]) {
+    const pdfs = list.filter((f) => /\.pdf$/i.test(f.name) || f.type === "application/pdf");
+    setFiles((cur) => {
+      const seen = new Set(cur.map((f) => `${f.name}|${f.size}`));
+      return [...cur, ...pdfs.filter((f) => !seen.has(`${f.name}|${f.size}`))];
+    });
+    setRows([]);
+  }
+
   async function run(list: File[], retryIndex?: number) {
     setBusy(true);
     const start = retryIndex ?? 0;
@@ -62,10 +72,20 @@ export function BulkUploader() {
             <span className="mb-1 block text-xs font-medium text-muted">CAS PDFs (select many)</span>
             <input
               type="file" accept="application/pdf" multiple disabled={busy}
-              onChange={(e) => { setFiles(Array.from(e.target.files ?? [])); setRows([]); }}
+              onChange={(e) => { add(Array.from(e.target.files ?? [])); e.target.value = ""; }}
               className="block text-sm file:mr-3 file:rounded-md file:border file:border-border file:bg-white file:px-3 file:py-1.5 file:text-sm"
             />
           </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-muted">…or a whole folder</span>
+            <input
+              type="file" multiple disabled={busy}
+              {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
+              onChange={(e) => { add(Array.from(e.target.files ?? [])); e.target.value = ""; }}
+              className="block text-sm file:mr-3 file:rounded-md file:border file:border-border file:bg-white file:px-3 file:py-1.5 file:text-sm"
+            />
+          </label>
+          {files.length ? <span className="self-center text-xs text-muted">{files.length} PDF(s) picked · <button type="button" className="text-brand hover:underline" onClick={() => { setFiles([]); setRows([]); }} disabled={busy}>clear</button></span> : null}
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-muted">Password or mobile no. (optional, for files that don&apos;t open)</span>
             <Input type="password" autoComplete="off" value={password} onChange={(e) => setPassword(e.target.value)} className="w-72" disabled={busy} />

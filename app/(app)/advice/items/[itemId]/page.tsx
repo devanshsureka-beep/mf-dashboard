@@ -120,10 +120,15 @@ export default async function AdviceItemPage(props: PageProps<"/advice/items/[it
             ) : null}
           </Card>
 
-          <Card>
-            <CardHeader><CardTitle>Record execution</CardTitle><span className="text-xs text-muted">Partial executions are supported: record each fill separately.</span></CardHeader>
-            <CardContent><RecordExecutionForm advice={a} action={recordExecutionAction.bind(null, itemId)} /></CardContent>
-          </Card>
+          {/* Done comes from the CAS. Recording by hand is an admin fallback for when a CAS cannot show the trade. */}
+          {actor.role === "ADMIN" ? (
+            <details className="rounded-xl border border-border bg-surface">
+              <summary className="cursor-pointer select-none px-4 py-2.5 text-sm font-semibold">Admin: record by hand <span className="font-normal text-muted">(only when a CAS cannot show this trade)</span></summary>
+              <CardContent className="border-t border-border pt-3"><RecordExecutionForm advice={a} action={recordExecutionAction.bind(null, itemId)} /></CardContent>
+            </details>
+          ) : (
+            <p className="rounded-lg bg-brand-50 px-3 py-2 text-xs text-brand-700">Done fills in from the client&apos;s next CAS. Upload it in the CAS inbox; unclear matches wait there for one click to confirm.</p>
+          )}
 
           {chain.length > 1 ? (
             <Card>

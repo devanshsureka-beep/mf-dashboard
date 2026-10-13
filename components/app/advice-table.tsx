@@ -20,10 +20,10 @@ export function AdviceTable({ rows, showClient = true, compact = false }: { rows
           <TH className="text-right">Amount</TH>
           {full ? <TH className="text-right">Units</TH> : null}
           {full ? <TH>Channel</TH> : null}
-          <TH className="text-right">Executed</TH>
-          <TH>Executed on</TH>
-          <TH className="text-right">Pending</TH>
-          <TH>Execution status</TH>
+          <TH className="text-right">Done (CAS)</TH>
+          <TH>Done on</TH>
+          <TH className="text-right">Waiting</TH>
+          <TH>Status</TH>
         </TR>
       </THead>
       <TBody>

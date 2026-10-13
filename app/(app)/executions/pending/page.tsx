@@ -5,24 +5,25 @@ import { Input, Select } from "@/components/ui/form";
 import { Money } from "@/components/app/money";
 import { ActionBadge } from "@/components/app/status-badge";
 import { EmptyState, PageHeader } from "@/components/app/page-header";
-import { RecordExecutionForm } from "@/components/app/record-execution-form";
 import { ActionForm, SubmitButton } from "@/components/app/action-form";
-import { formatDate, formatUnits } from "@/lib/format";
+import { formatDate, formatDayMonth, formatUnits } from "@/lib/format";
+import { askCasHref } from "@/lib/ask-cas";
+import { cn } from "@/lib/utils";
 import { PAGES } from "@/lib/brand";
 import { HubTabs } from "@/components/app/hub-tabs";
 import { pageData } from "@/lib/server";
 import { listAdvisors, listClientSummaries } from "@/services/clients";
 import type { AdviceItemView } from "@/types/domain";
-import { recordExecutionAction } from "../actions";
 import { closeAdviceAction, followUpNoteAction } from "../../advice/actions";
 
-export const metadata = { title: "Awaiting execution" };
+export const metadata = { title: "Waiting for clients" };
 
 interface PendingRow {
   advice_item_id: string; client_id: string; client_code: string; client_name: string; advisor_id: string; advisor_name: string | null;
   batch_code: string; security_id: string; scheme_name: string; action: AdviceItemView["action"]; quantity_basis: "AMOUNT" | "UNITS";
   advised_amount: number; advised_units: number | null; executed_amount: number; executed_units: number; pending_amount: number;
   pending_units: number | null; status: string; communicated_at: Date; communication_channel: string; age_days: number;
+  phone: string | null; cas_after: string | null; done_on: string | null; to_confirm: boolean;
 }
 
 export default async function PendingExecutionsPage(props: PageProps<"/executions/pending">) {
@@ -32,13 +33,19 @@ export default async function PendingExecutionsPage(props: PageProps<"/execution
   const statusFilter = f.status === "PENDING" ? "ISSUED" : f.status === "PARTIAL" ? "PARTIALLY_EXECUTED" : null;
   const { rows, clients, advisors, actor } = await pageData(async (tx) => ({
     rows: await tx<PendingRow[]>`
-      select * from public.v_pending_executions
-      where (${f.client}::uuid is null or client_id = ${f.client})
-        and (${f.advisor}::uuid is null or advisor_id = ${f.advisor})
-        and (${statusFilter}::text is null or status = ${statusFilter})
-        and (${f.side}::text is null or (${f.side} = 'BUY' and action = 'BUY') or (${f.side} = 'SELL' and action <> 'BUY'))
-        and (${f.stale}::text is null or age_days > 3)
-      order by age_days desc, communicated_at`,
+      select p.*, c.phone,
+             case when l.snapshot_date >= (p.communicated_at at time zone 'Asia/Kolkata')::date then l.snapshot_date::text end as cas_after,
+             (select max(e.execution_date)::text from public.executions e where e.advice_item_id = p.advice_item_id and e.status in ('EXECUTED', 'PARTIAL')) as done_on,
+             exists (select 1 from public.reconciliation_matches m join public.reconciliation_runs r on r.id = m.run_id
+                     where m.advice_item_id = p.advice_item_id and m.status = 'SUGGESTED' and r.status <> 'CANCELLED') as to_confirm
+      from public.v_pending_executions p join public.clients c on c.id = p.client_id
+      left join public.v_latest_snapshot l on l.client_id = p.client_id
+      where (${f.client}::uuid is null or p.client_id = ${f.client})
+        and (${f.advisor}::uuid is null or p.advisor_id = ${f.advisor})
+        and (${statusFilter}::text is null or p.status = ${statusFilter})
+        and (${f.side}::text is null or (${f.side} = 'BUY' and p.action = 'BUY') or (${f.side} = 'SELL' and p.action <> 'BUY'))
+        and (${f.stale}::text is null or p.age_days > 3)
+      order by p.age_days desc, p.communicated_at`,
     clients: await listClientSummaries(tx),
     advisors: await listAdvisors(tx),
   }));
@@ -46,10 +53,10 @@ export default async function PendingExecutionsPage(props: PageProps<"/execution
   const total = rows.reduce((s, r) => s + r.pending_amount, 0);
 
   // One block per client, oldest call first.
-  const groups: { client_id: string; client_name: string; client_code: string; advisor: string | null; rows: PendingRow[]; total: number }[] = [];
+  const groups: { client_id: string; client_name: string; client_code: string; phone: string | null; advisor: string | null; rows: PendingRow[]; total: number }[] = [];
   for (const r of rows) {
     let g = groups.find((x) => x.client_id === r.client_id);
-    if (!g) groups.push((g = { client_id: r.client_id, client_name: r.client_name, client_code: r.client_code, advisor: r.advisor_name, rows: [], total: 0 }));
+    if (!g) groups.push((g = { client_id: r.client_id, client_name: r.client_name, client_code: r.client_code, phone: r.phone, advisor: r.advisor_name, rows: [], total: 0 }));
     g.rows.push(r);
     g.total += r.pending_amount;
   }
@@ -69,7 +76,7 @@ export default async function PendingExecutionsPage(props: PageProps<"/execution
     <>
       <PageHeader
         title={PAGES.calls}
-        subtitle={<>{rows.length} open call(s) · <Money value={total} className="font-medium text-amber-700" /> awaiting execution. Advice is not execution: record what the client actually did.</>}
+        subtitle={<>{rows.length} open call(s) · <Money value={total} className="font-medium text-amber-700" /> waiting for clients. Nothing to record: Done fills in from each new CAS.</>}
         actions={canAdvise ? <LinkButton href="/advice/new">Issue call</LinkButton> : null}
       />
       <HubTabs hub="calls" active="pending" role={actor.role} counts={{ pending: rows.length }} />
@@ -77,8 +84,8 @@ export default async function PendingExecutionsPage(props: PageProps<"/execution
       <div className="mb-3 flex flex-wrap items-center gap-1.5">
         {chip("All", { stale: null, status: null, side: null }, noFilter)}
         {chip("Older than 3 days", { stale: f.stale ? null : "1" }, Boolean(f.stale))}
-        {chip("Partly executed", { status: f.status === "PARTIAL" ? null : "PARTIAL" }, f.status === "PARTIAL")}
-        {chip("Not started", { status: f.status === "PENDING" ? null : "PENDING" }, f.status === "PENDING")}
+        {chip("Part done", { status: f.status === "PARTIAL" ? null : "PARTIAL" }, f.status === "PARTIAL")}
+        {chip("Not in CAS yet", { status: f.status === "PENDING" ? null : "PENDING" }, f.status === "PENDING")}
         {chip("Sell", { side: f.side === "SELL" ? null : "SELL" }, f.side === "SELL")}
         {chip("Buy", { side: f.side === "BUY" ? null : "BUY" }, f.side === "BUY")}
         <form method="get" className="ml-auto flex gap-1.5">
@@ -99,30 +106,34 @@ export default async function PendingExecutionsPage(props: PageProps<"/execution
         </form>
       </div>
 
-      {groups.length === 0 ? <EmptyState title="Nothing awaiting execution">Every issued call has been fully executed, cancelled or expired.</EmptyState> : (
+      {groups.length === 0 ? <EmptyState title="Nothing waiting">Every issued call has shown up in a CAS, or was cancelled or expired.</EmptyState> : (
         <div className="space-y-3">
           {groups.map((g) => (
             <Card key={g.client_id} className="overflow-hidden">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-slate-50 px-4 py-2">
                 <div><Link className="font-semibold hover:underline" href={`/clients/${g.client_id}`}>{g.client_name}</Link> <span className="text-xs text-muted">{g.client_code}{g.advisor ? ` · ${g.advisor}` : ""}</span></div>
-                <span className="text-xs font-semibold text-amber-700"><Money value={g.total} /> pending</span>
+                <span className="flex items-center gap-3 text-xs"><a href={askCasHref({ client_id: g.client_id, full_name: g.client_name, phone: g.phone })} target="_blank" rel="noreferrer" className="font-medium text-brand hover:underline">Ask for CAS</a><Link href={`/clients/${g.client_id}/cas/upload`} className="font-medium text-brand hover:underline">Upload CAS</Link><b className="text-amber-700"><Money value={g.total} /> waiting</b></span>
               </div>
-              {g.rows.map((r) => (
-                <details key={r.advice_item_id} className="group border-t border-border first:border-t-0">
-                  <summary className="grid cursor-pointer list-none grid-cols-[92px_minmax(0,2.2fr)_1fr_1fr_1fr_96px] items-center gap-2 px-4 py-2 text-[13px] hover:bg-slate-50/70 [&::-webkit-details-marker]:hidden">
-                    <span className="text-xs text-muted">{formatDate(r.communicated_at)}<span className={`block text-[11px] ${r.age_days > 3 ? "font-semibold text-red-700" : ""}`}>{r.age_days} day(s)</span></span>
-                    <span className="min-w-0"><ActionBadge action={r.action} /> <span className="font-medium">{r.scheme_name}</span><span className="block text-[11px] text-muted">{r.batch_code}{r.quantity_basis === "UNITS" ? ` · ${formatUnits(r.advised_units)} units` : ""}</span></span>
-                    <span className="text-right">Advised <b><Money value={r.advised_amount} /></b></span>
-                    <span className="text-right text-emerald-700">Done <Money value={r.executed_amount} /></span>
-                    <span className="text-right font-semibold text-amber-700">Pending <Money value={r.pending_amount} /></span>
-                    <span className="justify-self-end rounded-md bg-brand px-3 py-1 text-xs font-semibold text-white group-open:bg-slate-200 group-open:text-ink">
-                      <span className="group-open:hidden">Record</span><span className="hidden group-open:inline">Close</span>
-                    </span>
-                  </summary>
-                  <div className="space-y-3 bg-slate-50/80 px-4 pb-4 pl-[116px] pt-2">
-                    <RecordExecutionForm compact advice={{ quantity_basis: r.quantity_basis, pending_amount: r.pending_amount, pending_units: r.pending_units, action: r.action }} action={recordExecutionAction.bind(null, r.advice_item_id)} />
-                    <div className="flex flex-wrap gap-4 text-xs">
-                      <Link className="text-brand hover:underline" href={`/advice/items/${r.advice_item_id}`}>Open the call (proof upload, time, corrections)</Link>
+              {g.rows.map((r) => {
+                const st = r.to_confirm ? { label: "Check in CAS inbox", cls: "bg-red-50 text-red-800", href: "/reconciliation" }
+                  : r.executed_amount >= 0.5 ? { label: "Part done", cls: "bg-amber-50 text-amber-900", href: null }
+                  : { label: r.cas_after ? `Not in CAS ${formatDayMonth(r.cas_after)}` : "Not in CAS yet", cls: "bg-orange-50 text-orange-800", href: null };
+                return (
+                  <details key={r.advice_item_id} className="group border-t border-border first:border-t-0">
+                    <summary className="grid cursor-pointer list-none grid-cols-[92px_minmax(0,2.2fr)_1fr_1fr_1fr_150px] items-center gap-2 px-4 py-2 text-[13px] hover:bg-slate-50/70 [&::-webkit-details-marker]:hidden">
+                      <span className="text-xs text-muted">{formatDate(r.communicated_at)}<span className={`block text-[11px] ${r.age_days > 3 ? "font-semibold text-red-700" : ""}`}>{r.age_days} day(s)</span></span>
+                      <span className="min-w-0"><ActionBadge action={r.action} /> <span className="font-medium">{r.scheme_name}</span><span className="block text-[11px] text-muted">{r.batch_code}{r.quantity_basis === "UNITS" ? ` · ${formatUnits(r.advised_units)} units` : ""}</span></span>
+                      <span className="text-right">Advised <b><Money value={r.advised_amount} /></b></span>
+                      <span className="text-right text-emerald-700">Done <Money value={r.executed_amount} />{r.done_on ? <span className="block text-[11px] text-muted">{formatDate(r.done_on)}</span> : null}</span>
+                      <span className="text-right font-semibold text-amber-700"><Money value={r.pending_amount} /> waiting</span>
+                      <span className="justify-self-end">
+                        {st.href ? <Link href={st.href} className={cn("rounded-full px-2 py-0.5 text-[11px] font-semibold hover:underline", st.cls)}>{st.label}</Link>
+                          : <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-semibold", st.cls)}>{st.label}</span>}
+                        <span className="ml-1.5 text-xs text-muted group-open:hidden" aria-hidden>⋯</span>
+                      </span>
+                    </summary>
+                    <div className="flex flex-wrap gap-4 bg-slate-50/80 px-4 pb-4 pl-[116px] pt-2 text-xs">
+                      <Link className="text-brand hover:underline" href={`/advice/items/${r.advice_item_id}`}>Open the call</Link>
                       <details>
                         <summary className="cursor-pointer text-muted">Follow-up note{canAdvise ? " / cancel" : ""}</summary>
                         <div className="mt-2 w-96 space-y-3 rounded-lg border border-border bg-white p-3">
@@ -141,9 +152,9 @@ export default async function PendingExecutionsPage(props: PageProps<"/execution
                         </div>
                       </details>
                     </div>
-                  </div>
-                </details>
-              ))}
+                  </details>
+                );
+              })}
             </Card>
           ))}
         </div>

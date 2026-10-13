@@ -112,12 +112,6 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
         <TransitionSummary side="BUY" n={{ target: plan.buy_target, advised: plan.buy_advised, executed: plan.buy_executed, pending: plan.buy_pending, yetToAdvise: plan.buy_yet_to_advise }} />
       </div>
 
-      {isActive && actionable.length ? (
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {actionable.map((i) => <ItemCard key={i.plan_item_id} i={i} clientId={id} canAdvise={canAdvise} />)}
-        </div>
-      ) : null}
-
       {migrateNotes > 0 && editable ? (
         <Card className="mt-4 border-sky-200">
           <CardContent className="flex flex-wrap items-center justify-between gap-3 text-sm">
@@ -133,14 +127,14 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
       ) : null}
 
       <Card className="mt-4">
-        <CardHeader><CardTitle>Plan items</CardTitle><span className="text-xs text-muted">SELL side = SELL + SWITCH (switch-out). RETAIN lines move no money.</span></CardHeader>
+        <CardHeader><CardTitle>Plan lines · {items.length}</CardTitle><span className="text-xs text-muted">Sell side = sell + switch-out. Keep lines move no money. Done fills in from each new CAS.</span></CardHeader>
         {items.length === 0 ? <div className="p-4"><EmptyState title="No items yet" /></div> : (
           <Table className="text-[13px] [&_td]:px-2 [&_th]:px-2">
             <THead>
               <TR>
                 <TH>Security</TH><TH>Action</TH><TH className="text-right">Current value</TH><TH className="text-right">Target value</TH>
-                <TH className="text-right">Target amount</TH><TH className="text-right">Advised</TH><TH className="text-right">Executed</TH>
-                <TH className="text-right">Pending</TH><TH className="text-right">Yet to advise</TH><TH>Status</TH>
+                <TH className="text-right">Target amount</TH><TH className="text-right">Advised</TH><TH className="text-right">Done</TH>
+                <TH className="text-right">Waiting</TH><TH className="text-right">Left to advise</TH><TH>Status</TH>
               </TR>
             </THead>
             <TBody>
@@ -171,6 +165,9 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
                   <TD className="min-w-32">
                     <StatusBadge status={i.item_status === "CANCELLED" ? "CANCELLED" : i.progress_status} />
                     {i.side !== "NONE" ? <TransitionBar className="mt-1" target={i.target_amount} executed={i.executed_amount} pending={i.pending_amount} /> : null}
+                    {isActive && canAdvise && i.side !== "NONE" && i.item_status !== "CANCELLED" && i.yet_to_advise_amount > 0.5 ? (
+                      <Link href={`/advice/new?client=${id}&planItem=${i.plan_item_id}`} className="mt-1 block text-[11px] text-brand hover:underline">Issue call →</Link>
+                    ) : null}
                   </TD>
                 </TR>
               ))}
@@ -180,9 +177,9 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
       </Card>
 
       {editable ? (
-        <Card className="mt-4">
-          <CardHeader><CardTitle>Add plan item</CardTitle></CardHeader>
-          <CardContent>
+        <details className="mt-4 rounded-xl border border-border bg-surface">
+          <summary className="cursor-pointer select-none px-4 py-2.5 text-sm font-semibold">+ Add a plan line</summary>
+          <CardContent className="border-t border-border pt-3">
             <ActionForm action={addPlanItemAction.bind(null, id, planId)} className="grid gap-3 md:grid-cols-6" resetOnSuccess>
               <Field label="Security" className="md:col-span-2"><SecuritySelect securities={securities} heldIds={heldIds} required /></Field>
               <Field label="Action">
@@ -196,11 +193,11 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
               <div className="md:col-span-6"><SubmitButton size="sm">Add item</SubmitButton></div>
             </ActionForm>
           </CardContent>
-        </Card>
+        </details>
       ) : null}
 
       <Card className="mt-4">
-        <CardHeader><CardTitle>SIP plan (tracked separately from lump sums)</CardTitle><span className="text-xs text-muted">Target SIP <Money value={plan.target_sip_value} full />/month</span></CardHeader>
+        <CardHeader><CardTitle>SIP lines · {sips.length}</CardTitle><span className="text-xs text-muted">Target SIP <Money value={plan.target_sip_value} full />/month</span></CardHeader>
         {sips.length ? (
           <SipTable
             rows={sips}
@@ -247,7 +244,9 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
           </CardContent>
         ) : null}
         {editable ? (
-          <CardContent className="border-t border-border">
+          <details className="border-t border-border">
+          <summary className="cursor-pointer select-none px-4 py-2.5 text-sm font-medium text-brand">+ Add a SIP line</summary>
+          <CardContent className="pt-0">
             <ActionForm action={addSipAction.bind(null, id, planId)} className="grid gap-3 md:grid-cols-7" resetOnSuccess>
               <Field label="Scheme" className="md:col-span-2"><SecuritySelect securities={securities} heldIds={heldIds} required /></Field>
               <Field label="Action"><Select name="action"><option>START</option><option>STOP</option><option>CHANGE</option></Select></Field>
@@ -259,6 +258,7 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
               <div className="md:col-span-7"><SubmitButton size="sm" variant="outline">Add SIP action</SubmitButton></div>
             </ActionForm>
           </CardContent>
+          </details>
         ) : null}
       </Card>
 
@@ -288,9 +288,9 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
       ) : null}
 
       {canAdvise && (plan.status === "ACTIVE" || plan.status === "DRAFT") ? (
-        <Card className="mt-4">
-          <CardHeader><CardTitle>Close plan</CardTitle></CardHeader>
-          <CardContent>
+        <details className="mt-4 rounded-xl border border-border bg-surface">
+          <summary className="cursor-pointer select-none px-4 py-2.5 text-sm font-semibold">Close the plan</summary>
+          <CardContent className="border-t border-border pt-3">
             <ActionForm action={closePlanAction.bind(null, id, planId)} className="flex flex-wrap items-end gap-2">
               <Field label="New status">
                 <Select name="status" className="w-40">
@@ -302,35 +302,9 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
               <SubmitButton variant="outline" confirm="Close this plan? This cannot be undone.">Close plan</SubmitButton>
             </ActionForm>
           </CardContent>
-        </Card>
+        </details>
       ) : null}
     </>
-  );
-}
-
-function ItemCard({ i, clientId, canAdvise }: { i: PlanItemProgress; clientId: string; canAdvise: boolean }) {
-  return (
-    <div className="rounded-lg border border-border bg-white p-3 shadow-sm">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 text-sm font-medium leading-tight" title={i.scheme_name}><span className="line-clamp-2">{i.scheme_name}</span></div>
-        <ActionBadge action={i.action} />
-      </div>
-      <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-        <dt className="text-muted">Current</dt><dd className="text-right"><Money value={i.current_amount} /></dd>
-        <dt className="text-muted">Target</dt><dd className="text-right"><Money value={i.target_value} /></dd>
-        <dt className="text-muted">{i.side === "SELL" ? "Planned exit" : "Planned buy"}</dt><dd className="text-right font-medium"><Money value={i.target_amount} /></dd>
-        <dt className="text-muted">Advised</dt><dd className="text-right text-blue-700"><Money value={i.advised_amount} /></dd>
-        <dt className="text-muted">Executed</dt><dd className="text-right text-emerald-700"><Money value={i.executed_amount} /></dd>
-        <dt className="text-muted">Pending</dt><dd className="text-right text-amber-700"><Money value={i.pending_amount} /></dd>
-        <dt className="text-muted">Remaining to advise</dt><dd className="text-right font-semibold"><Money value={i.yet_to_advise_amount} /></dd>
-      </dl>
-      <TransitionBar className="mt-2" target={i.target_amount} executed={i.executed_amount} pending={i.pending_amount} />
-      {canAdvise && i.yet_to_advise_amount > 0 ? (
-        <Link href={`/advice/new?client=${clientId}&planItem=${i.plan_item_id}`} className="mt-2 inline-block text-xs text-brand hover:underline">
-          Issue call for remaining →
-        </Link>
-      ) : null}
-    </div>
   );
 }
 

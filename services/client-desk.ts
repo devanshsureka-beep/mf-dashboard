@@ -72,7 +72,7 @@ function planOf(p: PlanLine, liveValue: number | null, sipNote: string | null): 
   const status =
     p.side === "NONE" ? (p.action === "RETAIN" ? "No change advised" : done ? "Done" : "To do")
     : done ? "Done"
-    : p.pending_amount > 0.5 ? `${fmtL(p.pending_amount)} awaiting execution`
+    : p.pending_amount > 0.5 ? `${fmtL(p.pending_amount)} waiting for client`
     : p.advised_amount < 0.5 ? "Not advised yet"
     : `${pct}% · rest in a next tranche`;
   const notes = [full ? "full exit" : null, sipNote, full && !done && liveValue != null ? `worth ${fmtL(liveValue)} today` : null].filter(Boolean);

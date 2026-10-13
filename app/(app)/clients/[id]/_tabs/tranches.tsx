@@ -9,6 +9,8 @@ import { CasTab } from "./cas";
 import { PlanTab } from "./plan";
 
 const L = (v: number) => formatINRCompact(v);
+/** Call status in desk words: done comes from the CAS. */
+const STATUS: Record<string, string> = { ISSUED: "Waiting", PARTIALLY_EXECUTED: "Part done", EXECUTED: "Done" };
 const sides = (sell: number, buy: number) => (sell < 0.5 && buy < 0.5 ? "₹0" : [sell >= 0.5 ? `Sell ${L(sell)}` : null, buy >= 0.5 ? `Buy ${L(buy)}` : null].filter(Boolean).join(" · "));
 
 function Box({ label, children, tone }: { label: string; children: React.ReactNode; tone?: string }) {
@@ -34,7 +36,7 @@ function TrancheCard({ t, c, clientId, canAdvise, sipLeft }: { t: Tranche; c: Cl
         </div>
         {t.open ? (
           <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-900">
-            {t.pending > 0.5 ? `${L(t.pending)} awaiting execution` : remaining > 0.5 ? `Remaining to advise · ${L(remaining)}` : "Waiting for the next CAS"}
+            {t.pending > 0.5 ? `${L(t.pending)} waiting for client` : remaining > 0.5 ? `Remaining to advise · ${L(remaining)}` : "Waiting for the next CAS"}
           </span>
         ) : (
           <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-800">Closed by CAS {formatDate(t.to)}</span>
@@ -42,16 +44,16 @@ function TrancheCard({ t, c, clientId, canAdvise, sipLeft }: { t: Tranche; c: Cl
       </div>
       <div className="mt-2.5 grid grid-cols-2 gap-2 md:grid-cols-4">
         <Box label={`Advised · ${t.calls} call(s)`} tone="text-blue-700">{sides(t.advisedSell, t.advisedBuy)}</Box>
-        <Box label="Executed" tone="text-emerald-700">{sides(t.executedSell, t.executedBuy)}</Box>
+        <Box label="Done (from CAS)" tone="text-emerald-700">{sides(t.executedSell, t.executedBuy)}</Box>
         <Box label="CAS after tranche">{t.to ? `${formatDate(t.to)} · ${L(t.casValue ?? 0)}` : "Awaited"}</Box>
-        <Box label="Trades without advice" tone={t.unadvisedOpen ? "text-red-700" : undefined}>
+        <Box label="Unadvised Trades" tone={t.unadvisedOpen ? "text-red-700" : undefined}>
           {t.to ? (t.unadvisedOpen ? `${t.unadvisedOpen} to review` : t.unadvisedTotal ? `${t.unadvisedTotal} reviewed` : "None") : "—"}
         </Box>
       </div>
       {t.open ? (
         <p className="mt-2.5 text-[12.5px] text-slate-700">
           Left from the plan: Sell {L(c.yet_to_advise_sell)} · Buy {L(c.yet_to_advise_buy)}{sipLeft > 0.5 ? ` · SIPs ${L(sipLeft)}/mo` : ""}.{" "}
-          Next: issue the calls → client executes → upload the new CAS. That CAS closes Tranche {t.number}{remaining > 0.5 ? ` and opens Tranche ${t.number + 1}` : ""}.
+          Next: issue the calls → the client acts → upload their new CAS. That CAS marks what was done and closes Tranche {t.number}{remaining > 0.5 ? ` and opens Tranche ${t.number + 1}` : ""}.
         </p>
       ) : null}
       <div className="mt-2 flex flex-wrap gap-3 text-xs">
@@ -72,7 +74,7 @@ function Ledger({ rows }: { rows: LedgerRow[] }) {
         <thead className="bg-slate-50 text-right text-[10.5px] font-semibold uppercase tracking-wide text-muted">
           <tr>
             <th className="px-4 py-2 text-left">Tranche</th><th className="px-2 py-2 text-left">Advised on</th><th className="px-2 py-2 text-left">Call</th>
-            <th className="px-2 py-2">Advised</th><th className="px-2 py-2">Executed</th><th className="px-2 py-2">Pending</th><th className="py-2 pl-4 pr-4 text-left">Status · CAS check</th>
+            <th className="px-2 py-2">Advised</th><th className="px-2 py-2">Done</th><th className="px-2 py-2">Waiting</th><th className="py-2 pl-4 pr-4 text-left">Status · CAS check</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border">
@@ -92,8 +94,8 @@ function Ledger({ rows }: { rows: LedgerRow[] }) {
               </td>
               <td className="px-2 py-2 text-amber-700 num">{r.pending > 0.5 ? L(r.pending) : "—"}</td>
               <td className="py-2 pl-4 pr-4 text-left text-xs">
-                {humanize(r.status)}
-                {r.casVerified ? <span className="ml-1.5 text-emerald-700">· matched in CAS ✓</span> : r.executed > 0.5 ? <span className="ml-1.5 text-muted">· not yet seen in CAS</span> : null}
+                {STATUS[r.status] ?? humanize(r.status)}
+                {r.casVerified ? <span className="ml-1.5 text-emerald-700">· seen in CAS ✓</span> : r.executed > 0.5 ? <span className="ml-1.5 text-muted">· recorded by hand</span> : null}
               </td>
             </tr>
           ))}
@@ -113,7 +115,7 @@ export async function TranchesTab({ client: c, actor, sipLeft, side }: { client:
   );
   return (
     <div className="space-y-3">
-      <p className="text-xs text-muted">Each tranche: calls advised → client executes → we take a fresh CAS → the CAS verifies what was done. The next tranche starts from that CAS.</p>
+      <p className="rounded-lg bg-brand-50 px-3 py-2 text-xs text-brand-700">Each tranche: calls advised → the client acts → their next CAS shows what was done, and Done fills in by itself. Nothing to record by hand. Unclear matches go to the CAS inbox for one click to confirm.</p>
       {tranches.map((t) => <TrancheCard key={t.number} t={t} c={c} clientId={c.client_id} canAdvise={canAdvise} sipLeft={sipLeft} />)}
       <article className="rounded-xl border border-border bg-surface p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -133,9 +135,9 @@ export async function TranchesTab({ client: c, actor, sipLeft, side }: { client:
 
       <section id="ledger" className="scroll-mt-14 overflow-hidden rounded-xl border border-border bg-surface">
         <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
-          <h3 className="text-sm font-semibold">All calls &amp; executions · {ledger.length}</h3>
+          <h3 className="text-sm font-semibold">All calls · {ledger.length}</h3>
           <div className="flex flex-wrap gap-1.5 text-xs">
-            {chip(null, "All")}{chip("SELL", "Sell")}{chip("BUY", "Buy")}{chip("PENDING", "Pending only")}
+            {chip(null, "All")}{chip("SELL", "Sell")}{chip("BUY", "Buy")}{chip("PENDING", "Waiting only")}
           </div>
         </div>
         <Ledger rows={rows} />

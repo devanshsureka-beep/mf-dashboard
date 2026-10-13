@@ -71,6 +71,12 @@ export function formatDate(value: string | Date | null | undefined): string {
   return `${get("day")}-${MONTHS[Number(get("month")) - 1]}-${get("year")}`;
 }
 
+/** "24-Sep": day and month only, for tight table cells. */
+export function formatDayMonth(value: string | Date | null | undefined): string {
+  const full = formatDate(value);
+  return full === "—" ? full : full.slice(0, 6);
+}
+
 /** "24-Sep-2026 10:42 AM" in IST. */
 export function formatDateTime(value: string | Date | null | undefined): string {
   if (!value) return "—";

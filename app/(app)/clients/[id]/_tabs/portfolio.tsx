@@ -4,14 +4,13 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { Money } from "@/components/app/money";
 import { StatusBadge } from "@/components/app/status-badge";
-import { SipStatusCard } from "@/components/app/sip-status-card";
 import { EmptyState } from "@/components/app/page-header";
 import { withUserTx, type Actor } from "@/lib/db/tx";
 import { formatDate, formatINRCompact, formatNav, formatUnits, humanize } from "@/lib/format";
 import { listRecentTransactions, listSnapshots } from "@/services/portfolio";
 import { getPortfolioViews, planLineFor, type PlanLine } from "@/services/portfolio-views";
-import { getSipStatus } from "@/services/sip-status";
 import { getFundRows } from "@/services/client-desk";
+import type { ClientSummary } from "@/types/domain";
 import { FundTable } from "./fund-table";
 
 
@@ -35,13 +34,45 @@ function PlanCell({ p, liveValue }: { p: PlanLine | null; liveValue?: number }) 
   );
 }
 
-export async function PortfolioTab({ clientId, actor }: { clientId: string; actor: Actor }) {
-  const { views, snapshots, txns, sip, desk } = await withUserTx(actor, async (tx) => ({
+/** Where the client's money is now, and where it ends up once every tranche is done (at today's values). */
+function MoneyBox({ c, inFunds, inBank, sipTarget }: { c: ClientSummary; inFunds: number; inBank: number; sipTarget: number }) {
+  // Still to happen on the plan: sells add to the bank, buys take from it.
+  const sellLeft = Math.max(0, c.target_sell - c.executed_sell);
+  const buyLeft = Math.max(0, c.target_buy - c.executed_buy);
+  const bankAfter = Math.max(0, inBank + sellLeft - buyLeft);
+  const total = inFunds + inBank;
+  const row = (label: React.ReactNode, value: React.ReactNode, cls = "") => (
+    <div className={`flex justify-between gap-3 ${cls}`}><span>{label}</span><b className="num">{value}</b></div>
+  );
+  return (
+    <section className="rounded-xl border-2 border-brand-100 bg-surface p-4">
+      <h3 className="text-[15px] font-semibold">Where the client&apos;s money is</h3>
+      <div className="mt-2.5 grid gap-3 md:grid-cols-2">
+        <div className="space-y-1 rounded-lg bg-slate-50 px-3.5 py-3 text-[13px]">
+          <div className="text-[11px] font-bold uppercase tracking-wide text-muted">Now</div>
+          {row("In mutual funds", <Money value={inFunds} />)}
+          {row(<>In bank <span className="text-muted">(sold, not bought back yet)</span></>, <span className="text-amber-700"><Money value={inBank} /></span>)}
+          {row("Total", <Money value={total} />, "border-t border-border pt-1")}
+        </div>
+        <div className="space-y-1 rounded-lg bg-slate-50 px-3.5 py-3 text-[13px]">
+          <div className="text-[11px] font-bold uppercase tracking-wide text-muted">After all tranches (plan done, estimate)</div>
+          {row("In mutual funds", <Money value={Math.max(0, total - bankAfter)} />)}
+          {row(<>In bank <span className="text-muted">(sell {formatINRCompact(sellLeft)} more − buy {formatINRCompact(buyLeft)} more)</span></>, <Money value={bankAfter} />)}
+          {row("SIPs running", <>{formatINRCompact(sipTarget)} / month</>, "border-t border-border pt-1")}
+        </div>
+      </div>
+      <p className="mt-2 text-xs text-muted">&ldquo;In bank&rdquo; is money from sells done that has not been bought back yet (plus any fresh money). Fund values are at today&apos;s NAV; each new CAS confirms them.</p>
+    </section>
+  );
+}
+
+export async function PortfolioTab({ client, actor, inBank, sipTarget }: { client: ClientSummary; actor: Actor; inBank: number; sipTarget: number }) {
+  const clientId = client.client_id;
+  const { views, snapshots, txns, desk } = await withUserTx(actor, async (tx) => ({
     desk: await getFundRows(tx, clientId),
     views: await getPortfolioViews(tx, clientId),
     snapshots: await listSnapshots(tx, clientId),
     txns: await listRecentTransactions(tx, clientId, 100),
-    sip: await getSipStatus(tx, clientId),
   }));
   if (!views.current) return <EmptyState title="No confirmed CAS snapshot yet">Upload a CAS and confirm its extraction to see holdings.</EmptyState>;
 
@@ -50,12 +81,12 @@ export async function PortfolioTab({ clientId, actor }: { clientId: string; acto
 
   return (
     <div className="space-y-3">
-      <FundTable rows={desk.rows} totals={desk.totals} clientId={clientId} canAdvise={actor.role !== "OPERATIONS"} casDate={desk.casDate} />
+      <FundTable rows={desk.rows} totals={desk.totals} clientId={clientId} canAdvise={actor.role !== "OPERATIONS"} casDate={desk.casDate} inBank={inBank} />
+      <MoneyBox c={client} inFunds={client.live_portfolio_value ?? 0} inBank={inBank} sipTarget={sipTarget} />
 
       <details className="group rounded-xl border border-border bg-surface">
-        <summary className="cursor-pointer select-none px-4 py-2.5 text-sm font-semibold">More detail · SIPs seen in CAS, portfolio at onboarding, every CAS and its transactions</summary>
+        <summary className="cursor-pointer select-none px-4 py-2.5 text-sm font-semibold">More detail · portfolio at onboarding, every CAS and its transactions</summary>
         <div className="space-y-4 border-t border-border p-3">
-      <SipStatusCard sip={sip} />
 
       {views.baseline ? (
         <Card>

@@ -43,15 +43,15 @@ export default async function AdviceLedgerPage(props: PageProps<"/advice">) {
         actions={actor.role !== "OPERATIONS" ? <LinkButton href="/advice/new">Issue call</LinkButton> : null}
       />
       <HubTabs hub="calls" active="ledger" role={actor.role} />
-      {one("issued") ? <p className="mb-3 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800">Calls recorded. They now appear below and under Awaiting execution.</p> : null}
+      {one("issued") ? <p className="mb-3 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800">Calls recorded. They now appear below and under Waiting for clients; the next CAS marks them done.</p> : null}
 
       <div className="mb-3 flex flex-wrap gap-2">
         {quick("Today", { from: today, to: today })}
         {quick("Sell", { side: "SELL" })}
         {quick("Buy", { side: "BUY" })}
-        {quick("Pending", { status: "PENDING" })}
-        {quick("Partial", { status: "PARTIAL" })}
-        {quick("Executed", { status: "EXECUTED" })}
+        {quick("Waiting", { status: "PENDING" })}
+        {quick("Part done", { status: "PARTIAL" })}
+        {quick("Done", { status: "EXECUTED" })}
         {quick("Cancelled / revised", { status: "CANCELLED" })}
       </div>
 
@@ -70,8 +70,8 @@ export default async function AdviceLedgerPage(props: PageProps<"/advice">) {
         </Select>
         <Select name="side" defaultValue={f.side ?? ""} className="w-36"><option value="">Buy & sell</option><option value="BUY">Buy</option><option value="SELL">Sell</option></Select>
         <Select name="status" defaultValue={f.status ?? ""} className="w-40">
-          <option value="">Any status</option><option value="OPEN">Open (pending/partial)</option><option value="PENDING">Pending</option>
-          <option value="PARTIAL">Partial</option><option value="EXECUTED">Executed</option><option value="CANCELLED">Cancelled / revised / expired</option>
+          <option value="">Any status</option><option value="OPEN">Open (waiting / part done)</option><option value="PENDING">Waiting</option>
+          <option value="PARTIAL">Part done</option><option value="EXECUTED">Done</option><option value="CANCELLED">Cancelled / revised / expired</option>
         </Select>
         <Button type="submit" variant="outline">Filter</Button>
         <Link href="/advice" className="px-2 text-xs text-muted hover:underline">Reset</Link>
@@ -81,8 +81,8 @@ export default async function AdviceLedgerPage(props: PageProps<"/advice">) {
         <span>{rows.length} calls</span>
         <span>Sell advised <Money value={sum((a) => a.action !== "BUY" && active(a), "advised_amount")} className="font-medium text-red-700" /></span>
         <span>Buy advised <Money value={sum((a) => a.action === "BUY" && active(a), "advised_amount")} className="font-medium text-emerald-700" /></span>
-        <span>Executed <Money value={sum(() => true, "executed_amount")} className="font-medium" /></span>
-        <span>Pending <Money value={sum(() => true, "pending_amount")} className="font-medium text-amber-700" /></span>
+        <span>Done (CAS) <Money value={sum(() => true, "executed_amount")} className="font-medium text-emerald-700" /></span>
+        <span>Waiting <Money value={sum(() => true, "pending_amount")} className="font-medium text-amber-700" /></span>
       </div>
 
       <Card>

@@ -85,3 +85,21 @@ export async function restoreClientsAction(_p: ActionResult | null, fd: FormData
     return `${n} client(s) restored.`;
   });
 }
+
+/** Admin: give the ticked clients a new primary advisor (old assignments are closed, never deleted). */
+export async function reassignClientsAction(_p: ActionResult | null, fd: FormData): Promise<ActionResult> {
+  return runAction("reassignClients", async () => {
+    const ids = [...new Set(fd.getAll("ids").map(String))].filter((x) => /^[0-9a-f-]{36}$/i.test(x));
+    const advisorId = String(fd.get("advisor_id") ?? "");
+    const reason = String(fd.get("reason") ?? "").trim();
+    if (!ids.length) throw new AppError("Tick at least one client.");
+    if (!advisorId) throw new AppError("Choose an advisor.");
+    if (!reason) throw new AppError("A reason is required.");
+    await actionTx(async (tx, actor) => {
+      for (const id of ids) await reassignPrimaryAdvisor(tx, actor, id, advisorId);
+    }, { roles: ["ADMIN"], reason });
+    revalidatePath("/clients");
+    revalidatePath("/");
+    return `${ids.length} client(s) moved to the new advisor.`;
+  });
+}

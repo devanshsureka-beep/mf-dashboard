@@ -37,7 +37,7 @@ export default async function UsersPage() {
         <Card className="xl:col-span-2">
           <CardHeader><CardTitle>Staff</CardTitle></CardHeader>
           <Table>
-            <THead><TR><TH>Name</TH><TH className="text-right">Clients</TH><TH className="text-right">Under advice</TH><TH className="text-right">Awaiting exec.</TH><TH>Last active</TH><TH>Role / access</TH></TR></THead>
+            <THead><TR><TH>Name</TH><TH className="text-right">Clients</TH><TH className="text-right">Under advice</TH><TH className="text-right">Waiting</TH><TH>Last active</TH><TH>Role / access</TH></TR></THead>
             <TBody>
               {users.map((u) => (
                 <TR key={u.id}>
