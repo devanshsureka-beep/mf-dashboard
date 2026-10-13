@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { issueAdvice } from "@/services/advice";
 import { recordExecution } from "@/services/executions";
 import { getCasInbox } from "@/services/cas-inbox";
+import { listWaiting } from "@/services/waiting";
 import { clientWithActivePlan, scenario, sql, TEST_DB } from "./harness";
 
 const describeDb = TEST_DB ? describe : describe.skip;
@@ -21,6 +22,10 @@ describeDb("CAS inbox: what to collect", () => {
       const row = inbox.collect.find((c) => c.client_id === p.clientId);
       expect(row).toMatchObject({ waiting_amount: 300000, unverified_amount: 0, latest_cas: "2026-09-01" });
       expect(inbox.confirm.find((c) => c.client_id === p.clientId)).toBeUndefined();
+      // The same call on "Waiting for clients": no CAS after it yet, nothing to confirm.
+      const waiting = await ctx.as("advisor", (t) => listWaiting(t, { clientId: p.clientId }));
+      expect(waiting).toHaveLength(1);
+      expect(waiting[0]).toMatchObject({ pending_amount: 300000, cas_after: null, done_on: null, to_confirm: false });
     });
   });
 

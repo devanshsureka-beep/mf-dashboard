@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import { ActionForm, SubmitButton } from "@/components/app/action-form";
 import { Input, Select } from "@/components/ui/form";
 import type { ActionResult } from "@/lib/actions";
-import { formatINRCompact } from "@/lib/format";
+import { formatDateShort as short, formatINRCompact } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 type Tone = "amber" | "blue" | "grey" | "red" | "brand";
@@ -59,9 +59,6 @@ const COLS: { key: Key; label: string; right?: boolean; value: (r: ListRow) => n
   { key: "cas", label: "Latest CAS", value: (r) => r.latestCas ?? "" },
 ];
 
-const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-/** 25-Aug-26: short enough to keep the table on one screen. */
-const short = (d: string) => `${d.slice(8, 10)}-${MON[Number(d.slice(5, 7)) - 1]}-${d.slice(2, 4)}`;
 const M = (v: number | null) => (v == null ? "—" : v < 0.5 ? "—" : formatINRCompact(v));
 
 function Tag({ t }: { t: ListTag }) {
@@ -81,7 +78,9 @@ export function ClientList({ rows, isAdmin, canAdvise, advisors, deleteAction, r
   deleteAction: Action;
   reassignAction: Action;
 }) {
-  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [picked, setSel] = useState<Set<string>>(new Set());
+  // Only clients still on the list count: after a view change or a delete, the rest drop out.
+  const sel = useMemo(() => new Set(rows.filter((r) => picked.has(r.id)).map((r) => r.id)), [rows, picked]);
   const [sort, setSort] = useState<{ key: Key; dir: 1 | -1 } | null>(null);
   const [zipping, setZipping] = useState(false);
 

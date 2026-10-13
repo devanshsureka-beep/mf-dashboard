@@ -63,9 +63,3 @@ export async function ingestNavFeed(
 }
 
 export interface NavStatus { received_at: string; nav_date: string | null; schemes: number; holdings_unpriced: number }
-
-export async function latestNavRun(tx: Tx): Promise<NavStatus | null> {
-  const r = await tx<NavStatus[]>`
-    select received_at, nav_date, schemes, holdings_unpriced from public.nav_feed_runs order by received_at desc limit 1`;
-  return r[0] ?? null;
-}

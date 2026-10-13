@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 import { askCasHref } from "@/lib/ask-cas";
 import { listDeskClients } from "@/services/clients";
 import { listDueFollowUps } from "@/services/notes";
-import type { AdviceAction } from "@/types/domain";
+import { listWaiting } from "@/services/waiting";
 
 export const metadata = { title: PAGES.overview };
 
@@ -62,12 +62,7 @@ export default async function Today(props: PageProps<"/">) {
   const day = todayIst();
   const { all, calls, openCalls, stale, sip, followUps, casStats, actor } = await pageData(async (tx, a) => ({
     all: await listDeskClients(tx, mine ? { advisorId: a.id } : {}),
-    calls: await tx<{ advice_item_id: string; client_id: string; client_name: string; client_code: string; phone: string | null; scheme_name: string; action: AdviceAction; pending_amount: number; age_days: number; cas_after: string | null }[]>`
-      select p.advice_item_id, p.client_id, p.client_name, p.client_code, c.phone, p.scheme_name, p.action, p.pending_amount::float8 as pending_amount, p.age_days,
-             case when l.snapshot_date >= (p.communicated_at at time zone 'Asia/Kolkata')::date then l.snapshot_date::text end as cas_after
-      from public.v_pending_executions p join public.clients c on c.id = p.client_id
-      left join public.v_latest_snapshot l on l.client_id = p.client_id
-      where (${mine} = false or p.advisor_id = ${a.id}) order by p.age_days desc, p.communicated_at limit 5`,
+    calls: await listWaiting(tx, { advisorId: mine ? a.id : null, limit: 5 }),
     openCalls: Number((await tx<{ n: number }[]>`select count(*)::int as n from public.v_pending_executions where (${mine} = false or advisor_id = ${a.id})`)[0]?.n ?? 0),
     stale: Number((await tx<{ n: number }[]>`select count(*)::int as n from public.v_pending_executions where age_days > 3 and (${mine} = false or advisor_id = ${a.id})`)[0]?.n ?? 0),
     sip: (await tx<{ target: number; started: number }[]>`
@@ -78,7 +73,8 @@ export default async function Today(props: PageProps<"/">) {
       select count(*) filter (where m.status in ('CONFIRMED', 'PARTIAL') and coalesce(m.resolved_at, r.created_at) > now() - interval '30 days')::int as done,
              count(*) filter (where m.status = 'SUGGESTED')::int as confirm
       from public.reconciliation_matches m join public.reconciliation_runs r on r.id = m.run_id
-      where m.classification = 'ADVICE_MATCH' and r.status <> 'CANCELLED'`)[0] ?? { done: 0, confirm: 0 },
+      join public.v_client_summary s on s.client_id = m.client_id
+      where m.classification = 'ADVICE_MATCH' and r.status <> 'CANCELLED' and (${mine} = false or s.advisor_id = ${a.id})`)[0] ?? { done: 0, confirm: 0 },
   }));
 
   const sum = (f: (c: (typeof all)[number]) => number) => all.reduce((s, c) => s + f(c), 0);
@@ -166,7 +162,7 @@ export default async function Today(props: PageProps<"/">) {
 
           {toCheck.length || unadvised.length || casStats.confirm || casStats.done ? (
             <Queue n={toCheck.length + unadvised.length + casStats.confirm} tone="bg-red-100 text-red-800" title={PAGES.casInbox}
-              sub={<>Last 30 days: CAS uploads marked <b className="text-emerald-700">{casStats.done} advised trade(s) done</b> · {casStats.confirm} match(es) to check · {toCheck.length} CAS to check · {unadvised.length} client(s) with unadvised trades</>}
+              sub={<>CAS uploads of the last 30 days marked <b className="text-emerald-700">{casStats.done} advised trade(s) done</b> · open now: {casStats.confirm} match(es) to check · {toCheck.length} CAS to check · {unadvised.length} client(s) with unadvised trades</>}
               href="/reconciliation" linkLabel="Open inbox" />
           ) : null}
 

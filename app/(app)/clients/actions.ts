@@ -93,13 +93,17 @@ export async function reassignClientsAction(_p: ActionResult | null, fd: FormDat
     const advisorId = String(fd.get("advisor_id") ?? "");
     const reason = String(fd.get("reason") ?? "").trim();
     if (!ids.length) throw new AppError("Tick at least one client.");
-    if (!advisorId) throw new AppError("Choose an advisor.");
+    if (!/^[0-9a-f-]{36}$/i.test(advisorId)) throw new AppError("Choose an advisor.");
     if (!reason) throw new AppError("A reason is required.");
-    await actionTx(async (tx, actor) => {
-      for (const id of ids) await reassignPrimaryAdvisor(tx, actor, id, advisorId);
+    const n = await actionTx(async (tx, actor) => {
+      const ok = await tx`select 1 from public.profiles where id = ${advisorId} and is_active and role in ('ADVISOR', 'ADMIN')`;
+      if (!ok.length) throw new AppError("That person is not an active advisor.");
+      const live = await tx<{ id: string }[]>`select id from public.clients where id = any(${ids}::uuid[]) and deleted_at is null`;
+      for (const c of live) await reassignPrimaryAdvisor(tx, actor, c.id, advisorId);
+      return live.length;
     }, { roles: ["ADMIN"], reason });
     revalidatePath("/clients");
     revalidatePath("/");
-    return `${ids.length} client(s) moved to the new advisor.`;
+    return `${n} client(s) moved to the new advisor.`;
   });
 }

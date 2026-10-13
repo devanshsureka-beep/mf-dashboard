@@ -35,11 +35,14 @@ function PlanCell({ p, liveValue }: { p: PlanLine | null; liveValue?: number }) 
 }
 
 /** Where the client's money is now, and where it ends up once every tranche is done (at today's values). */
-function MoneyBox({ c, inFunds, inBank, sipTarget }: { c: ClientSummary; inFunds: number; inBank: number; sipTarget: number }) {
-  // Still to happen on the plan: sells add to the bank, buys take from it.
-  const sellLeft = Math.max(0, c.target_sell - c.executed_sell);
-  const buyLeft = Math.max(0, c.target_buy - c.executed_buy);
-  const bankAfter = Math.max(0, inBank + sellLeft - buyLeft);
+function MoneyBox({ c, plan, inFunds, inBank, sipTarget }: { c: ClientSummary; plan: PlanLine[]; inFunds: number; inBank: number; sipTarget: number }) {
+  // Still to happen on the plan (waiting + left to advise, from the views): sells add to the bank, buys
+  // take from it. Switches move money fund to fund, so they are left out. Start from every trade done so
+  // far (money_left), not just those a CAS shows: those not in a CAS are still counted in "In funds".
+  const left = (action: string) => plan.filter((p) => p.action === action).reduce((s, p) => s + p.pending_amount + p.yet_to_advise_amount, 0);
+  const sellLeft = left("SELL");
+  const buyLeft = left("BUY");
+  const bankAfter = Math.max(0, Number(c.money_left ?? 0) + sellLeft - buyLeft);
   const total = inFunds + inBank;
   const row = (label: React.ReactNode, value: React.ReactNode, cls = "") => (
     <div className={`flex justify-between gap-3 ${cls}`}><span>{label}</span><b className="num">{value}</b></div>
@@ -82,7 +85,7 @@ export async function PortfolioTab({ client, actor, inBank, sipTarget }: { clien
   return (
     <div className="space-y-3">
       <FundTable rows={desk.rows} totals={desk.totals} clientId={clientId} canAdvise={actor.role !== "OPERATIONS"} casDate={desk.casDate} inBank={inBank} />
-      <MoneyBox c={client} inFunds={client.live_portfolio_value ?? 0} inBank={inBank} sipTarget={sipTarget} />
+      <MoneyBox c={client} plan={views.plan} inFunds={client.live_portfolio_value ?? 0} inBank={inBank} sipTarget={sipTarget} />
 
       <details className="group rounded-xl border border-border bg-surface">
         <summary className="cursor-pointer select-none px-4 py-2.5 text-sm font-semibold">More detail · portfolio at onboarding, every CAS and its transactions</summary>

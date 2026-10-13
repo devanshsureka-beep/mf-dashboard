@@ -451,17 +451,6 @@ export async function getMatches(tx: Tx, runId: string): Promise<ReconciliationM
              m.scheme_name, b.communicated_at nulls last`;
 }
 
-export async function listUnadvisedActivity(tx: Tx, limit = 50) {
-  return tx<(ReconciliationMatchRow & { client_name: string; client_code: string; snapshot_date: string })[]>`
-    select m.*, c.full_name as client_name, c.client_code, cs.snapshot_date
-    from public.reconciliation_matches m
-    join public.clients c on c.id = m.client_id
-    join public.reconciliation_runs r on r.id = m.run_id
-    join public.portfolio_snapshots cs on cs.id = r.current_snapshot_id
-    where m.status = 'UNEXPLAINED' and m.classification = 'UNADVISED' and m.reviewed_at is null
-    order by m.created_at desc limit ${limit}`;
-}
-
 // -----------------------------------------------------------------------------
 // Resolution (human decisions)
 // -----------------------------------------------------------------------------

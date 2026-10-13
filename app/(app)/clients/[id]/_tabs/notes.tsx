@@ -1,4 +1,4 @@
-import { Input, Select } from "@/components/ui/form";
+import { Input, Select, Textarea } from "@/components/ui/form";
 import { ActionForm, SubmitButton } from "@/components/app/action-form";
 import { withUserTx, type Actor } from "@/lib/db/tx";
 import { formatDate, formatDateTime, humanize } from "@/lib/format";
@@ -20,7 +20,7 @@ export async function NotesPanel({ clientId, actor }: { clientId: string; actor:
             <option value="REVIEW">Review</option>
             <option value="COMPLIANCE">Compliance</option>
           </Select>
-          <Input name="body" placeholder="Write a note…" required aria-label="Note" />
+          <Textarea name="body" rows={1} placeholder="Write a note…" required aria-label="Note" className="min-h-9 py-1.5" />
           <Input name="follow_up_date" type="date" aria-label="Follow-up date (optional)" title="Follow-up date (optional)" />
           <SubmitButton size="sm">Add</SubmitButton>
         </div>

@@ -181,7 +181,7 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
               {alerts.draftPlan ? <Alert href={`/clients/${id}/plans/${alerts.draftPlan.id}`} tone="blue">{alerts.draftPlan.kind === "ADDITIONAL" ? "Additional-investment" : "Draft"} plan to approve</Alert> : null}
               {!c.active_plan_id ? <Alert href={canAdvise ? `/clients/${id}/plans/new` : tabHref("tranches")} tone="amber">No active plan</Alert> : null}
               {alerts.followUpsDue ? <Alert href={tabHref("file", "#notes")} tone="amber">{alerts.followUpsDue} follow-up(s) due</Alert> : null}
-              {docGap ? <Alert href={tabHref("file")} tone={premium.renewal_due && premium.premium_status === "ACTIVE" && premium.agreement_status === "VALID" ? "amber" : "red"}>{docGap}</Alert> : null}
+              {docGap ? <Alert href={tabHref("file", premium.agreement_status !== "VALID" && premium.premium_status === "ACTIVE" ? "&open=agreement#agreement" : "&open=premium#premium")} tone={premium.renewal_due && premium.premium_status === "ACTIVE" && premium.agreement_status === "VALID" ? "amber" : "red"}>{docGap}</Alert> : null}
             </div>
             <div className="mt-auto flex flex-wrap items-center gap-1.5 pt-1">
               {canAdvise ? (
@@ -200,16 +200,16 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
                 <MenuItem href={`/clients/${id}/report?month=${thisMonth}`}>Monthly report · {new Intl.DateTimeFormat("en-IN", { month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${thisMonth}-01T00:00:00Z`))}</MenuItem>
                 <MenuItem href={`/api/clients/${id}/export`} download hint="All CAS, reports, agreements, calls, executions and the audit log">Download everything (ZIP)</MenuItem>
                 <MenuHeading>Records</MenuHeading>
-                <MenuItem href={tabHref("file", "#premium")}>Record premium payment</MenuItem>
-                <MenuItem href={tabHref("file", "#agreement")}>Add agreement</MenuItem>
+                <MenuItem href={tabHref("file", "&open=premium#premium")}>Record premium payment</MenuItem>
+                <MenuItem href={tabHref("file", "&open=agreement#agreement")}>Add agreement</MenuItem>
                 <MenuItem href={`/clients/${id}/documents/upload`}>Upload document (KYC, proof, other)</MenuItem>
-                {canAdvise ? <MenuItem href={tabHref("file", "#details")}>Edit client details</MenuItem> : null}
+                {canAdvise ? <MenuItem href={tabHref("file", "&open=details#details")}>Edit client details</MenuItem> : null}
                 {isAdmin ? (
                   <>
                     <MenuHeading>Admin only</MenuHeading>
                     <MenuItem href={tabHref("tranches", "#ledger")} hint="When a CAS is wrong or missing: open the call, corrections are on its page">Correct a call / execution</MenuItem>
                     {c.active_plan_id ? <MenuItem href={`/clients/${id}/plans/${c.active_plan_id}`}>Correct a plan line</MenuItem> : null}
-                    <MenuItem href={tabHref("file", "#details")}>Reassign advisor</MenuItem>
+                    <MenuItem href={tabHref("file", "&open=details#advisor")}>Reassign advisor</MenuItem>
                     <MenuItem href={`/clients?q=${encodeURIComponent(c.client_code)}`} danger hint="Tick the client on the list, give a reason">Delete client</MenuItem>
                   </>
                 ) : null}
@@ -249,7 +249,7 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
         {tab === "portfolio" && <PortfolioTab client={c} actor={actor} inBank={inBank} sipTarget={sip.sip_monthly_target} />}
         {tab === "tranches" && <TranchesTab client={c} actor={actor} sipLeft={sip.sip_monthly_yet_to_advise} side={["SELL", "BUY", "PENDING"].includes(str("side") ?? "") ? str("side") : null} />}
         {tab === "sip" && <SipTab client={c} actor={actor} />}
-        {tab === "file" && <ClientFileTab client={c} actor={actor} docType={str("doc")} />}
+        {tab === "file" && <ClientFileTab client={c} actor={actor} docType={str("doc")} open={str("open")} />}
         {tab === "history" && (
           <div className="space-y-2">
             <div className="flex gap-1.5 text-xs">

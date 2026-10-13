@@ -11,17 +11,6 @@ export interface SecurityRow {
   asset_class: string | null;
 }
 
-export async function searchSecurities(tx: Tx, q: string, limit = 20): Promise<SecurityRow[]> {
-  const term = `%${q.trim()}%`;
-  return tx<SecurityRow[]>`
-    select id, isin, scheme_name, amc, category, plan_type, asset_class
-    from public.security_master
-    where is_active and (${q.trim() === ""} or scheme_name ilike ${term} or isin ilike ${term} or amc ilike ${term})
-    order by scheme_name
-    limit ${limit}
-  `;
-}
-
 export async function listAllSecurities(tx: Tx): Promise<SecurityRow[]> {
   return tx<SecurityRow[]>`
     select id, isin, scheme_name, amc, category, plan_type, asset_class
@@ -173,17 +162,4 @@ export async function suggestSecurity(
       select id, scheme_name, isin, plan_type, aliases from public.security_master where is_active`);
   const best = bestSecurityMatch(name, candidates);
   return { id: best.candidate?.id ?? null, confident: best.confident };
-}
-
-export async function createSecurity(
-  tx: Tx,
-  input: { scheme_name: string; isin?: string | null; amc?: string | null; category?: string | null; plan_type?: string | null; asset_class?: string | null },
-  createdBy: string,
-): Promise<string> {
-  const rows = await tx<{ id: string }[]>`
-    insert into public.security_master (scheme_name, isin, amc, category, plan_type, asset_class, created_by)
-    values (${input.scheme_name}, ${input.isin || null}, ${input.amc || null}, ${input.category || null},
-            ${input.plan_type || detectPlanType(input.scheme_name)}, ${input.asset_class || null}, ${createdBy})
-    returning id`;
-  return rows[0].id;
 }

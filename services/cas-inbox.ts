@@ -73,13 +73,14 @@ export async function getCasInbox(tx: Tx) {
   // Advice no CAS has shown yet, or no CAS for 30+ days.
   const collect = await tx<InboxCollect[]>`
     select c.id as client_id, c.full_name as client_name, c.client_code, c.phone, l.snapshot_date::text as latest_cas,
-           coalesce((select sum(p.pending_amount) from public.v_pending_executions p where p.client_id = c.id), 0)::float8 as waiting_amount,
+           coalesce(w.amount, 0)::float8 as waiting_amount,
            coalesce((select sum(e.executed_amount) from public.executions e
                      where e.client_id = c.id and e.status in ('EXECUTED', 'PARTIAL') and e.cas_verified_at is null
                        and e.execution_date >= coalesce(l.snapshot_date, '-infinity'::date)), 0)::float8 as unverified_amount,
            (app.today_ist() - l.snapshot_date)::int as days
     from public.clients c
     left join public.v_latest_snapshot l on l.client_id = c.id
+    left join (select client_id, sum(pending_amount) as amount from public.v_pending_executions group by client_id) w on w.client_id = c.id
     where c.status <> 'CLOSED' and c.deleted_at is null
     order by c.full_name`;
 

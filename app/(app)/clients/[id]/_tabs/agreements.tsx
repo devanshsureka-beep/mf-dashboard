@@ -14,7 +14,7 @@ const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" 
 const PREMIUM_TONE = { ACTIVE: "success", PAID: "info", EXPIRED: "danger", UNPAID: "danger" } as const;
 
 /** Two tiles: premium paid and the advisory agreement, each with its records and add form folded inside. */
-export async function AgreementsTab({ clientId, actor }: { clientId: string; actor: Actor }) {
+export async function AgreementsTab({ clientId, actor, open }: { clientId: string; actor: Actor; open?: string | null }) {
   const d = await withUserTx(actor, async (tx) => ({
     premium: await getPremium(tx, clientId),
     agreements: await listAgreements(tx, clientId),
@@ -29,7 +29,7 @@ export async function AgreementsTab({ clientId, actor }: { clientId: string; act
         <div className="text-[10.5px] font-semibold uppercase tracking-wide text-muted">Premium</div>
         <div className={p.premium_status === "ACTIVE" ? (p.renewal_due ? "text-lg font-semibold text-amber-700" : "text-lg font-semibold text-emerald-700") : "text-lg font-semibold text-red-700"}>{humanize(p.premium_status)}</div>
         <div className="text-xs text-muted"><Money value={p.premium_paid_total} /> paid · {p.paid_until ? `till ${formatDate(p.paid_until)}${p.renewal_due ? " · renewal due" : ""}` : "no period recorded"}</div>
-        <details className="mt-1.5">
+        <details className="mt-1.5" open={open === "premium"}>
           <summary className="cursor-pointer text-xs font-medium text-brand">+ Record a payment{d.payments.length ? ` · ${d.payments.length} on file` : ""}</summary>
           <div className="mt-2">
         <Card>
@@ -86,7 +86,7 @@ export async function AgreementsTab({ clientId, actor }: { clientId: string; act
         <div className="text-[10.5px] font-semibold uppercase tracking-wide text-muted">Advisory agreement</div>
         <div className={p.agreement_status === "VALID" ? "text-lg font-semibold text-emerald-700" : "text-lg font-semibold text-red-700"}>{agreementLabel}</div>
         <div className="text-xs text-muted">{p.agreement_valid_to ? `Valid till ${formatDate(p.agreement_valid_to)}` : p.agreements_signed ? "No end date" : "No signed agreement on file"}</div>
-        <details className="mt-1.5">
+        <details className="mt-1.5" open={open === "agreement"}>
           <summary className="cursor-pointer text-xs font-medium text-brand">+ Record an agreement{d.agreements.length ? ` · ${d.agreements.length} on file` : ""}</summary>
           <div className="mt-2">
         <Card>

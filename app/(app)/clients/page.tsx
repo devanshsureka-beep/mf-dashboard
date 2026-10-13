@@ -104,7 +104,7 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
         {(["status", "risk", "plan", "premium", "attention", "agreement", "min", "max"] as const).map((k) => one(k) ? <input key={k} type="hidden" name={k} value={one(k)} /> : null)}
         <Button type="submit" variant="outline" size="sm">Apply</Button>
         {activeFilters ? <Link href="/clients" className="text-xs text-muted hover:underline">Clear</Link> : null}
-        <span className="ml-auto text-[11px] text-muted">Tick clients for one action on all · click a column to sort</span>
+        <span className="ml-auto text-[11px] text-muted">More views: <Link className="hover:underline" href={viewHref({ premium: "renewal_due" })}>renewal due</Link> · <Link className="hover:underline" href={viewHref({ premium: "expired" })}>premium expired</Link> · <Link className="hover:underline" href={viewHref({ attention: "no_plan" })}>no active plan</Link> · tick clients for one action on all · click a column to sort</span>
       </form>
 
       <ClientList

@@ -77,6 +77,12 @@ export function formatDayMonth(value: string | Date | null | undefined): string 
   return full === "—" ? full : full.slice(0, 6);
 }
 
+/** "24-Sep-26": short year, for wide tables. */
+export function formatDateShort(value: string | Date | null | undefined): string {
+  const full = formatDate(value);
+  return full === "—" ? full : `${full.slice(0, 7)}${full.slice(9)}`;
+}
+
 /** "24-Sep-2026 10:42 AM" in IST. */
 export function formatDateTime(value: string | Date | null | undefined): string {
   if (!value) return "—";

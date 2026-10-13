@@ -2,11 +2,13 @@ import Link from "next/link";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { ActionForm, SubmitButton } from "@/components/app/action-form";
 import { Money } from "@/components/app/money";
+import { SipStatusCard } from "@/components/app/sip-status-card";
 import { withUserTx, type Actor } from "@/lib/db/tx";
 import { formatDate, formatINRCompact, humanize } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { getSipItems } from "@/services/plans";
 import { getClientSip, getSipProgress } from "@/services/sip";
+import { getSipStatus } from "@/services/sip-status";
 import type { ClientSummary, SipItem } from "@/types/domain";
 import { setSipStatusAction } from "../actions";
 
@@ -39,6 +41,7 @@ export async function SipTab({ client: c, actor }: { client: ClientSummary; acto
     sip: await getClientSip(tx, c.client_id),
     lines: c.active_plan_id ? await getSipItems(tx, c.active_plan_id) : [],
     progress: c.active_plan_id ? await getSipProgress(tx, c.active_plan_id) : [],
+    seen: await getSipStatus(tx, c.client_id),
     recent: await tx<{ date: string; scheme_name: string; amount: number; units: number | null }[]>`
       select t.transaction_date::text as date, t.scheme_name, abs(t.amount)::float8 as amount, t.units::float8 as units
       from public.portfolio_transactions t
@@ -110,7 +113,8 @@ export async function SipTab({ client: c, actor }: { client: ClientSummary; acto
       </section>
 
       <details className="rounded-xl border border-border bg-surface">
-        <summary className="cursor-pointer select-none px-4 py-2.5 text-sm font-semibold">Every SIP instalment seen in CAS{d.recent.length ? ` · ${d.recent.length}` : ""}</summary>
+        <summary className="cursor-pointer select-none px-4 py-2.5 text-sm font-semibold">SIPs seen in CAS · every instalment{d.recent.length ? ` · ${d.recent.length}` : ""}</summary>
+        {d.seen.latestCasDate ? <div className="border-t border-border p-3"><SipStatusCard sip={d.seen} /></div> : null}
         {d.recent.length ? (
           <div className="max-h-96 overflow-y-auto border-t border-border">
             <Table className="text-[13px]">

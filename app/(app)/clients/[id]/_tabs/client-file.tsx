@@ -27,7 +27,7 @@ const TYPE_TONE: Record<string, string> = {
 };
 
 /** Premium, agreement and reports tiles, documents, notes & follow-ups, and the client's details folded away. */
-export async function ClientFileTab({ client: c, actor, docType }: { client: ClientSummary; actor: Actor; docType: string | null }) {
+export async function ClientFileTab({ client: c, actor, docType, open }: { client: ClientSummary; actor: Actor; docType: string | null; open: string | null }) {
   const { docs, advisors } = await withUserTx(actor, async (tx) => ({
     docs: await listDocuments(tx, c.client_id),
     advisors: actor.role === "ADMIN" ? await listAdvisors(tx) : [],
@@ -38,7 +38,7 @@ export async function ClientFileTab({ client: c, actor, docType }: { client: Cli
   return (
     <div className="space-y-3">
       <div className="grid gap-3 md:grid-cols-3">
-        <AgreementsTab clientId={c.client_id} actor={actor} />
+        <AgreementsTab clientId={c.client_id} actor={actor} open={open} />
         <ReportsTab client={c} />
       </div>
 
@@ -76,7 +76,7 @@ export async function ClientFileTab({ client: c, actor, docType }: { client: Cli
       <NotesPanel clientId={c.client_id} actor={actor} />
 
       {canAdvise || actor.role === "ADMIN" ? (
-        <details id="details" className="scroll-mt-14 rounded-xl border border-border bg-surface">
+        <details id="details" open={open === "details"} className="scroll-mt-14 rounded-xl border border-border bg-surface">
           <summary className="cursor-pointer select-none px-4 py-2.5 text-sm font-semibold">Client details &amp; advisor</summary>
           <div className="grid gap-4 border-t border-border p-4 lg:grid-cols-2">
             {canAdvise ? (

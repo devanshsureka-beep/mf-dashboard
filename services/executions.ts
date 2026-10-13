@@ -2,7 +2,7 @@ import type { Actor, Tx } from "@/lib/db/tx";
 import { setAuditReason } from "@/lib/db/tx";
 import { AppError } from "@/lib/errors";
 import { overExecution } from "@/lib/domain/advice-rules";
-import type { ExecutionRow, VerificationType } from "@/types/domain";
+import type { VerificationType } from "@/types/domain";
 import { getAdviceItem } from "./advice";
 
 export interface RecordExecutionInput {
@@ -75,18 +75,6 @@ export async function confirmPendingExecution(tx: Tx, executionId: string, note?
   await setAuditReason(tx, note || "Pending execution confirmed");
   const res = await tx`update public.executions set status = 'EXECUTED' where id = ${executionId} and status = 'PENDING'`;
   if (res.count === 0) throw new AppError("Only PENDING executions can be confirmed.");
-}
-
-export async function listExecutions(tx: Tx, f: { clientId?: string; limit?: number } = {}): Promise<ExecutionRow[]> {
-  return tx<ExecutionRow[]>`
-    select e.*, a.scheme_name, a.action, c.full_name as client_name, c.client_code, pr.full_name as created_by_name
-    from public.executions e
-    join public.advice_items a on a.id = e.advice_item_id
-    join public.clients c on c.id = e.client_id
-    left join public.profiles pr on pr.id = e.created_by
-    where (${f.clientId ?? null}::uuid is null or e.client_id = ${f.clientId ?? null})
-    order by e.execution_date desc, e.created_at desc
-    limit ${f.limit ?? 300}`;
 }
 
 export { getAdviceItem };

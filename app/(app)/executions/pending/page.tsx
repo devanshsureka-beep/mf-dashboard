@@ -13,18 +13,12 @@ import { PAGES } from "@/lib/brand";
 import { HubTabs } from "@/components/app/hub-tabs";
 import { pageData } from "@/lib/server";
 import { listAdvisors, listClientSummaries } from "@/services/clients";
-import type { AdviceItemView } from "@/types/domain";
+import { listWaiting, type WaitingCall } from "@/services/waiting";
 import { closeAdviceAction, followUpNoteAction } from "../../advice/actions";
 
 export const metadata = { title: "Waiting for clients" };
 
-interface PendingRow {
-  advice_item_id: string; client_id: string; client_code: string; client_name: string; advisor_id: string; advisor_name: string | null;
-  batch_code: string; security_id: string; scheme_name: string; action: AdviceItemView["action"]; quantity_basis: "AMOUNT" | "UNITS";
-  advised_amount: number; advised_units: number | null; executed_amount: number; executed_units: number; pending_amount: number;
-  pending_units: number | null; status: string; communicated_at: Date; communication_channel: string; age_days: number;
-  phone: string | null; cas_after: string | null; done_on: string | null; to_confirm: boolean;
-}
+type PendingRow = WaitingCall;
 
 export default async function PendingExecutionsPage(props: PageProps<"/executions/pending">) {
   const sp = await props.searchParams;
@@ -32,20 +26,7 @@ export default async function PendingExecutionsPage(props: PageProps<"/execution
   const f = { client: one("client"), advisor: one("advisor"), status: one("status"), side: one("side"), stale: one("stale") };
   const statusFilter = f.status === "PENDING" ? "ISSUED" : f.status === "PARTIAL" ? "PARTIALLY_EXECUTED" : null;
   const { rows, clients, advisors, actor } = await pageData(async (tx) => ({
-    rows: await tx<PendingRow[]>`
-      select p.*, c.phone,
-             case when l.snapshot_date >= (p.communicated_at at time zone 'Asia/Kolkata')::date then l.snapshot_date::text end as cas_after,
-             (select max(e.execution_date)::text from public.executions e where e.advice_item_id = p.advice_item_id and e.status in ('EXECUTED', 'PARTIAL')) as done_on,
-             exists (select 1 from public.reconciliation_matches m join public.reconciliation_runs r on r.id = m.run_id
-                     where m.advice_item_id = p.advice_item_id and m.status = 'SUGGESTED' and r.status <> 'CANCELLED') as to_confirm
-      from public.v_pending_executions p join public.clients c on c.id = p.client_id
-      left join public.v_latest_snapshot l on l.client_id = p.client_id
-      where (${f.client}::uuid is null or p.client_id = ${f.client})
-        and (${f.advisor}::uuid is null or p.advisor_id = ${f.advisor})
-        and (${statusFilter}::text is null or p.status = ${statusFilter})
-        and (${f.side}::text is null or (${f.side} = 'BUY' and p.action = 'BUY') or (${f.side} = 'SELL' and p.action <> 'BUY'))
-        and (${f.stale}::text is null or p.age_days > 3)
-      order by p.age_days desc, p.communicated_at`,
+    rows: await listWaiting(tx, { clientId: f.client, advisorId: f.advisor, status: statusFilter, side: f.side === "BUY" || f.side === "SELL" ? f.side : null, stale: Boolean(f.stale) }),
     clients: await listClientSummaries(tx),
     advisors: await listAdvisors(tx),
   }));
