@@ -4,7 +4,9 @@ import { Field, Input, Select } from "@/components/ui/form";
 import { Badge } from "@/components/ui/badge";
 import { ActionForm, SubmitButton } from "@/components/app/action-form";
 import { PageHeader } from "@/components/app/page-header";
-import { formatDate } from "@/lib/format";
+import { formatDate, formatDateTime } from "@/lib/format";
+import { Money } from "@/components/app/money";
+import { HubTabs } from "@/components/app/hub-tabs";
 import { pageData } from "@/lib/server";
 import { listClientSummaries } from "@/services/clients";
 import { assignClientAction, createUserAction, unassignAction, updateUserAction } from "./actions";
@@ -13,9 +15,12 @@ export const metadata = { title: "Team & access" };
 
 export default async function UsersPage() {
   const { users, assignments, clients } = await pageData(async (tx) => ({
-    users: await tx<{ id: string; email: string; full_name: string; role: string; is_active: boolean; created_at: Date; clients: number }[]>`
+    users: await tx<{ id: string; email: string; full_name: string; role: string; is_active: boolean; created_at: Date; clients: number; under_advice: number; awaiting: number; last_active: Date | null }[]>`
       select p.id, p.email, p.full_name, p.role, p.is_active, p.created_at,
-             (select count(*) from public.client_advisor_assignments a where a.advisor_id = p.id and a.is_active)::int as clients
+             (select count(*) from public.client_advisor_assignments a where a.advisor_id = p.id and a.is_active)::int as clients,
+             (select coalesce(sum(s.live_portfolio_value), 0) from public.v_client_summary s where s.advisor_id = p.id)::float8 as under_advice,
+             (select coalesce(sum(s.pending_total), 0) from public.v_client_summary s where s.advisor_id = p.id)::float8 as awaiting,
+             (select max(l.occurred_at) from public.audit_logs l where l.actor_id = p.id) as last_active
       from public.profiles p order by p.is_active desc, p.role, p.full_name`,
     assignments: await tx<{ id: string; client_name: string; user_name: string; assignment_role: string; assigned_at: Date }[]>`
       select a.id, c.full_name as client_name, p.full_name as user_name, a.assignment_role, a.assigned_at
@@ -26,19 +31,21 @@ export default async function UsersPage() {
 
   return (
     <>
-      <PageHeader title="Team & access" subtitle="Staff accounts are created here (public sign-up is disabled). Roles are enforced by Row Level Security in the database." />
+      <PageHeader title="Team & access" subtitle="Who works on the desk, which clients they see, and what has changed. Staff accounts are created here (public sign-up is disabled); roles are enforced in the database." />
+      <HubTabs hub="admin" active="team" role="ADMIN" />
       <div className="grid gap-4 xl:grid-cols-3">
         <Card className="xl:col-span-2">
           <CardHeader><CardTitle>Staff</CardTitle></CardHeader>
           <Table>
-            <THead><TR><TH>Name</TH><TH>Email</TH><TH>Clients</TH><TH>Since</TH><TH>Role / access</TH></TR></THead>
+            <THead><TR><TH>Name</TH><TH className="text-right">Clients</TH><TH className="text-right">Under advice</TH><TH className="text-right">Awaiting exec.</TH><TH>Last active</TH><TH>Role / access</TH></TR></THead>
             <TBody>
               {users.map((u) => (
                 <TR key={u.id}>
-                  <TD className="font-medium">{u.full_name || "—"} {!u.is_active ? <Badge tone="danger">inactive</Badge> : null}</TD>
-                  <TD className="text-xs">{u.email}</TD>
-                  <TD className="num">{u.clients}</TD>
-                  <TD className="text-xs">{formatDate(u.created_at)}</TD>
+                  <TD className="font-medium">{u.full_name || "—"} {!u.is_active ? <Badge tone="danger">inactive</Badge> : null}<div className="text-[11px] font-normal text-muted">{u.email} · since {formatDate(u.created_at)}</div></TD>
+                  <TD className="text-right num">{u.role === "OPERATIONS" ? <span className="text-xs text-muted">all (view)</span> : u.clients}</TD>
+                  <TD className="text-right"><Money value={u.under_advice} zeroDash /></TD>
+                  <TD className="text-right"><Money value={u.awaiting} zeroDash className={u.awaiting > 0.5 ? "text-amber-700" : undefined} /></TD>
+                  <TD className="text-xs">{u.last_active ? formatDateTime(u.last_active) : "—"}</TD>
                   <TD>
                     <ActionForm action={updateUserAction.bind(null, u.id)} className="flex flex-wrap items-center gap-1">
                       <Select name="role" defaultValue={u.role} className="h-8 w-32 text-xs"><option>ADMIN</option><option>ADVISOR</option><option>OPERATIONS</option></Select>

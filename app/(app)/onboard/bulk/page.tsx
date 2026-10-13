@@ -1,3 +1,4 @@
+import { HubTabs } from "@/components/app/hub-tabs";
 import { PageHeader } from "@/components/app/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { reportAiConfigured } from "@/lib/integrations/report-ai";
@@ -17,9 +18,10 @@ export default async function BulkOnboardPage() {
   return (
     <>
       <PageHeader
-        title={PAGES.bulkOnboard}
-        subtitle="Choose the folder with every client's CAS and advisory report. Files are recognised by what is inside them, paired by client name, and onboarded one client at a time."
+        title={PAGES.onboardHub}
+        subtitle="Drop a folder or many PDFs (CAS and advisory reports mixed). Files are recognised by what is inside them, paired by client, and onboarded one client at a time; choose per client whether the report is a full rebalancing or an additional portfolio."
       />
+      <HubTabs hub="onboard" active="many" role={actor.role} />
       {!ai ? (
         <Card className="mb-4 border-amber-200">
           <CardContent className="text-sm text-amber-800">

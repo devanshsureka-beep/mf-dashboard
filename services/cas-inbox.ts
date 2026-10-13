@@ -1,0 +1,81 @@
+import type { Tx } from "@/lib/db/tx";
+
+/**
+ * The CAS inbox: every CAS moves Reading → Check what we read → Trades
+ * without advice → Done. Plus the clients whose CAS we should collect. RLS
+ * decides which clients the user sees.
+ */
+
+export interface InboxReading { cas_id: string; client_id: string; client_name: string; uploaded_at: Date; status: string; error: string | null }
+export interface InboxCheck { snapshot_id: string; cas_id: string | null; client_id: string; client_name: string; client_code: string; snapshot_date: string; value: number; funds: number; warnings: number }
+export interface InboxUnadvised { run_id: string; client_id: string; client_name: string; client_code: string; snapshot_date: string; trades: number; amount: number; matched: number }
+export interface InboxDone { client_id: string; client_name: string; snapshot_date: string; run_id: string | null; verified: number; unadvised_reviewed: number }
+export interface InboxCollect { client_id: string; client_name: string; client_code: string; latest_cas: string | null; unverified_amount: number; days: number | null }
+
+export async function getCasInbox(tx: Tx) {
+  const reading = await tx<InboxReading[]>`
+    select cd.id as cas_id, cd.client_id, c.full_name as client_name, cd.uploaded_at, cd.parse_status as status, cd.parse_error as error
+    from public.cas_documents cd join public.clients c on c.id = cd.client_id
+    where cd.parse_status in ('UPLOADED', 'PROCESSING', 'FAILED')
+      and cd.uploaded_at > now() - interval '14 days'
+      and not exists (select 1 from public.portfolio_snapshots s where s.cas_document_id = cd.id)
+    order by cd.uploaded_at desc limit 20`;
+
+  // Newest unchecked CAS per client (older unchecked ones are superseded).
+  const check = await tx<InboxCheck[]>`
+    select distinct on (s.client_id) s.id as snapshot_id, s.cas_document_id as cas_id, s.client_id, c.full_name as client_name, c.client_code,
+           s.snapshot_date::text as snapshot_date, s.total_current_value::float8 as value,
+           (select count(*)::int from public.portfolio_holdings h where h.snapshot_id = s.id) as funds,
+           coalesce(jsonb_array_length(cd.parse_warnings), 0)::int as warnings
+    from public.portfolio_snapshots s join public.clients c on c.id = s.client_id
+    left join public.cas_documents cd on cd.id = s.cas_document_id
+    where s.review_status = 'PENDING_REVIEW'
+    order by s.client_id, s.snapshot_date desc, s.created_at desc`;
+
+  const unadvised = await tx<InboxUnadvised[]>`
+    select r.id as run_id, r.client_id, c.full_name as client_name, c.client_code, cs.snapshot_date::text as snapshot_date,
+           count(m.id) filter (where m.classification = 'UNADVISED' and m.status in ('UNEXPLAINED', 'SUGGESTED') and m.reviewed_at is null)::int as trades,
+           coalesce(sum(abs(coalesce(m.transaction_amount, m.approx_amount))) filter (where m.classification = 'UNADVISED' and m.status in ('UNEXPLAINED', 'SUGGESTED') and m.reviewed_at is null), 0)::float8 as amount,
+           count(m.id) filter (where m.classification = 'ADVICE_MATCH' and m.status in ('CONFIRMED', 'PARTIAL'))::int as matched
+    from public.reconciliation_runs r join public.clients c on c.id = r.client_id
+    join public.portfolio_snapshots cs on cs.id = r.current_snapshot_id
+    left join public.reconciliation_matches m on m.run_id = r.id
+    where r.status <> 'CANCELLED'
+    group by r.id, r.client_id, c.full_name, c.client_code, cs.snapshot_date
+    having count(m.id) filter (where m.classification = 'UNADVISED' and m.status in ('UNEXPLAINED', 'SUGGESTED') and m.reviewed_at is null) > 0
+    order by cs.snapshot_date desc`;
+
+  // Confirmed CAS of the last 30 days with nothing left to review.
+  const done = await tx<InboxDone[]>`
+    select s.client_id, c.full_name as client_name, s.snapshot_date::text as snapshot_date, r.id as run_id,
+           (select count(*)::int from public.reconciliation_matches m where m.run_id = r.id and m.classification = 'ADVICE_MATCH' and m.status in ('CONFIRMED', 'PARTIAL')) as verified,
+           (select count(*)::int from public.reconciliation_matches m where m.run_id = r.id and m.classification = 'UNADVISED' and (m.reviewed_at is not null or m.status not in ('UNEXPLAINED', 'SUGGESTED'))) as unadvised_reviewed
+    from public.portfolio_snapshots s join public.clients c on c.id = s.client_id
+    left join public.reconciliation_runs r on r.current_snapshot_id = s.id and r.status <> 'CANCELLED'
+    where s.review_status = 'CONFIRMED' and coalesce(s.reviewed_at, s.created_at) > now() - interval '30 days'
+      and not exists (select 1 from public.reconciliation_matches m where m.run_id = r.id and m.classification = 'UNADVISED'
+                      and m.status in ('UNEXPLAINED', 'SUGGESTED') and m.reviewed_at is null)
+    order by coalesce(s.reviewed_at, s.created_at) desc limit 30`;
+
+  // Executions no CAS has shown yet, or no CAS for 30+ days.
+  const collect = await tx<InboxCollect[]>`
+    select c.id as client_id, c.full_name as client_name, c.client_code, l.snapshot_date::text as latest_cas,
+           coalesce((select sum(e.executed_amount) from public.executions e
+                     where e.client_id = c.id and e.status in ('EXECUTED', 'PARTIAL') and e.cas_verified_at is null
+                       and e.execution_date >= coalesce(l.snapshot_date, '-infinity'::date)), 0)::float8 as unverified_amount,
+           (app.today_ist() - l.snapshot_date)::int as days
+    from public.clients c
+    left join public.v_latest_snapshot l on l.client_id = c.id
+    where c.status <> 'CLOSED'
+    order by c.full_name`;
+
+  return {
+    reading,
+    check,
+    unadvised,
+    done,
+    collect: collect
+      .filter((x) => x.unverified_amount >= 0.5 || x.days == null || x.days > 30)
+      .sort((a, b) => b.unverified_amount - a.unverified_amount || (b.days ?? 9999) - (a.days ?? 9999)),
+  };
+}

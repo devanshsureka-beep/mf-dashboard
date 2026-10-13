@@ -6,6 +6,8 @@ import { AdviceTable } from "@/components/app/advice-table";
 import { EmptyState, PageHeader } from "@/components/app/page-header";
 import { Money } from "@/components/app/money";
 import { todayIST } from "@/lib/format";
+import { HubTabs } from "@/components/app/hub-tabs";
+import { PAGES } from "@/lib/brand";
 import { pageData } from "@/lib/server";
 import { listAdviceLedger, type LedgerFilters } from "@/services/advice";
 import { listAdvisors, listClientSummaries } from "@/services/clients";
@@ -36,16 +38,12 @@ export default async function AdviceLedgerPage(props: PageProps<"/advice">) {
   return (
     <>
       <PageHeader
-        title="Call ledger"
+        title={PAGES.calls}
         subtitle="Every call actually communicated to a client, with exact timestamps. Revised and cancelled calls stay visible."
-        actions={actor.role !== "OPERATIONS" ? (
-          <>
-            <LinkButton href="/advice/bulk" variant="outline">Call many clients</LinkButton>
-            <LinkButton href="/advice/new">Issue call</LinkButton>
-          </>
-        ) : null}
+        actions={actor.role !== "OPERATIONS" ? <LinkButton href="/advice/new">Issue call</LinkButton> : null}
       />
-      {one("issued") ? <p className="mb-3 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800">Calls recorded. They now appear below and in Pending Executions.</p> : null}
+      <HubTabs hub="calls" active="ledger" role={actor.role} />
+      {one("issued") ? <p className="mb-3 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800">Calls recorded. They now appear below and under Awaiting execution.</p> : null}
 
       <div className="mb-3 flex flex-wrap gap-2">
         {quick("Today", { from: today, to: today })}

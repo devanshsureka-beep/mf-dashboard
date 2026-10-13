@@ -100,10 +100,10 @@ export interface DeskFilters {
   plan?: "active" | "draft" | "none";
   premium?: "active" | "renewal_due" | "expired" | "unpaid";
   agreement?: "valid" | "missing";
-  attention?: "pending" | "unadvised" | "cas_review" | "follow_up" | "no_plan";
+  attention?: "pending" | "unadvised" | "cas_review" | "follow_up" | "no_plan" | "tranche" | "needs";
   minValue?: number | null;
   maxValue?: number | null;
-  sort?: "name" | "value" | "pending" | "onboarded" | "renewal" | "code";
+  sort?: "name" | "value" | "pending" | "onboarded" | "renewal" | "code" | "action";
 }
 
 export type DeskClient = ClientSummary & {
@@ -119,6 +119,12 @@ export type DeskClient = ClientSummary & {
   cas_to_review: number;
   follow_ups_due: number;
   has_draft_plan: boolean;
+  /** Confirmed CAS from onboarding on: CAS n closes tranche n, so the open tranche is max(1, cas_count). */
+  cas_count: number;
+  /** Plan money not yet advised (sell + buy). */
+  remaining_to_advise: number;
+  /** Things the desk must do for this client (executions, CAS, unadvised, draft, follow-ups, next tranche). */
+  action_count: number;
 };
 
 export async function listDeskClients(tx: Tx, f: DeskFilters = {}): Promise<DeskClient[]> {
@@ -128,7 +134,9 @@ export async function listDeskClients(tx: Tx, f: DeskFilters = {}): Promise<Desk
            p.agreement_status, p.agreement_valid_to::text as agreement_valid_to,
            coalesce(sp.sip_monthly_target, 0)::float8 as sip_monthly_target, coalesce(sp.sip_invested, 0)::float8 as sip_invested,
            coalesce(un.n, 0)::int as unadvised_to_review, coalesce(cr.n, 0)::int as cas_to_review, coalesce(fu.n, 0)::int as follow_ups_due,
-           exists (select 1 from public.advisory_plans d where d.client_id = s.client_id and d.status = 'DRAFT') as has_draft_plan
+           exists (select 1 from public.advisory_plans d where d.client_id = s.client_id and d.status = 'DRAFT') as has_draft_plan,
+           (select count(*)::int from public.portfolio_snapshots ps2 where ps2.client_id = s.client_id and ps2.review_status = 'CONFIRMED'
+              and ps2.snapshot_date >= coalesce((select b.snapshot_date from public.portfolio_snapshots b where b.client_id = s.client_id and b.is_baseline limit 1), '-infinity'::date)) as cas_count
     from public.v_client_summary s
     left join public.v_client_premium p on p.client_id = s.client_id
     left join public.v_client_sip sp on sp.client_id = s.client_id
@@ -147,13 +155,20 @@ export async function listDeskClients(tx: Tx, f: DeskFilters = {}): Promise<Desk
       and (${f.risk ?? null}::text is null or s.risk_profile = ${f.risk ?? null})
       and (${f.minValue ?? null}::numeric is null or coalesce(s.live_portfolio_value, 0) >= ${f.minValue ?? null})
       and (${f.maxValue ?? null}::numeric is null or coalesce(s.live_portfolio_value, 0) <= ${f.maxValue ?? null})`;
-  let out = rows.map((r) => ({
-    ...r,
-    premium_paid_total: Number(r.premium_paid_total ?? 0),
-    premium_status: r.premium_status ?? "UNPAID",
-    agreement_status: r.agreement_status ?? "NONE",
-    renewal_due: Boolean(r.renewal_due),
-  }));
+  let out = rows.map((r) => {
+    const remaining = Number(r.yet_to_advise_sell ?? 0) + Number(r.yet_to_advise_buy ?? 0);
+    const c = {
+      ...r,
+      premium_paid_total: Number(r.premium_paid_total ?? 0),
+      premium_status: r.premium_status ?? "UNPAID",
+      agreement_status: r.agreement_status ?? "NONE",
+      renewal_due: Boolean(r.renewal_due),
+      cas_count: Number(r.cas_count ?? 0),
+      remaining_to_advise: remaining,
+    };
+    const nextTranche = Boolean(c.active_plan_id) && c.pending_total < 0.5 && remaining >= 0.5;
+    return { ...c, action_count: (c.pending_total >= 0.5 ? 1 : 0) + (c.cas_to_review ? 1 : 0) + (c.unadvised_to_review ? 1 : 0) + (c.has_draft_plan ? 1 : 0) + (c.follow_ups_due ? 1 : 0) + (nextTranche ? 1 : 0) };
+  });
   if (f.plan) out = out.filter((c) => (f.plan === "active" ? Boolean(c.active_plan_id) : f.plan === "draft" ? c.has_draft_plan : !c.active_plan_id));
   if (f.premium) {
     out = out.filter((c) => (f.premium === "renewal_due" ? c.renewal_due
@@ -167,6 +182,8 @@ export async function listDeskClients(tx: Tx, f: DeskFilters = {}): Promise<Desk
       : f.attention === "unadvised" ? c.unadvised_to_review > 0
       : f.attention === "cas_review" ? c.cas_to_review > 0
       : f.attention === "follow_up" ? c.follow_ups_due > 0
+      : f.attention === "tranche" ? Boolean(c.active_plan_id) && c.pending_total < 0.5 && c.remaining_to_advise >= 0.5
+      : f.attention === "needs" ? c.action_count > 0
       : !c.active_plan_id));
   }
   const by: Record<NonNullable<DeskFilters["sort"]>, (a: DeskClient, b: DeskClient) => number> = {
@@ -176,6 +193,7 @@ export async function listDeskClients(tx: Tx, f: DeskFilters = {}): Promise<Desk
     pending: (a, b) => b.pending_total - a.pending_total,
     onboarded: (a, b) => b.onboarding_date.localeCompare(a.onboarding_date),
     renewal: (a, b) => (a.paid_until ?? "9999").localeCompare(b.paid_until ?? "9999"),
+    action: (a, b) => b.action_count - a.action_count || b.pending_total - a.pending_total || a.full_name.localeCompare(b.full_name),
   };
   return out.sort(by[f.sort ?? "name"]);
 }

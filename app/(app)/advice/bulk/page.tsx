@@ -2,6 +2,8 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/form";
 import { PageHeader } from "@/components/app/page-header";
+import { HubTabs } from "@/components/app/hub-tabs";
+import { PAGES } from "@/lib/brand";
 import { ADVISORY_ROLES, pageData } from "@/lib/server";
 import { listAdvisors, listClientSummaries } from "@/services/clients";
 import { RISK_PROFILES } from "@/types/domain";
@@ -36,10 +38,10 @@ export default async function BulkCallPage(props: PageProps<"/advice/bulk">) {
   return (
     <>
       <PageHeader
-        eyebrow="Call ledger"
-        title="One call for many clients"
+        title={PAGES.calls}
         subtitle="Filter clients (for example by portfolio value or risk), tick them, and record the same call for all of them. Each client gets their own call in the ledger, linked to their plan when the plan has this fund."
       />
+      <HubTabs hub="calls" active="bulk" role={actor.role} />
 
       <form method="get" className="mb-4 grid gap-2 rounded-xl border border-border bg-white p-3 sm:grid-cols-2 lg:grid-cols-7">
         <label className="text-xs text-muted">Value today ≥ (₹ lakh)<Input name="min_value" inputMode="decimal" defaultValue={f.minValue} /></label>

@@ -1,3 +1,5 @@
+import { PAGES } from "@/lib/brand";
+import { HubTabs } from "@/components/app/hub-tabs";
 import { ActionForm, SubmitButton } from "@/components/app/action-form";
 import { PageHeader } from "@/components/app/page-header";
 import { Card, CardContent } from "@/components/ui/card";
@@ -18,9 +20,10 @@ export default async function OnboardPage() {
   return (
     <>
       <PageHeader
-        title="Onboard a Premium client"
-        subtitle="Upload the client's CAS and the paid advisory report. The client, current holdings and the plan are filled in automatically."
+        title={PAGES.onboardHub}
+        subtitle="CAS + paid advisory report → client, holdings and a draft plan. For an existing client, choose whether the report is a full rebalancing or an additional portfolio (fresh money)."
       />
+      <HubTabs hub="onboard" active="one" role={actor.role} />
       <Card className="max-w-3xl">
         <CardContent>
           <ActionForm action={onboardAction} className="space-y-4">
@@ -37,11 +40,11 @@ export default async function OnboardPage() {
               <Field label="CAS password (only if the mobile number doesn't open it)">
                 <Input name="password" type="password" autoComplete="off" />
               </Field>
-              <Field label="Report type" hint="Auto: an existing client's report that only invests fresh money is added to the active plan.">
+              <Field label="What is this report?" hint="Auto: an existing client's report that only invests fresh money is added to the active plan.">
                 <Select name="report_kind" defaultValue="AUTO">
                   <option value="AUTO">Auto-detect</option>
-                  <option value="FULL">Full rebalancing (replaces the current plan)</option>
-                  <option value="ADDITIONAL">Additional investment (adds to the current plan)</option>
+                  <option value="FULL">Full rebalancing (new client or new plan)</option>
+                  <option value="ADDITIONAL">Additional portfolio (existing client, fresh money)</option>
                 </Select>
               </Field>
               <Field label="Fresh money (₹, additional investment)" hint="Only if the report does not say it; otherwise read from the report.">

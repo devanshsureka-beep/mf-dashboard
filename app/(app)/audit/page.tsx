@@ -6,6 +6,7 @@ import { AuditTable } from "@/components/app/audit-table";
 import { EmptyState, PageHeader } from "@/components/app/page-header";
 import { humanize } from "@/lib/format";
 import { pageData } from "@/lib/server";
+import { HubTabs } from "@/components/app/hub-tabs";
 import { listAuditLogs } from "@/services/audit";
 import { listClientSummaries } from "@/services/clients";
 
@@ -27,7 +28,8 @@ export default async function AuditPage(props: PageProps<"/audit">) {
   }), ["ADMIN"]);
   return (
     <>
-      <PageHeader title="Audit log" subtitle="Append-only. Written by database triggers for every change to financial records; cannot be edited or deleted by anyone." />
+      <PageHeader title="Team & access" subtitle="Audit log: append-only, written by database triggers for every change to financial records; cannot be edited or deleted by anyone." />
+      <HubTabs hub="admin" active="audit" role="ADMIN" />
       <form method="get" className="sticky top-0 z-20 mb-4 flex flex-wrap items-end gap-2 rounded-lg border border-border bg-white/95 p-3 backdrop-blur">
         <Select name="client" defaultValue={f.clientId ?? ""} className="w-56">
           <option value="">All clients</option>

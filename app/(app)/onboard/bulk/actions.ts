@@ -13,7 +13,7 @@ import { prepareUpload, type PreparedFile } from "@/lib/storage";
 import type { AdvisoryReportParse } from "@/lib/parsers/advisory-report";
 import { findClientByPan, knownClientPhones } from "@/services/cas-intake";
 import { findDuplicateDocument } from "@/services/portfolio";
-import { checkDocumentsBelongTogether, decideReportKind } from "@/services/onboarding";
+import { checkDocumentsBelongTogether, decideReportKind, type ReportKindChoice } from "@/services/onboarding";
 import type { PlanKind } from "@/types/domain";
 import { isStaleCasProblem } from "@/lib/domain/report-plan";
 import { resolveWithClaude } from "@/services/report-resolve";
@@ -140,7 +140,9 @@ export async function onboardBulkPairAction(fd: FormData): Promise<BulkOnboardRo
     }
     // Full rebalancing, or fresh money added to the client's active plan (decided per report).
     const hasActivePlan = await hasActivePlanForPan(actor, cas.investor.pan);
-    const check = (r: AdvisoryReportParse) => decideReportKind(cas, r, { choice: "AUTO", hasActivePlan });
+    const rk = str(fd, "report_kind");
+    const choice: ReportKindChoice = rk === "FULL" || rk === "ADDITIONAL" ? rk : "AUTO";
+    const check = (r: AdvisoryReportParse) => decideReportKind(cas, r, { choice, hasActivePlan });
     const first = report ? check(report) : null;
     let kind: PlanKind = first?.kind ?? "FULL";
     const problems = first ? first.problems : [`The built-in reader could not read the report: ${read.error}`];

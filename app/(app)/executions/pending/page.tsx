@@ -1,21 +1,22 @@
 import Link from "next/link";
-import { Card, CardContent } from "@/components/ui/card";
-import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
-import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Button, LinkButton } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/form";
 import { Money } from "@/components/app/money";
 import { ActionBadge } from "@/components/app/status-badge";
 import { EmptyState, PageHeader } from "@/components/app/page-header";
 import { RecordExecutionForm } from "@/components/app/record-execution-form";
 import { ActionForm, SubmitButton } from "@/components/app/action-form";
-import { formatDate, formatDateTime, formatUnits } from "@/lib/format";
+import { formatDate, formatUnits } from "@/lib/format";
+import { PAGES } from "@/lib/brand";
+import { HubTabs } from "@/components/app/hub-tabs";
 import { pageData } from "@/lib/server";
 import { listAdvisors, listClientSummaries } from "@/services/clients";
 import type { AdviceItemView } from "@/types/domain";
 import { recordExecutionAction } from "../actions";
 import { closeAdviceAction, followUpNoteAction } from "../../advice/actions";
 
-export const metadata = { title: "Pending executions" };
+export const metadata = { title: "Awaiting execution" };
 
 interface PendingRow {
   advice_item_id: string; client_id: string; client_code: string; client_name: string; advisor_id: string; advisor_name: string | null;
@@ -44,83 +45,109 @@ export default async function PendingExecutionsPage(props: PageProps<"/execution
   const canAdvise = actor.role !== "OPERATIONS";
   const total = rows.reduce((s, r) => s + r.pending_amount, 0);
 
+  // One block per client, oldest call first.
+  const groups: { client_id: string; client_name: string; client_code: string; advisor: string | null; rows: PendingRow[]; total: number }[] = [];
+  for (const r of rows) {
+    let g = groups.find((x) => x.client_id === r.client_id);
+    if (!g) groups.push((g = { client_id: r.client_id, client_name: r.client_name, client_code: r.client_code, advisor: r.advisor_name, rows: [], total: 0 }));
+    g.rows.push(r);
+    g.total += r.pending_amount;
+  }
+  groups.sort((a, b) => Math.max(...b.rows.map((r) => r.age_days)) - Math.max(...a.rows.map((r) => r.age_days)));
+  const qs = (patch: Record<string, string | null>) => {
+    const p = new URLSearchParams();
+    for (const [k, v] of Object.entries({ ...f, ...patch })) if (v) p.set(k, v);
+    const q = p.toString();
+    return `/executions/pending${q ? `?${q}` : ""}`;
+  };
+  const chip = (label: string, patch: Record<string, string | null>, on: boolean) => (
+    <Link key={label} href={qs(patch)} className={`rounded-full px-3 py-1 text-xs ring-1 ${on ? "bg-ink text-white ring-ink" : "bg-white ring-border hover:bg-slate-50"}`}>{label}</Link>
+  );
+  const noFilter = !f.stale && !f.status && !f.side;
+
   return (
     <>
       <PageHeader
-        title="Pending executions"
-        subtitle={<>{rows.length} open calls · <Money value={total} className="font-medium text-amber-700" /> awaiting execution. Advice is not execution: record what the client actually did.</>}
+        title={PAGES.calls}
+        subtitle={<>{rows.length} open call(s) · <Money value={total} className="font-medium text-amber-700" /> awaiting execution. Advice is not execution: record what the client actually did.</>}
+        actions={canAdvise ? <LinkButton href="/advice/new">Issue call</LinkButton> : null}
       />
-      <form method="get" className="sticky top-0 z-20 mb-4 flex flex-wrap items-end gap-2 rounded-lg border border-border bg-white/95 p-3 backdrop-blur">
-        <Select name="client" defaultValue={f.client ?? ""} className="w-56">
-          <option value="">All clients</option>
-          {clients.map((c) => <option key={c.client_id} value={c.client_id}>{c.full_name}</option>)}
-        </Select>
-        {actor.role !== "ADVISOR" ? (
-          <Select name="advisor" defaultValue={f.advisor ?? ""} className="w-44">
-            <option value="">All advisors</option>
-            {advisors.map((a) => <option key={a.id} value={a.id}>{a.full_name}</option>)}
-          </Select>
-        ) : null}
-        <Select name="status" defaultValue={f.status ?? ""} className="w-48"><option value="">Pending + partial</option><option value="PENDING">Not started</option><option value="PARTIAL">Partial</option></Select>
-        <Select name="side" defaultValue={f.side ?? ""} className="w-36"><option value="">Buy & sell</option><option value="SELL">Sell</option><option value="BUY">Buy</option></Select>
-        <label className="flex items-center gap-1.5 px-2 text-sm"><input type="checkbox" name="stale" value="1" defaultChecked={Boolean(f.stale)} /> Older than 3 days</label>
-        <Button type="submit" variant="outline">Filter</Button>
-        <Link href="/executions/pending" className="px-2 text-xs text-muted hover:underline">Reset</Link>
-      </form>
+      <HubTabs hub="calls" active="pending" role={actor.role} counts={{ pending: rows.length }} />
 
-      <Card>
-        {rows.length === 0 ? <CardContent><EmptyState title="Nothing pending">Every issued call has been fully executed, cancelled or expired.</EmptyState></CardContent> : (
-          <Table className="text-[13px] [&_td]:px-2 [&_th]:px-2">
-            <THead>
-              <TR><TH>Client</TH><TH>Security</TH><TH>Action</TH><TH className="text-right">Amount advised</TH><TH className="text-right">Executed</TH><TH className="text-right">Pending</TH><TH>Advice date</TH><TH className="text-right">Age</TH><TH>Advisor</TH><TH>Quick actions</TH></TR>
-            </THead>
-            <TBody>
-              {rows.map((r) => (
-                <TR key={r.advice_item_id} className={r.age_days > 3 ? "bg-amber-50/40" : undefined}>
-                  <TD className="whitespace-nowrap"><Link className="font-medium hover:underline" href={`/clients/${r.client_id}`}>{r.client_name}</Link><div className="text-[11px] text-muted">{r.client_code}</div></TD>
-                  <TD className="max-w-52"><Link href={`/advice/items/${r.advice_item_id}`} className="block truncate hover:underline" title={r.scheme_name}>{r.scheme_name}</Link><div className="text-[11px] text-muted">{r.batch_code}{r.quantity_basis === "UNITS" ? ` · ${formatUnits(r.advised_units)} units` : ""}</div></TD>
-                  <TD><ActionBadge action={r.action} /></TD>
-                  <TD className="text-right"><Money value={r.advised_amount} /></TD>
-                  <TD className="text-right text-emerald-700"><Money value={r.executed_amount} /></TD>
-                  <TD className="text-right font-medium text-amber-700"><Money value={r.pending_amount} />{r.pending_units ? <div className="text-[10px] text-muted">{formatUnits(r.pending_units)} u</div> : null}</TD>
-                  <TD className="whitespace-nowrap text-xs">{formatDate(r.communicated_at)}<div className="text-[10px] text-muted">{formatDateTime(r.communicated_at).split(" ").slice(1).join(" ")}</div></TD>
-                  <TD className={`text-right num ${r.age_days > 3 ? "font-semibold text-amber-700" : ""}`}>{r.age_days}d</TD>
-                  <TD className="whitespace-nowrap text-xs">{r.advisor_name}</TD>
-                  <TD className="min-w-32">
-                    <details className="text-xs">
-                      <summary className="cursor-pointer text-brand">Record execution</summary>
-                      <div className="absolute right-6 z-30 mt-1 w-[760px] rounded-lg border border-border bg-white p-3 shadow-lg">
-                        <RecordExecutionForm compact advice={{ quantity_basis: r.quantity_basis, pending_amount: r.pending_amount, pending_units: r.pending_units, action: r.action }} action={recordExecutionAction.bind(null, r.advice_item_id)} />
-                        <p className="mt-2 text-[11px] text-muted">Need proof upload or time? <Link className="text-brand" href={`/advice/items/${r.advice_item_id}`}>Open full call</Link></p>
-                      </div>
-                    </details>
-                    <div className="mt-1 flex gap-2">
-                      <Link className="text-brand hover:underline" href={`/clients/${r.client_id}`}>Open client</Link>
-                    </div>
-                    <details className="mt-1 text-xs">
-                      <summary className="cursor-pointer text-muted">Follow-up note{canAdvise ? " / cancel" : ""}</summary>
-                      <div className="absolute right-6 z-30 mt-1 w-96 space-y-3 rounded-lg border border-border bg-white p-3 shadow-lg">
-                        <ActionForm action={followUpNoteAction.bind(null, r.client_id, r.advice_item_id)} className="space-y-2" resetOnSuccess>
-                          <Input name="body" placeholder="Follow-up note" required />
-                          <Input type="date" name="follow_up_date" />
-                          <SubmitButton size="sm" variant="outline">Add follow-up note</SubmitButton>
-                        </ActionForm>
-                        {canAdvise ? (
-                          <ActionForm action={closeAdviceAction.bind(null, r.advice_item_id)} className="space-y-2 border-t border-border pt-2">
-                            <input type="hidden" name="status" value="CANCELLED" />
-                            <Input name="reason" placeholder="Reason to cancel (required)" required />
-                            <SubmitButton size="sm" variant="danger" confirm="Cancel the remaining part of this call?">Cancel advice</SubmitButton>
+      <div className="mb-3 flex flex-wrap items-center gap-1.5">
+        {chip("All", { stale: null, status: null, side: null }, noFilter)}
+        {chip("Older than 3 days", { stale: f.stale ? null : "1" }, Boolean(f.stale))}
+        {chip("Partly executed", { status: f.status === "PARTIAL" ? null : "PARTIAL" }, f.status === "PARTIAL")}
+        {chip("Not started", { status: f.status === "PENDING" ? null : "PENDING" }, f.status === "PENDING")}
+        {chip("Sell", { side: f.side === "SELL" ? null : "SELL" }, f.side === "SELL")}
+        {chip("Buy", { side: f.side === "BUY" ? null : "BUY" }, f.side === "BUY")}
+        <form method="get" className="ml-auto flex gap-1.5">
+          {f.stale ? <input type="hidden" name="stale" value="1" /> : null}
+          {f.status ? <input type="hidden" name="status" value={f.status} /> : null}
+          {f.side ? <input type="hidden" name="side" value={f.side} /> : null}
+          <Select name="client" defaultValue={f.client ?? ""} className="h-8 w-52 text-xs" aria-label="Client">
+            <option value="">All clients</option>
+            {clients.map((c) => <option key={c.client_id} value={c.client_id}>{c.full_name}</option>)}
+          </Select>
+          {actor.role !== "ADVISOR" ? (
+            <Select name="advisor" defaultValue={f.advisor ?? ""} className="h-8 w-40 text-xs" aria-label="Advisor">
+              <option value="">All advisors</option>
+              {advisors.map((a) => <option key={a.id} value={a.id}>{a.full_name}</option>)}
+            </Select>
+          ) : null}
+          <Button type="submit" variant="outline" size="sm">Apply</Button>
+        </form>
+      </div>
+
+      {groups.length === 0 ? <EmptyState title="Nothing awaiting execution">Every issued call has been fully executed, cancelled or expired.</EmptyState> : (
+        <div className="space-y-3">
+          {groups.map((g) => (
+            <Card key={g.client_id} className="overflow-hidden">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-slate-50 px-4 py-2">
+                <div><Link className="font-semibold hover:underline" href={`/clients/${g.client_id}`}>{g.client_name}</Link> <span className="text-xs text-muted">{g.client_code}{g.advisor ? ` · ${g.advisor}` : ""}</span></div>
+                <span className="text-xs font-semibold text-amber-700"><Money value={g.total} /> pending</span>
+              </div>
+              {g.rows.map((r) => (
+                <details key={r.advice_item_id} className="group border-t border-border first:border-t-0">
+                  <summary className="grid cursor-pointer list-none grid-cols-[92px_minmax(0,2.2fr)_1fr_1fr_1fr_96px] items-center gap-2 px-4 py-2 text-[13px] hover:bg-slate-50/70 [&::-webkit-details-marker]:hidden">
+                    <span className="text-xs text-muted">{formatDate(r.communicated_at)}<span className={`block text-[11px] ${r.age_days > 3 ? "font-semibold text-red-700" : ""}`}>{r.age_days} day(s)</span></span>
+                    <span className="min-w-0"><ActionBadge action={r.action} /> <span className="font-medium">{r.scheme_name}</span><span className="block text-[11px] text-muted">{r.batch_code}{r.quantity_basis === "UNITS" ? ` · ${formatUnits(r.advised_units)} units` : ""}</span></span>
+                    <span className="text-right">Advised <b><Money value={r.advised_amount} /></b></span>
+                    <span className="text-right text-emerald-700">Done <Money value={r.executed_amount} /></span>
+                    <span className="text-right font-semibold text-amber-700">Pending <Money value={r.pending_amount} /></span>
+                    <span className="justify-self-end rounded-md bg-brand px-3 py-1 text-xs font-semibold text-white group-open:bg-slate-200 group-open:text-ink">
+                      <span className="group-open:hidden">Record</span><span className="hidden group-open:inline">Close</span>
+                    </span>
+                  </summary>
+                  <div className="space-y-3 bg-slate-50/80 px-4 pb-4 pl-[116px] pt-2">
+                    <RecordExecutionForm compact advice={{ quantity_basis: r.quantity_basis, pending_amount: r.pending_amount, pending_units: r.pending_units, action: r.action }} action={recordExecutionAction.bind(null, r.advice_item_id)} />
+                    <div className="flex flex-wrap gap-4 text-xs">
+                      <Link className="text-brand hover:underline" href={`/advice/items/${r.advice_item_id}`}>Open the call (proof upload, time, corrections)</Link>
+                      <details>
+                        <summary className="cursor-pointer text-muted">Follow-up note{canAdvise ? " / cancel" : ""}</summary>
+                        <div className="mt-2 w-96 space-y-3 rounded-lg border border-border bg-white p-3">
+                          <ActionForm action={followUpNoteAction.bind(null, r.client_id, r.advice_item_id)} className="space-y-2" resetOnSuccess>
+                            <Input name="body" placeholder="Follow-up note" required />
+                            <Input type="date" name="follow_up_date" />
+                            <SubmitButton size="sm" variant="outline">Add follow-up note</SubmitButton>
                           </ActionForm>
-                        ) : null}
-                      </div>
-                    </details>
-                  </TD>
-                </TR>
+                          {canAdvise ? (
+                            <ActionForm action={closeAdviceAction.bind(null, r.advice_item_id)} className="space-y-2 border-t border-border pt-2">
+                              <input type="hidden" name="status" value="CANCELLED" />
+                              <Input name="reason" placeholder="Reason to cancel (required)" required />
+                              <SubmitButton size="sm" variant="danger" confirm="Cancel the remaining part of this call?">Cancel advice</SubmitButton>
+                            </ActionForm>
+                          ) : null}
+                        </div>
+                      </details>
+                    </div>
+                  </div>
+                </details>
               ))}
-            </TBody>
-          </Table>
-        )}
-      </Card>
+            </Card>
+          ))}
+        </div>
+      )}
     </>
   );
 }

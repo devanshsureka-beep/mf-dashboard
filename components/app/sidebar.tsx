@@ -3,48 +3,34 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import {
-  LayoutDashboard, Users, PhoneCall, Hourglass, FileSearch, ScrollText, ShieldCheck, LogOut, UserPlus, FileStack, ClipboardCheck,
-  Menu, X, Megaphone, FolderInput,
-} from "lucide-react";
+import { LayoutDashboard, Users, PhoneCall, Inbox, ScrollText, ShieldCheck, LogOut, UserPlus, Menu, X, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PAGES, ROLE_LABELS } from "@/lib/brand";
 import { BrandMark } from "@/components/app/brand-mark";
 import type { AppRole } from "@/types/domain";
 
-type NavItem = { href: string; label: string; icon: typeof Users; roles?: AppRole[]; exact?: boolean };
+type NavItem = {
+  href: string; label: string; icon: typeof Users; roles?: AppRole[]; exact?: boolean;
+  /** Other paths that belong to this item. */
+  also?: string[]; badge?: "calls" | "cas";
+};
 
 const SECTIONS: { title: string; items: NavItem[] }[] = [
   {
-    title: "Daily desk",
+    title: "Work",
     items: [
       { href: "/", label: PAGES.overview, icon: LayoutDashboard, exact: true },
-      { href: "/advice", label: PAGES.callLedger, icon: PhoneCall },
-      { href: "/advice/bulk", label: PAGES.bulkCalls, icon: Megaphone, roles: ["ADMIN", "ADVISOR"] },
-      { href: "/executions/pending", label: PAGES.pendingExecutions, icon: Hourglass },
-    ],
-  },
-  {
-    title: "Clients",
-    items: [
       { href: "/clients", label: PAGES.clients, icon: Users },
-      { href: "/onboard", label: PAGES.onboard, icon: UserPlus, exact: true },
-      { href: "/onboard/bulk", label: PAGES.bulkOnboard, icon: FolderInput },
-      { href: "/onboard/check", label: PAGES.documentCheck, icon: ClipboardCheck },
+      { href: "/executions/pending", label: PAGES.calls, icon: PhoneCall, also: ["/advice", "/executions"], badge: "calls" },
+      { href: "/reconciliation", label: PAGES.casInbox, icon: Inbox, also: ["/cas", "/snapshots"], badge: "cas" },
     ],
   },
-  {
-    title: "CAS",
-    items: [
-      { href: "/cas/bulk", label: PAGES.bulkCas, icon: FileStack },
-      { href: "/reconciliation", label: PAGES.casMatching, icon: FileSearch },
-    ],
-  },
+  { title: "Add", items: [{ href: "/onboard", label: PAGES.onboardHub, icon: UserPlus }] },
   {
     title: "Admin",
     items: [
+      { href: "/admin/users", label: "Team & access", icon: ShieldCheck, roles: ["ADMIN"], also: ["/admin"] },
       { href: "/audit", label: PAGES.auditLog, icon: ScrollText, roles: ["ADMIN"] },
-      { href: "/admin/users", label: PAGES.team, icon: ShieldCheck, roles: ["ADMIN"] },
     ],
   },
 ];
@@ -54,7 +40,7 @@ function initials(name: string) {
   return ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase() || "U";
 }
 
-export function Sidebar({ name, role, signOut }: { name: string; role: AppRole; signOut: () => Promise<void> }) {
+export function Sidebar({ name, role, signOut, counts }: { name: string; role: AppRole; signOut: () => Promise<void>; counts?: { awaitingExecution: number; casInbox: number } }) {
   const path = usePathname();
   // The menu belongs to the page it was opened on: navigating closes it.
   const [openOn, setOpenOn] = useState<string | null>(null);
@@ -62,13 +48,25 @@ export function Sidebar({ name, role, signOut }: { name: string; role: AppRole; 
   const setOpen = (next: boolean | ((o: boolean) => boolean)) =>
     setOpenOn((typeof next === "function" ? next(open) : next) ? path : null);
 
-  // The most specific menu entry wins (/advice/bulk over /advice).
+  const under = (p: string) => path === p || path.startsWith(`${p}/`);
+  // The most specific menu entry wins.
   const activeHref = SECTIONS.flatMap((x) => x.items)
-    .filter((n) => (n.exact ? path === n.href : path === n.href || path.startsWith(`${n.href}/`)))
-    .sort((a, b) => b.href.length - a.href.length)[0]?.href;
+    .flatMap((n) => (n.exact ? (path === n.href ? [{ n, len: n.href.length }] : []) : [n.href, ...(n.also ?? [])].filter(under).map((p) => ({ n, len: p.length }))))
+    .sort((a, b) => b.len - a.len)[0]?.n.href;
+  const badgeOf = (n: NavItem) => (n.badge === "calls" ? counts?.awaitingExecution ?? 0 : n.badge === "cas" ? counts?.casInbox ?? 0 : 0);
 
   const nav = (
-    <nav className="flex-1 space-y-5 overflow-y-auto px-3 py-4">
+    <nav className="flex-1 space-y-4 overflow-y-auto px-3 py-3">
+      <form action="/clients" method="get" role="search" className="relative">
+        <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-sidebar-muted" aria-hidden />
+        <input
+          name="q"
+          type="search"
+          placeholder="Find client, ID, phone…"
+          aria-label="Find a client"
+          className="h-9 w-full rounded-md border border-white/10 bg-white/5 pl-8 pr-2 text-sm text-white placeholder:text-sidebar-muted focus:border-brand-300 focus:outline-none"
+        />
+      </form>
       {SECTIONS.map((s) => {
         const items = s.items.filter((n) => !n.roles || n.roles.includes(role));
         if (!items.length) return null;
@@ -91,7 +89,10 @@ export function Sidebar({ name, role, signOut }: { name: string; role: AppRole; 
                   >
                     {active ? <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-brand-300" aria-hidden /> : null}
                     <Icon className={cn("h-4 w-4 shrink-0", active ? "text-brand-200" : "text-sidebar-muted group-hover:text-sidebar-ink")} />
-                    {n.label}
+                    <span className="flex-1">{n.label}</span>
+                    {badgeOf(n) > 0 ? (
+                      <span className={cn("rounded-full px-1.5 text-[11px] font-semibold", n.badge === "cas" ? "bg-red-500 text-white" : "bg-amber-400 text-amber-950")}>{badgeOf(n)}</span>
+                    ) : null}
                   </Link>
                 );
               })}
@@ -138,7 +139,7 @@ export function Sidebar({ name, role, signOut }: { name: string; role: AppRole; 
 
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-40 flex w-64 flex-col bg-sidebar transition-transform lg:translate-x-0 print:hidden",
+          "fixed inset-y-0 left-0 z-40 flex w-60 flex-col bg-sidebar transition-transform lg:translate-x-0 print:hidden",
           open ? "translate-x-0" : "-translate-x-full",
         )}
       >

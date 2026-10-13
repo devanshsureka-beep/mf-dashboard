@@ -12,8 +12,11 @@ export const BRAND = {
 
 /** Sidebar / page names, so navigation and page titles never drift apart. */
 export const PAGES = {
-  overview: "Overview",
-  clients: "Premium Clients",
+  overview: "Today",
+  clients: "Clients",
+  calls: "Calls & executions",
+  casInbox: "CAS inbox",
+  onboardHub: "Onboard clients",
   onboard: "Onboard Client",
   bulkOnboard: "Bulk Onboarding",
   documentCheck: "Document Check",

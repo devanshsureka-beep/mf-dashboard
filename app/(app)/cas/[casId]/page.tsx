@@ -78,7 +78,7 @@ export default async function CasDocumentPage(props: PageProps<"/cas/[casId]">) 
               <SubmitButton>Read with the built-in reader</SubmitButton>
             </ActionForm>
             <p className="mt-2 text-xs text-muted">
-              Reads KFintech / CAMS consolidated statements like Bulk CAS Upload: the password is tried from the house template, the file name
+              Reads KFintech / CAMS consolidated statements like the CAS inbox upload: the password is tried from the house template, the file name
               and the client&apos;s mobile; the CAS must carry this client&apos;s PAN. Creates the snapshot and matches its transactions with the calls.
             </p>
           </CardContent>

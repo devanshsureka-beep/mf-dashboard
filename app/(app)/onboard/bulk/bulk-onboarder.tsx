@@ -11,6 +11,8 @@ import { pairDocuments } from "@/lib/domain/doc-pairing";
 import { identifyBulkFileAction, onboardBulkPairAction, type BulkFileInfo, type BulkOnboardRow } from "./actions";
 
 type Result = BulkOnboardRow | { outcome: "QUEUED" | "WORKING" };
+type Kind = "AUTO" | "FULL" | "ADDITIONAL";
+const KIND_LABEL: Record<Kind, string> = { AUTO: "Auto-detect", FULL: "Full rebalancing (new client / new plan)", ADDITIONAL: "Additional portfolio (fresh money)" };
 
 const TONE: Record<Result["outcome"], "success" | "info" | "pending" | "danger" | "neutral" | "muted"> = {
   ONBOARDED: "success", NEEDS_REVIEW: "pending", ALREADY: "muted", FAILED: "danger", QUEUED: "neutral", WORKING: "info",
@@ -32,14 +34,16 @@ export function BulkOnboarder({ advisors, defaultAdvisorId }: { advisors: { id: 
   const [files, setFiles] = useState<File[]>([]);
   const [infos, setInfos] = useState<(BulkFileInfo | null)[]>([]);
   const [reading, setReading] = useState(false);
-  const [pairs, setPairs] = useState<{ cas: number; report: number | null }[]>([]);
+  const [pairs, setPairs] = useState<{ cas: number; report: number | null; kind: Kind }[]>([]);
   const [results, setResults] = useState<Record<number, Result>>({});
   const [running, setRunning] = useState(false);
   const [advisorId, setAdvisorId] = useState(defaultAdvisorId);
   const [open, setOpen] = useState<number | null>(null);
 
   function choose(list: FileList | null) {
-    const pdfs = Array.from(list ?? []).filter((f) => /\.pdf$/i.test(f.name)).sort((a, b) => a.name.localeCompare(b.name));
+    // Folders and loose PDFs add up: pick a folder, then a few more PDFs.
+    const picked = Array.from(list ?? []).filter((f) => /\.pdf$/i.test(f.name));
+    const pdfs = [...files, ...picked.filter((f) => !files.some((x) => x.name === f.name && x.size === f.size))].sort((a, b) => a.name.localeCompare(b.name));
     setFiles(pdfs);
     setInfos([]);
     setPairs([]);
@@ -65,7 +69,7 @@ export function BulkOnboarder({ advisors, defaultAdvisorId }: { advisors: { id: 
       ids("CAS").map((i) => ({ id: String(i), investorName: got[i]!.name, fileName: files[i].name })),
       ids("REPORT").map((i) => ({ id: String(i), clientName: got[i]!.name, fileName: files[i].name })),
     );
-    setPairs(p.map((x) => ({ cas: Number(x.casId), report: x.reportId === null ? null : Number(x.reportId) })));
+    setPairs(p.map((x) => ({ cas: Number(x.casId), report: x.reportId === null ? null : Number(x.reportId), kind: "AUTO" as Kind })));
     setReading(false);
   }
 
@@ -79,6 +83,7 @@ export function BulkOnboarder({ advisors, defaultAdvisorId }: { advisors: { id: 
       fd.set("cas", files[p.cas]);
       fd.set("report", files[p.report!]);
       if (advisorId) fd.set("advisor_id", advisorId);
+      fd.set("report_kind", p.kind);
       let res: Result;
       try {
         res = await onboardBulkPairAction(fd);
@@ -100,7 +105,7 @@ export function BulkOnboarder({ advisors, defaultAdvisorId }: { advisors: { id: 
 
   return (
     <Card>
-      <CardHeader><CardTitle>Client folder</CardTitle></CardHeader>
+      <CardHeader><CardTitle>Drop a folder, or many PDFs at once</CardTitle><span className="text-xs text-muted">CAS files and reports can be mixed; pick a folder, then add more PDFs if needed.</span></CardHeader>
       <CardContent className="space-y-4">
         <div className="flex flex-wrap items-end gap-3">
           <label className="block">
@@ -121,6 +126,8 @@ export function BulkOnboarder({ advisors, defaultAdvisorId }: { advisors: { id: 
               className="block text-sm file:mr-3 file:rounded-md file:border file:border-border file:bg-white file:px-3 file:py-1.5 file:text-sm"
             />
           </label>
+          {files.length ? <span className="pb-2 text-xs text-muted">{files.length} file(s) chosen ·</span> : null}
+          {files.length ? <button type="button" className="pb-2 text-xs text-brand hover:underline" onClick={() => { setFiles([]); setInfos([]); setPairs([]); setResults({}); }} disabled={reading || running}>Clear</button> : null}
           <Button onClick={readAll} disabled={reading || running || files.length === 0}>
             {reading ? `Reading ${readCount} of ${files.length}…` : `1. Read ${files.length || ""} file${files.length === 1 ? "" : "s"}`}
           </Button>
@@ -136,6 +143,13 @@ export function BulkOnboarder({ advisors, defaultAdvisorId }: { advisors: { id: 
                   {advisors.map((a) => <option key={a.id} value={a.id}>{a.full_name} ({a.role.toLowerCase()})</option>)}
                 </Select>
               </label>
+              <label className="block">
+                <span className="mb-1 block text-xs font-medium text-muted">Report type for all</span>
+                <Select defaultValue="" onChange={(e) => { const k = e.target.value as Kind; if (k) setPairs((all) => all.map((x) => (done(results[x.cas]) ? x : { ...x, kind: k }))); }} disabled={running} className="w-64">
+                  <option value="">Set every row…</option>
+                  {(Object.keys(KIND_LABEL) as Kind[]).map((k) => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}
+                </Select>
+              </label>
               <Button onClick={() => onboard()} disabled={running || reading || ready === 0 || !advisorId}>
                 {running ? "Onboarding…" : `2. Onboard ${ready} client${ready === 1 ? "" : "s"}`}
               </Button>
@@ -145,7 +159,7 @@ export function BulkOnboarder({ advisors, defaultAdvisorId }: { advisors: { id: 
             </div>
 
             <Table className="text-[13px]">
-              <THead><TR><TH>Client (from CAS)</TH><TH>CAS</TH><TH>Advisory report</TH><TH>Result</TH><TH /></TR></THead>
+              <THead><TR><TH>Client (from CAS)</TH><TH>CAS</TH><TH>Advisory report</TH><TH>Report type</TH><TH>Result</TH><TH /></TR></THead>
               <TBody>
                 {pairs.map((p) => {
                   const c = infos[p.cas]!;
@@ -174,6 +188,20 @@ export function BulkOnboarder({ advisors, defaultAdvisorId }: { advisors: { id: 
                         </Select>
                         {p.report !== null && !infos[p.report]!.readerOk ? <div className="mt-0.5 text-[11px] text-amber-700">New layout: Claude will read it.</div> : null}
                         {dupe ? <div className="mt-0.5 text-[11px] text-red-700">This report is also chosen for another CAS.</div> : null}
+                      </TD>
+                      <TD className="w-56">
+                        <Select
+                          value={p.kind} disabled={running || done(r)} aria-label="Report type"
+                          onChange={(e) => setPairs((all) => all.map((x) => (x.cas === p.cas ? { ...x, kind: e.target.value as Kind } : x)))}
+                          className="w-full text-xs"
+                        >
+                          {(Object.keys(KIND_LABEL) as Kind[]).map((k) => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}
+                        </Select>
+                        <div className="mt-0.5 text-[11px] text-muted">
+                          {p.kind === "AUTO" ? (c.existingClient ? "Existing client: additional if the report only invests fresh money" : "New client: full rebalancing")
+                            : p.kind === "ADDITIONAL" ? (c.existingClient ? "Added to the current plan as the next tranche" : "Needs an existing client with an active plan")
+                            : c.existingClient ? "New draft plan; replaces the current one when approved" : "New client and plan"}
+                        </div>
                       </TD>
                       <TD className="max-w-md">
                         {r ? <Badge tone={TONE[r.outcome]}>{LABEL[r.outcome]}</Badge> : <span className="text-xs text-muted">{p.report === null ? "No report" : "Ready"}</span>}

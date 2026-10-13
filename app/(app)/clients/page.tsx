@@ -1,3 +1,4 @@
+import { HubTabs } from "@/components/app/hub-tabs";
 import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { Input, Select } from "@/components/ui/form";
@@ -19,14 +20,18 @@ export const metadata = { title: "Premium clients" };
 
 const lakh = (v: string | undefined) => (v && Number(v) > 0 ? Number(v) * 100000 : null);
 
-function Chip({ href, active, tone, children }: { href: string; active: boolean; tone: "red" | "amber" | "blue" | "slate"; children: React.ReactNode }) {
-  const tones = { red: "text-red-700", amber: "text-amber-800", blue: "text-blue-700", slate: "text-slate-700" };
-  return (
-    <Link href={href} className={cn("rounded-full border px-3 py-1 text-xs font-medium", active ? "border-brand bg-brand text-white" : `border-border bg-white hover:bg-slate-50 ${tones[tone]}`)}>
-      {children}
-    </Link>
-  );
-}
+type Desk = Awaited<ReturnType<typeof listDeskClients>>[number];
+const VIEWS: { key: string; label: string; params: Record<string, string | undefined>; match: (f: DeskFilters) => boolean; count: (c: Desk) => boolean; alert?: boolean }[] = [
+  { key: "all", label: "All", params: {}, match: (f) => !f.attention && !f.plan && !f.premium && !f.agreement, count: () => true },
+  { key: "needs", label: "Needs action", params: { attention: "needs" }, match: (f) => f.attention === "needs", count: (c) => c.action_count > 0, alert: true },
+  { key: "tranche", label: "Next tranche to advise", params: { attention: "tranche" }, match: (f) => f.attention === "tranche", count: (c) => Boolean(c.active_plan_id) && c.pending_total < 0.5 && c.remaining_to_advise >= 0.5 },
+  { key: "pending", label: "Awaiting execution", params: { attention: "pending" }, match: (f) => f.attention === "pending", count: (c) => c.pending_total > 0 },
+  { key: "unadvised", label: "Unadvised trades", params: { attention: "unadvised" }, match: (f) => f.attention === "unadvised", count: (c) => c.unadvised_to_review > 0, alert: true },
+  { key: "cas", label: "CAS to check", params: { attention: "cas_review" }, match: (f) => f.attention === "cas_review", count: (c) => c.cas_to_review > 0 },
+  { key: "draft", label: "Draft plan", params: { plan: "draft" }, match: (f) => f.plan === "draft", count: (c) => c.has_draft_plan },
+  { key: "follow", label: "Follow-ups due", params: { attention: "follow_up" }, match: (f) => f.attention === "follow_up", count: (c) => c.follow_ups_due > 0 },
+  { key: "agreement", label: "No agreement", params: { agreement: "missing" }, match: (f) => f.agreement === "missing", count: (c) => c.agreement_status !== "VALID" },
+];
 
 export default async function ClientsPage(props: PageProps<"/clients">) {
   const sp = await props.searchParams;
@@ -37,7 +42,7 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
     risk: (RISK_PROFILES as readonly string[]).includes(one("risk") ?? "") ? one("risk") : undefined,
     plan: one("plan") as DeskFilters["plan"], premium: one("premium") as DeskFilters["premium"],
     agreement: one("agreement") as DeskFilters["agreement"], attention: one("attention") as DeskFilters["attention"],
-    minValue: lakh(one("min")), maxValue: lakh(one("max")), sort: (one("sort") as DeskFilters["sort"]) ?? "name",
+    minValue: lakh(one("min")), maxValue: lakh(one("max")), sort: (one("sort") as DeskFilters["sort"]) ?? "action",
   };
   const showDeleted = one("deleted") === "1";
   const { clients, all, advisors, deleted, actor } = await pageData(async (tx, a) => ({
@@ -58,31 +63,34 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
   };
   const totals = clients.reduce((t, c) => ({ value: t.value + (c.live_portfolio_value ?? 0), pending: t.pending + c.pending_total, premium: t.premium + c.premium_paid_total }), { value: 0, pending: 0, premium: 0 });
   const activeFilters = Object.entries(sp).filter(([k, v]) => typeof v === "string" && v && k !== "sort").length;
+  // A view keeps the search and the other filters, and replaces only what it is about.
+  const viewHref = (params: Record<string, string | undefined>) => qs({ attention: undefined, plan: undefined, premium: undefined, agreement: undefined, ...params });
 
   return (
     <>
       <PageHeader
-        title="Premium clients"
-        subtitle={<>{clients.length} of {all.length} clients · <Money value={totals.value} /> under advice · <Money value={totals.pending} /> pending execution · <Money value={totals.premium} /> premium received</>}
+        title="Clients"
+        subtitle={<>{clients.length} of {all.length} clients · <Money value={totals.value} /> under advice · <Money value={totals.pending} /> awaiting execution · <Money value={totals.premium} /> premium recorded</>}
         actions={
           <div className="flex items-center gap-2">
             {isAdmin && deleted.length ? <Link href="/clients?deleted=1" className="text-xs text-muted hover:underline">Deleted clients · {deleted.length}</Link> : null}
-            {actor.role !== "OPERATIONS" ? <LinkButton href="/clients/new">New client</LinkButton> : null}
+            {actor.role !== "OPERATIONS" ? <LinkButton href="/onboard">Onboard client</LinkButton> : null}
           </div>
         }
       />
 
-      {/* One-click views of what needs work */}
-      <div className="mb-2 flex flex-wrap gap-1.5">
-        <Chip href={qs({ attention: f.attention === "unadvised" ? undefined : "unadvised" })} active={f.attention === "unadvised"} tone="red">Unadvised trades to review · {count((c) => c.unadvised_to_review > 0)}</Chip>
-        <Chip href={qs({ attention: f.attention === "pending" ? undefined : "pending" })} active={f.attention === "pending"} tone="amber">Pending executions · {count((c) => c.pending_total > 0)}</Chip>
-        <Chip href={qs({ attention: f.attention === "cas_review" ? undefined : "cas_review" })} active={f.attention === "cas_review"} tone="amber">CAS to check · {count((c) => c.cas_to_review > 0)}</Chip>
-        <Chip href={qs({ attention: f.attention === "follow_up" ? undefined : "follow_up" })} active={f.attention === "follow_up"} tone="amber">Follow-ups due · {count((c) => c.follow_ups_due > 0)}</Chip>
-        <Chip href={qs({ plan: f.plan === "draft" ? undefined : "draft" })} active={f.plan === "draft"} tone="blue">Draft plans · {count((c) => c.has_draft_plan)}</Chip>
-        <Chip href={qs({ premium: f.premium === "renewal_due" ? undefined : "renewal_due" })} active={f.premium === "renewal_due"} tone="amber">Renewal due (30 days) · {count((c) => c.renewal_due)}</Chip>
-        <Chip href={qs({ premium: f.premium === "expired" ? undefined : "expired" })} active={f.premium === "expired"} tone="red">Premium expired · {count((c) => c.premium_status === "EXPIRED")}</Chip>
-        <Chip href={qs({ agreement: f.agreement === "missing" ? undefined : "missing" })} active={f.agreement === "missing"} tone="red">No valid agreement · {count((c) => c.agreement_status !== "VALID")}</Chip>
-      </div>
+      {/* Saved views */}
+      <nav aria-label="Views" className="mb-3 flex gap-0.5 overflow-x-auto border-b border-border">
+        {VIEWS.map((v) => {
+          const on = v.match(f);
+          return (
+            <Link key={v.key} href={viewHref(v.params)} aria-current={on ? "page" : undefined}
+              className={cn("-mb-px whitespace-nowrap border-b-2 px-3 py-2 text-[13.5px]", on ? "border-brand font-semibold text-brand" : "border-transparent text-slate-600 hover:text-ink")}>
+              {v.label} <span className={cn("ml-0.5 text-xs", v.alert && count(v.count) ? "font-semibold text-red-700" : "text-muted")}>{count(v.count)}</span>
+            </Link>
+          );
+        })}
+      </nav>
 
       <form className="sticky top-0 z-20 mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-white/95 p-2.5 backdrop-blur" method="get">
         <Input name="q" placeholder="Name, client ID, PAN, phone, email…" defaultValue={f.q} className="h-9 w-72" aria-label="Search" />
@@ -100,16 +108,12 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
           <option value="">Any risk</option>
           {RISK_PROFILES.map((r) => <option key={r} value={r}>{humanize(r)}</option>)}
         </Select>
-        <Select name="plan" defaultValue={f.plan ?? ""} className="h-9 w-40" aria-label="Plan">
-          <option value="">Any plan</option><option value="active">Active plan</option><option value="draft">Draft to approve</option><option value="none">No active plan</option>
-        </Select>
-        <Select name="premium" defaultValue={f.premium ?? ""} className="h-9 w-40" aria-label="Premium">
-          <option value="">Any premium</option><option value="active">Premium active</option><option value="renewal_due">Renewal due</option><option value="expired">Expired</option><option value="unpaid">Not recorded</option>
-        </Select>
+        {f.plan ? <input type="hidden" name="plan" value={f.plan} /> : null}
+        {f.premium ? <input type="hidden" name="premium" value={f.premium} /> : null}
         <Input name="min" inputMode="decimal" placeholder="Value ≥ ₹L" defaultValue={one("min")} className="h-9 w-28" aria-label="Minimum value in lakh" />
         <Input name="max" inputMode="decimal" placeholder="Value ≤ ₹L" defaultValue={one("max")} className="h-9 w-28" aria-label="Maximum value in lakh" />
         <Select name="sort" defaultValue={f.sort} className="h-9 w-44" aria-label="Sort">
-          <option value="name">Sort: name</option><option value="code">Client ID</option><option value="value">Value (high first)</option>
+          <option value="action">Sort: needs action first</option><option value="name">Name</option><option value="code">Client ID</option><option value="value">Value (high first)</option>
           <option value="pending">Pending (high first)</option><option value="onboarded">Newest onboarded</option><option value="renewal">Renewal (soonest)</option>
         </Select>
         {f.attention ? <input type="hidden" name="attention" value={f.attention} /> : null}
@@ -117,6 +121,7 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
         <div className="flex items-center gap-2">
           <Button type="submit" variant="outline" size="sm">Apply</Button>
           {activeFilters ? <Link href="/clients" className="text-xs text-muted hover:underline">Clear</Link> : null}
+          <span className="text-[11px] text-muted">More views: <Link className="hover:underline" href={viewHref({ premium: "renewal_due" })}>renewal due</Link> · <Link className="hover:underline" href={viewHref({ premium: "expired" })}>premium expired</Link> · <Link className="hover:underline" href={viewHref({ attention: "no_plan" })}>no active plan</Link></span>
         </div>
       </form>
 
@@ -152,7 +157,7 @@ function ClientTable({ clients, selectable = false }: { clients: Row[]; selectab
                   <th className="px-2 py-2">Advisor · risk</th>
                   <th className="px-2 py-2 text-right">Value today</th>
                   <th className="px-2 py-2">Rebalancing</th>
-                  <th className="px-2 py-2 text-right">Pending</th>
+                  <th className="px-2 py-2 text-right">Awaiting exec.</th>
                   <th className="px-2 py-2 text-right">SIP / mo</th>
                   <th className="px-2 py-2">Premium</th>
                   <th className="px-2 py-2">Latest CAS</th>
@@ -171,7 +176,9 @@ function ClientTable({ clients, selectable = false }: { clients: Row[]; selectab
                         <div className="flex flex-wrap items-center gap-1 text-[11px] text-muted">
                           <span className="font-mono">{c.client_code}</span>
                           {c.status !== "ACTIVE" ? <StatusBadge status={c.status} /> : null}
-                          {c.unadvised_to_review ? <Link href={`/clients/${c.client_id}?tab=cas`} className="rounded bg-red-50 px-1 text-red-700">{c.unadvised_to_review} unadvised</Link> : null}
+                          {c.active_plan_id && c.pending_total < 0.5 && c.remaining_to_advise >= 0.5 ? <Link href={`/clients/${c.client_id}?tab=tranches`} className="rounded bg-brand-50 px-1 text-brand-700">next tranche to advise</Link> : null}
+                          {c.pending_total >= 0.5 ? <span className="rounded bg-amber-50 px-1 text-amber-800">{formatINRCompact(c.pending_total)} awaiting execution</span> : null}
+                          {c.unadvised_to_review ? <Link href={`/clients/${c.client_id}?tab=tranches`} className="rounded bg-red-50 px-1 text-red-700">{c.unadvised_to_review} unadvised</Link> : null}
                           {c.cas_to_review ? <span className="rounded bg-amber-50 px-1 text-amber-800">CAS to check</span> : null}
                           {c.has_draft_plan ? <span className="rounded bg-blue-50 px-1 text-blue-700">draft plan</span> : null}
                           {c.follow_ups_due ? <span className="rounded bg-amber-50 px-1 text-amber-800">{c.follow_ups_due} follow-up</span> : null}
@@ -179,10 +186,10 @@ function ClientTable({ clients, selectable = false }: { clients: Row[]; selectab
                       </td>
                       <td className="whitespace-nowrap px-2 py-2 text-xs">{c.advisor_name ?? "—"}<div className="text-muted">{humanize(c.risk_profile)}</div></td>
                       <td className="px-2 py-2 text-right font-semibold"><Money value={c.live_portfolio_value} /></td>
-                      <td className="w-44 px-2 py-2">
+                      <td className="w-56 px-2 py-2">
                         {done === null ? <span className="text-xs text-muted">{c.active_plan_id ? "No targets" : "No active plan"}</span> : (
                           <>
-                            <div className="flex justify-between text-[11px]"><span className="text-emerald-700">{done}% done</span><span className="text-muted">of {formatINRCompact(target)}</span></div>
+                            <div className="flex justify-between gap-2 text-[11px]"><span><span className="text-slate-600">Tranche {Math.max(1, c.cas_count)}</span> · <span className="text-emerald-700">{done}% done</span></span><span className="text-muted">{c.remaining_to_advise >= 0.5 ? `${formatINRCompact(c.remaining_to_advise)} left` : `of ${formatINRCompact(target)}`}</span></div>
                             <div className="mt-0.5 h-1.5 rounded-full bg-slate-100">
                               <div className="relative h-1.5 rounded-full bg-blue-200" style={{ width: `${Math.min(advised, 100)}%` }}>
                                 <div className="absolute inset-y-0 left-0 rounded-full bg-emerald-500" style={{ width: advised ? `${Math.min((done / advised) * 100, 100)}%` : "0%" }} />
@@ -215,7 +222,8 @@ function ClientTable({ clients, selectable = false }: { clients: Row[]; selectab
 function DeletedClients({ rows }: { rows: Awaited<ReturnType<typeof listDeletedClients>> }) {
   return (
     <>
-      <PageHeader title="Deleted clients" subtitle="Hidden from every screen. Their full history is kept; restore brings everything back." actions={<LinkButton href="/clients" variant="outline">Back to clients</LinkButton>} />
+      <PageHeader title="Team & access" subtitle="Deleted clients are hidden from every screen. Their full history is kept; restore brings everything back." actions={<LinkButton href="/clients" variant="outline">Back to clients</LinkButton>} />
+      <HubTabs hub="admin" active="deleted" role="ADMIN" />
       {rows.length === 0 ? <Card><div className="p-4"><EmptyState title="No deleted clients" /></div></Card> : (
         <ActionForm action={restoreClientsAction}>
           <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-white p-2 text-xs">
