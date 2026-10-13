@@ -17,6 +17,8 @@ import { SipTab } from "./_tabs/sip";
 import { ClientFileTab } from "./_tabs/client-file";
 import { TimelineTab } from "./_tabs/timeline";
 import { AuditTab } from "./_tabs/audit";
+import { ActionForm, SubmitButton } from "@/components/app/action-form";
+import { linkCallsToPlanAction } from "./actions";
 
 const TABS = ["portfolio", "tranches", "sip", "file", "history"] as const;
 type Tab = (typeof TABS)[number];
@@ -46,18 +48,47 @@ function Figure({ label, value, hint, big, className }: { label: string; value: 
   );
 }
 
-/** Sell, buy and SIP: target → advised → done (CAS) → waiting → left to advise, in one card. */
-function Rebalancing({ c, sip, closedBy }: { c: ClientSummary; sip: ClientSip; closedBy: string | null }) {
-  const rows = [
+interface RebalanceExtra {
+  migrate_target: number; migrate_advised: number; migrate_executed: number; migrate_pending: number; migrate_left: number;
+  migrate_buy_advised: number; migrate_buy_executed: number; migrate_buy_pending: number;
+  off_plan_sell_advised: number; off_plan_sell_executed: number; off_plan_sell_pending: number;
+  off_plan_buy_advised: number; off_plan_buy_executed: number; off_plan_buy_pending: number;
+}
+
+interface RebalanceRow { name: string; hint?: string; tone: string; target: number | null; advised: number; executed: number; pending: number; remaining: number | null }
+
+/**
+ * Sell, buy and SIP: target → advised → done (CAS) → waiting → left to advise, in one card.
+ * Below them, Migrate to Direct (not part of the sell/buy targets) and calls linked to no plan line.
+ */
+function Rebalancing({ c, sip, x, closedBy, relink }: { c: ClientSummary; sip: ClientSip; x: RebalanceExtra; closedBy: string | null; relink: React.ReactNode }) {
+  const rows: RebalanceRow[] = [
     { name: "Sell", tone: "text-red-700", target: c.target_sell, advised: c.advised_sell, executed: c.executed_sell, pending: c.pending_sell, remaining: c.yet_to_advise_sell },
     { name: "Buy", tone: "text-blue-700", target: c.target_buy, advised: c.advised_buy, executed: c.executed_buy, pending: c.pending_buy, remaining: c.yet_to_advise_buy },
     { name: "SIP / month", tone: "text-violet-700", target: sip.sip_monthly_target, advised: sip.sip_monthly_advised, executed: sip.sip_monthly_started, pending: Math.max(0, sip.sip_monthly_advised - sip.sip_monthly_started), remaining: sip.sip_monthly_yet_to_advise },
   ];
+  if (x.migrate_target > 0.5 || x.migrate_advised > 0.5) {
+    rows.push({
+      name: "Migrate to Direct", tone: "text-sky-700", target: x.migrate_target, advised: x.migrate_advised, executed: x.migrate_executed,
+      pending: x.migrate_pending, remaining: x.migrate_left,
+      hint: x.migrate_buy_advised > 0.5 ? `Regular redeemed or switched · ${formatINRCompact(x.migrate_buy_executed)} of ${formatINRCompact(x.migrate_buy_advised)} re-bought in Direct` : "Regular redeemed or switched",
+    });
+  }
+  if (x.off_plan_sell_advised > 0.5) {
+    rows.push({ name: "Sold, not in plan", tone: "text-slate-600", target: null, advised: x.off_plan_sell_advised, executed: x.off_plan_sell_executed, pending: x.off_plan_sell_pending, remaining: null, hint: "Calls linked to no plan line" });
+  }
+  if (x.off_plan_buy_advised > 0.5) {
+    rows.push({ name: "Bought, not in plan", tone: "text-slate-600", target: null, advised: x.off_plan_buy_advised, executed: x.off_plan_buy_executed, pending: x.off_plan_buy_pending, remaining: null, hint: "Calls linked to no plan line" });
+  }
+  const offPlan = x.off_plan_sell_advised + x.off_plan_buy_advised > 0.5;
   return (
     <section className="mt-3 rounded-xl border border-border bg-surface px-4 py-3">
       <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="text-[13px] font-semibold">Rebalancing progress</h2>
-        {closedBy ? <span className="text-xs text-muted">{closedBy}</span> : null}
+        <div className="flex items-center gap-2">
+          {offPlan ? relink : null}
+          {closedBy ? <span className="text-xs text-muted">{closedBy}</span> : null}
+        </div>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[720px] text-[13px]">
@@ -66,23 +97,27 @@ function Rebalancing({ c, sip, closedBy }: { c: ClientSummary; sip: ClientSip; c
           </thead>
           <tbody>
             {rows.map((r) => {
-              const pct = r.target > 0 ? Math.min(100, Math.round((r.executed / r.target) * 100)) : 0;
-              const adv = r.target > 0 ? Math.min(100, Math.round((r.advised / r.target) * 100)) : 0;
+              const target = r.target ?? 0;
+              const pct = target > 0 ? Math.min(100, Math.round((r.executed / target) * 100)) : 0;
+              const adv = target > 0 ? Math.min(100, Math.round((r.advised / target) * 100)) : 0;
               return (
                 <tr key={r.name} className="border-t border-border text-right num">
-                  <td className={cn("py-1.5 text-left font-semibold", r.tone)}>{r.name}</td>
-                  <td className="px-2 py-1.5 font-semibold">{formatINRCompact(r.target)}</td>
+                  <td className={cn("py-1.5 text-left font-semibold", r.tone)} title={r.hint}>
+                    {r.name}
+                    {r.hint ? <div className="text-[10.5px] font-normal text-muted">{r.hint}</div> : null}
+                  </td>
+                  <td className="px-2 py-1.5 font-semibold">{r.target == null ? "—" : formatINRCompact(r.target)}</td>
                   <td className="px-2 py-1.5 text-blue-700">{formatINRCompact(r.advised)}</td>
                   <td className="px-2 py-1.5 text-emerald-700">{formatINRCompact(r.executed)}</td>
                   <td className={cn("px-2 py-1.5", r.pending > 0.5 ? "font-medium text-amber-700" : "text-muted")}>{formatINRCompact(r.pending)}</td>
-                  <td className="px-2 py-1.5 font-semibold">{formatINRCompact(r.remaining)}</td>
+                  <td className="px-2 py-1.5 font-semibold">{r.remaining == null ? "—" : formatINRCompact(r.remaining)}</td>
                   <td className="px-2 py-1.5">
                     <div className="flex items-center gap-2">
                       <div className="relative h-1.5 flex-1 rounded-full bg-slate-100" title={`Advised ${adv}% · done ${pct}%`}>
                         <div className="absolute inset-y-0 left-0 rounded-full bg-blue-200" style={{ width: `${adv}%` }} />
                         <div className="absolute inset-y-0 left-0 rounded-full bg-emerald-500" style={{ width: `${pct}%` }} />
                       </div>
-                      <span className="w-9 text-[11px] text-muted">{r.target > 0 ? `${pct}%` : "—"}</span>
+                      <span className="w-9 text-[11px] text-muted">{target > 0 ? `${pct}%` : "—"}</span>
                     </div>
                   </td>
                 </tr>
@@ -95,14 +130,28 @@ function Rebalancing({ c, sip, closedBy }: { c: ClientSummary; sip: ClientSip; c
   );
 }
 
+const EMPTY_EXTRA: RebalanceExtra = {
+  migrate_target: 0, migrate_advised: 0, migrate_executed: 0, migrate_pending: 0, migrate_left: 0,
+  migrate_buy_advised: 0, migrate_buy_executed: 0, migrate_buy_pending: 0,
+  off_plan_sell_advised: 0, off_plan_sell_executed: 0, off_plan_sell_pending: 0,
+  off_plan_buy_advised: 0, off_plan_buy_executed: 0, off_plan_buy_pending: 0,
+};
+
 export default async function Client360(props: PageProps<"/clients/[id]">) {
   const { id } = await props.params;
   const sp = await props.searchParams;
   const raw = String(sp.tab ?? "");
   const tab: Tab = (TABS as readonly string[]).includes(raw) ? (raw as Tab) : LEGACY[raw] ?? "portfolio";
   const str = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : null);
-  const { c, bank, unchecked, sip, premium, alerts, casCount, actor } = await pageData(async (tx) => ({
+  const { c, bank, extra, unchecked, sip, premium, alerts, casCount, actor } = await pageData(async (tx) => ({
     c: await getClientSummary(tx, id),
+    extra: (await tx<RebalanceExtra[]>`
+      select migrate_target::float8 as migrate_target, migrate_advised::float8 as migrate_advised, migrate_executed::float8 as migrate_executed,
+             migrate_pending::float8 as migrate_pending, migrate_left::float8 as migrate_left,
+             migrate_buy_advised::float8 as migrate_buy_advised, migrate_buy_executed::float8 as migrate_buy_executed, migrate_buy_pending::float8 as migrate_buy_pending,
+             off_plan_sell_advised::float8 as off_plan_sell_advised, off_plan_sell_executed::float8 as off_plan_sell_executed, off_plan_sell_pending::float8 as off_plan_sell_pending,
+             off_plan_buy_advised::float8 as off_plan_buy_advised, off_plan_buy_executed::float8 as off_plan_buy_executed, off_plan_buy_pending::float8 as off_plan_buy_pending
+      from public.v_client_rebalance_extra where client_id = ${id}`)[0],
     bank: (await tx<{ in_bank: number; fresh_money: number }[]>`
       select in_bank::float8 as in_bank, fresh_money::float8 as fresh_money from public.v_client_bank where client_id = ${id}`)[0] ?? { in_bank: 0, fresh_money: 0 },
     sip: await getClientSip(tx, id),
@@ -227,7 +276,15 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
         </div>
       </section>
 
-      <Rebalancing c={c} sip={sip} closedBy={casCount > 1 ? `Tranche ${casCount - 1} closed by CAS ${formatDate(c.latest_cas_date)}` : null} />
+      <Rebalancing
+        c={c} sip={sip} x={extra ?? EMPTY_EXTRA}
+        closedBy={casCount > 1 ? `Tranche ${casCount - 1} closed by CAS ${formatDate(c.latest_cas_date)}` : null}
+        relink={isAdmin && c.active_plan_id ? (
+          <ActionForm action={linkCallsToPlanAction.bind(null, id)} className="inline">
+            <SubmitButton size="sm" variant="outline" confirm="Link the calls outside the plan to the plan line of the same fund (Sell, Migrate to Direct or Buy)?">Link calls to plan</SubmitButton>
+          </ActionForm>
+        ) : null}
+      />
 
       <nav className="sticky top-0 z-20 mt-3 flex gap-0.5 overflow-x-auto border-b border-border bg-background/95 backdrop-blur" aria-label="Client sections">
         {TABS.map((t) => (

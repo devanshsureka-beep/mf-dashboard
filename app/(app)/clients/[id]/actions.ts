@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { optStr, reqStr, runAction, type ActionResult } from "@/lib/actions";
 import { AppError } from "@/lib/errors";
 import { actionTx } from "@/lib/server";
+import { linkCallsToPlan } from "@/services/advice";
 import { addNote, completeFollowUp } from "@/services/notes";
 import { setSipStatus } from "@/services/plans";
 
@@ -37,5 +38,15 @@ export async function setSipStatusAction(clientId: string, sipId: string, _p: Ac
     await actionTx((tx) => setSipStatus(tx, sipId, status as "ADVISED" | "COMPLETED" | "CANCELLED", optStr(fd, "note")));
     revalidatePath(`/clients/${clientId}`);
     return `SIP action marked ${status.toLowerCase()}.`;
+  });
+}
+
+/** Admin: link calls outside the plan to the plan line of the same fund. */
+export async function linkCallsToPlanAction(clientId: string, _p: ActionResult | null): Promise<ActionResult> {
+  return runAction("linkCallsToPlan", async () => {
+    const r = await actionTx((tx, actor) => linkCallsToPlan(tx, actor, clientId));
+    revalidatePath(`/clients/${clientId}`);
+    if (!r.linked) return r.left ? `No plan line for the ${r.left} call(s) outside the plan.` : "No calls outside the plan.";
+    return `Linked ${r.linked} call(s) to the plan${r.left ? `; ${r.left} have no plan line for their fund` : ""}.`;
   });
 }

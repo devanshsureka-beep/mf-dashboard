@@ -62,6 +62,50 @@ export async function issueAdvice(tx: Tx, actor: Actor, input: IssueAdviceInput)
   return { batchId: batch[0].id, batchCode: batch[0].batch_code, itemIds };
 }
 
+/**
+ * The open line of the client's ACTIVE plan that a call on this fund belongs to,
+ * or null. A sell / switch goes to a Sell / Switch line first, else to a
+ * Migrate-to-Direct line of the same (Regular) fund: redeeming it is the first
+ * leg of the migration. A buy goes to a Buy line.
+ */
+export async function findPlanLine(tx: Tx, clientId: string, securityId: string, action: "BUY" | "SELL" | "SWITCH"): Promise<string | null> {
+  const row = (await tx<{ id: string }[]>`
+    select pi.id
+    from public.advisory_plan_items pi
+    join public.advisory_plans p on p.id = pi.plan_id and p.status = 'ACTIVE'
+    left join public.v_plan_item_progress v on v.plan_item_id = pi.id
+    where pi.client_id = ${clientId} and pi.security_id = ${securityId} and pi.status = 'OPEN'
+      and case when ${action} = 'BUY' then pi.action = 'BUY' else pi.action in ('SELL', 'SWITCH', 'MIGRATE') end
+    order by (pi.action = 'MIGRATE'), coalesce(v.yet_to_advise_amount, pi.target_amount) desc, pi.created_at
+    limit 1`)[0];
+  return row?.id ?? null;
+}
+
+/**
+ * Admin repair: link a client's calls that sit outside the plan to the open
+ * plan line for the same fund (see findPlanLine), e.g. calls recorded from CAS
+ * trades before Migrate-to-Direct lines could take a redemption. Audited.
+ */
+export async function linkCallsToPlan(tx: Tx, actor: Actor, clientId: string): Promise<{ linked: number; left: number }> {
+  if (actor.role !== "ADMIN") throw new AppError("Only an admin can re-link recorded calls.", "FORBIDDEN");
+  const calls = await tx<{ id: string; security_id: string; action: "BUY" | "SELL" | "SWITCH" }[]>`
+    select ai.id, ai.security_id, ai.action
+    from public.advice_items ai join public.advice_batches b on b.id = ai.advice_batch_id
+    where ai.client_id = ${clientId} and ai.plan_item_id is null and b.status = 'ACTIVE'
+      and ai.status not in ('CANCELLED', 'REVISED')
+    order by ai.created_at`;
+  if (!calls.length) return { linked: 0, left: 0 };
+  await setAuditReason(tx, "Admin correction: link calls outside the plan to the plan line of the same fund");
+  let linked = 0;
+  for (const c of calls) {
+    const line = await findPlanLine(tx, clientId, c.security_id, c.action);
+    if (!line) continue;
+    await tx`update public.advice_items set plan_item_id = ${line} where id = ${c.id}`;
+    linked += 1;
+  }
+  return { linked, left: calls.length - linked };
+}
+
 export async function getAdviceItem(tx: Tx, id: string): Promise<AdviceItemView> {
   const rows = await tx<AdviceItemView[]>`
     select v.*, c.client_code, c.full_name as client_name, pr.full_name as advisor_name,

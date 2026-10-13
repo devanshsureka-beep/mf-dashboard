@@ -11,7 +11,7 @@ import {
 import { matchTransactions, istDate, type MatchCall, type MatchTxn, type SwitchTarget, type TxnProposal } from "@/lib/domain/txn-matching";
 import type { Channel, ReconciliationMatchRow, ReconciliationRunRow } from "@/types/domain";
 import { effectiveTxnType } from "@/lib/parsers/cas";
-import { issueAdvice } from "./advice";
+import { findPlanLine, issueAdvice } from "./advice";
 
 export const TXN_ENGINE_VERSION = "v2-transactions";
 
@@ -614,11 +614,8 @@ export async function recordAdvisedOffline(
     throw new AppError(`The call must have been given on or before the trade (${m.transaction_date}).`);
   }
 
-  const plan = (await tx<{ plan_item_id: string }[]>`
-    select v.plan_item_id from public.v_plan_item_progress v
-    where v.client_id = ${m.client_id} and v.plan_status = 'ACTIVE' and v.security_id = ${m.security_id}
-      and v.side = ${action} and v.item_status = 'OPEN'
-    order by v.yet_to_advise_amount desc limit 1`)[0];
+  // The plan line for this fund: Sell / Switch, else Migrate to Direct (redeem leg), or Buy.
+  const planItemId = await findPlanLine(tx, m.client_id, m.security_id, action);
 
   await setAuditReason(tx, opts.note?.trim() || "Call given outside the dashboard; recorded from the CAS trade");
   const b = await issueAdvice(tx, actor, {
@@ -627,7 +624,7 @@ export async function recordAdvisedOffline(
     channel: opts.channel,
     notes: `Recorded after the trade: advised outside the dashboard${opts.note ? ` (${opts.note})` : ""}`,
     items: [{
-      plan_item_id: plan?.plan_item_id ?? null,
+      plan_item_id: planItemId,
       security_id: m.security_id,
       scheme_name: m.scheme_name,
       folio_number: m.folio_numbers?.[0] ?? null,
@@ -658,5 +655,5 @@ export async function recordAdvisedOffline(
       resolution_note = ${`${RECORDED_AS_ADVISED} (call ${b.batchCode})${opts.note ? `: ${opts.note}` : ""}`}
     where id = ${m.id}`;
   const res = await resolveMatch(tx, actor, ins[0].id, "CONFIRM", { note: opts.note ?? "Advised outside the dashboard" });
-  return { adviceItemId, executionId: res.executionId, planItemId: plan?.plan_item_id ?? null };
+  return { adviceItemId, executionId: res.executionId, planItemId };
 }

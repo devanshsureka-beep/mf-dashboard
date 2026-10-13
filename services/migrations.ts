@@ -2,7 +2,8 @@
  * Migrate to Direct: plan lines (action MIGRATE) that move a Regular holding to
  * the Direct plan of the same fund. Tracked as a checklist (v_migration_progress)
  * and executed through SWITCH calls linked to the line. Not part of the lump-sum
- * sell/buy targets. No Next.js imports.
+ * sell/buy targets. A redemption of the Regular plan (redeem + buy) may also
+ * be linked to the line (0022). No Next.js imports.
  */
 import type { Actor, Tx } from "@/lib/db/tx";
 import { setAuditReason } from "@/lib/db/tx";
