@@ -11,10 +11,11 @@
 -- their history. New plan lines may only be BUY, SELL, RETAIN (Keep) or the
 -- SIP actions (STOP_SIP / START_SIP); the old values stay valid for history.
 --
--- v_client_rebalance_extra (0022) now only lists calls outside the plan.
+-- v_client_rebalance_extra (0022) stays: with no MIGRATE lines left its
+-- migrate_* columns read 0; the app uses only its off_plan_* columns.
 -- =============================================================================
 
-select set_config('app.audit_reason', 'Plan lines simplified to Buy / Sell / Keep (Migrate to Direct and Switch lines converted)', true);
+do $$ begin perform set_config('app.audit_reason', 'Plan lines simplified to Buy / Sell / Keep (Migrate to Direct and Switch lines converted)', true); end $$;
 
 -- The Buy leg of each migration / switch with a known target fund.
 insert into public.advisory_plan_items
@@ -58,33 +59,3 @@ $$;
 create trigger advisory_plan_items_buy_sell_keep
   before insert or update of action on public.advisory_plan_items
   for each row execute function app.plan_item_buy_sell_keep();
-
--- Calls outside the plan only (migration columns dropped with the MIGRATE lines).
-drop view if exists public.v_client_rebalance_extra;
-create view public.v_client_rebalance_extra
-with (security_invoker = true) as
-with off as (
-  select v.client_id,
-         sum(v.effective_advised_amount) filter (where v.action <> 'BUY') as sell_advised,
-         sum(v.executed_amount) filter (where v.action <> 'BUY') as sell_executed,
-         sum(v.pending_amount) filter (where v.action <> 'BUY') as sell_pending,
-         sum(v.effective_advised_amount) filter (where v.action = 'BUY') as buy_advised,
-         sum(v.executed_amount) filter (where v.action = 'BUY') as buy_executed,
-         sum(v.pending_amount) filter (where v.action = 'BUY') as buy_pending
-  from public.v_advice_items v
-  where v.plan_item_id is null
-  group by v.client_id
-)
-select
-  c.id as client_id,
-  coalesce(off.sell_advised, 0)::numeric(18,2) as off_plan_sell_advised,
-  coalesce(off.sell_executed, 0)::numeric(18,2) as off_plan_sell_executed,
-  coalesce(off.sell_pending, 0)::numeric(18,2) as off_plan_sell_pending,
-  coalesce(off.buy_advised, 0)::numeric(18,2) as off_plan_buy_advised,
-  coalesce(off.buy_executed, 0)::numeric(18,2) as off_plan_buy_executed,
-  coalesce(off.buy_pending, 0)::numeric(18,2) as off_plan_buy_pending
-from public.clients c
-left join off on off.client_id = c.id
-where c.deleted_at is null;
-
-grant select on public.v_client_rebalance_extra to authenticated;
