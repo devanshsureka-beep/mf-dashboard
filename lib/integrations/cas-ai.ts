@@ -182,3 +182,33 @@ export async function readCasAnyPdf(bytes: Uint8Array, candidates: string[], opt
     throw new AppError(`This CAS PDF has no text (its pages are pictures), so it was sent to Claude to read, which failed: ${why} Upload the original CAS PDF from CAMS / KFintech instead.`);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Bulk onboarding: what a picture-only PDF is, and whose (a short answer)
+// ---------------------------------------------------------------------------
+const IDENTIFY_SCHEMA = obj({
+  kind: { type: "string", enum: ["CAS", "REPORT", "OTHER"], description: "CAS = CAMS / KFintech Consolidated Account Statement; REPORT = a mutual-fund advisory / rebalancing report" },
+  investor_name: T("The investor / client the document is for"),
+  pan: T("The investor's PAN if printed, else \"\""),
+  statement_date: T("CAS: statement period end, YYYY-MM-DD; else \"\""),
+});
+const identifySchema = z.object({ kind: z.enum(["CAS", "REPORT", "OTHER"]), investor_name: str, pan: str, statement_date: str });
+
+export async function askClaudeWhatPdfIs(pdf: Uint8Array, timeoutMs = 90_000): Promise<{ kind: "CAS" | "REPORT" | "OTHER"; name: string | null; pan: string | null; date: string | null }> {
+  const parsed = await callClaudeRelay({
+    model: REPORT_AI_MODEL,
+    max_tokens: 2000,
+    output_config: { effort: "low", format: { type: "json_schema", schema: IDENTIFY_SCHEMA } },
+    system: "You sort documents for an Indian mutual-fund advisory desk. Answer only from what is printed.",
+    messages: [{
+      role: "user",
+      content: [
+        { type: "document", source: { type: "base64", media_type: "application/pdf", data: Buffer.from(pdf).toString("base64") } },
+        { type: "text", text: "What is this document, and who is it for?" },
+      ],
+    }],
+  }, timeoutMs, "document");
+  const a = identifySchema.safeParse(parsed);
+  if (!a.success) throw new AppError("Claude's answer did not have the expected shape.");
+  return { kind: a.data.kind, name: textOrNull(a.data.investor_name), pan: PAN.test(a.data.pan.trim()) ? a.data.pan.trim() : null, date: isoOrNull(a.data.statement_date) };
+}

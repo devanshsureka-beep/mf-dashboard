@@ -5,7 +5,7 @@ import { readCasAnyPdf } from "@/lib/integrations/cas-ai";
 import { redirect } from "next/navigation";
 import { num, runAction, str, type ActionResult } from "@/lib/actions";
 import { casPasswordTemplate, passwordCandidates } from "@/lib/cas/password";
-import { readReportDetailed, readReportPdf } from "@/lib/cas/reader";
+
 import { fileNamePasswords } from "@/lib/cas/password";
 import { objectPath, uploadAsUser, fileFromForm } from "@/lib/storage";
 import { reportAiConfigured } from "@/lib/integrations/report-ai";
@@ -16,7 +16,8 @@ import { AppError } from "@/lib/errors";
 import { ALL_ROLES } from "@/lib/server";
 import { requireActorForAction } from "@/lib/auth/session";
 import { knownClientPhones } from "@/services/cas-intake";
-import { decideReportKind, problemsMessage, type ReportKindChoice } from "@/services/onboarding";
+import { checkDocumentsBelongTogether, decideReportKind, problemsMessage, type ReportKindChoice } from "@/services/onboarding";
+import { readReportDetailed } from "@/lib/cas/reader";
 import { checkAdvisor, hasActivePlanForPan, onboardingTx, saveOnboarding } from "./save";
 
 /**
@@ -25,6 +26,7 @@ import { checkAdvisor, hasActivePlanForPan, onboardingTx, saveOnboarding } from 
  */
 export async function onboardAction(_p: ActionResult | null, fd: FormData): Promise<ActionResult> {
   let target = "";
+  const deadline = Date.now() + 250_000; // the page allows 300 s; the rest is for saving
   const res = await runAction("onboard", async () => {
     const actor = await requireActorForAction(ALL_ROLES);
     const advisorId = str(fd, "advisor_id") || null;
@@ -42,26 +44,58 @@ export async function onboardAction(_p: ActionResult | null, fd: FormData): Prom
       fileName: casFile.fileName,
       phones,
     });
-    const { parsed: cas, passwordProtected } = await readCasAnyPdf(casFile.bytes, candidates);
+    // A picture-only CAS is read by Claude; the report gets the rest of the time.
+    const { parsed: cas, passwordProtected } = await readCasAnyPdf(casFile.bytes, candidates, { timeoutMs: Math.min(200_000, deadline - Date.now()) });
+    if (!cas.investor.pan) throw new AppError("The CAS shows no PAN, so the client cannot be identified.");
 
-    const read = await readReportPdf(reportFile.bytes, candidates);
+    // 1) Built-in readers (a report they cannot read, or one that is only pictures, goes to Claude below).
+    const read = await readReportDetailed(reportFile.bytes, candidates);
     const fresh = num(fd, "fresh_money");
-    const report = fresh && fresh > 0 ? { ...read, freshMoney: fresh } : read;
+    const withFresh = (r: AdvisoryReportParse): AdvisoryReportParse => (fresh && fresh > 0 ? { ...r, freshMoney: fresh } : r);
+    let report: AdvisoryReportParse | null = read.report ? withFresh(read.report) : null;
+    if (report) {
+      const together = checkDocumentsBelongTogether(cas, report);
+      if (together.problem && report.clientName) throw new AppError(`${together.problem} Upload this client's own report with this CAS.`);
+    }
     const choiceRaw = str(fd, "report_kind");
     const choice: ReportKindChoice = choiceRaw === "FULL" || choiceRaw === "ADDITIONAL" ? choiceRaw : "AUTO";
     // The CAS may be newer than the report (the client already acted on part of it): differences are asked on the plan.
     const newerCas = str(fd, "cas_kind") === "NEWER";
-    const decided = decideReportKind(cas, report, { choice, hasActivePlan: await hasActivePlanForPan(actor, cas.investor.pan), newerCas });
-    if (decided.problems.length) {
+    const hasActivePlan = await hasActivePlanForPan(actor, cas.investor.pan);
+    const check = (r: AdvisoryReportParse) => decideReportKind(cas, withFresh(r), { choice, hasActivePlan, newerCas });
+    const first = report ? check(report) : null;
+    let kind = first?.kind ?? "FULL";
+    let problems = first ? first.problems : [`The built-in reader could not read the report: ${read.error}`];
+
+    // 2) Claude for what did not reconcile, as in bulk onboarding: points still open go back to Claude,
+    //    and every answer passes the same CAS tie-out.
+    let usedClaude = false;
+    if (problems.length && reportAiConfigured()) {
+      const r = await resolveWithClaude({
+        cas, reportPdf: reportFile.bytes, draft: report, readerError: read.error, problems, deadline, reportFileName: reportFile.fileName, check,
+      });
+      usedClaude = r.rounds > 0;
+      if (r.status === "WRONG_PAIR") throw new AppError(`${r.message} Upload this client's own report with this CAS.`);
+      if (r.status === "RESOLVED") {
+        report = withFresh(r.report);
+        kind = r.kind;
+        problems = [];
+      } else {
+        problems = r.problems.length ? r.problems : problems;
+        if (r.error && !usedClaude) problems = [`Claude could not help: ${r.error}`, ...problems];
+      }
+    }
+    if (problems.length || !report) {
       // A CAS dated after the report: the client has probably acted on it already.
-      const reportDate = report.valuationDate ?? report.casPeriod?.to ?? report.preparedDate;
+      const reportDate = report ? report.valuationDate ?? report.casPeriod?.to ?? report.preparedDate : null;
       const hint = !newerCas && reportDate && cas.valuationDate && cas.valuationDate > reportDate
         ? [`This CAS (${cas.valuationDate}) is newer than the report (${reportDate}). If the client already acted on part of the report, choose "Which CAS is this? → A newer CAS": each difference then becomes a question on the plan instead of blocking.`]
         : [];
-      throw new AppError(problemsMessage([...hint, ...decided.problems]));
+      const lead = usedClaude ? ["Claude re-read the report, but these points still do not match the CAS:"] : [];
+      throw new AppError(problemsMessage([...hint, ...lead, ...problems]));
     }
 
-    const out = await saveOnboarding(actor, { cas, casFile, passwordProtected, report, reportFile, advisorId, phone: mobile, kind: decided.kind, newerCas });
+    const out = await saveOnboarding(actor, { cas, casFile, passwordProtected, report, reportFile, advisorId, phone: mobile, kind, newerCas });
     target = `/clients/${out.clientId}/plans/${out.planId}?onboarded=${out.created ? "new" : "existing"}`;
   });
   if (!res.ok) return res;

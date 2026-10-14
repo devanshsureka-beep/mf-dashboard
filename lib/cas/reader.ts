@@ -72,6 +72,8 @@ export type PdfIdentity =
   | { kind: "CAS_UNREADABLE"; error: string }
   | { kind: "REPORT"; report: AdvisoryReportParse | null; error: string | null; nameGuess: string | null }
   | { kind: "LOCKED" }
+  /** Pages are pictures (scanned / "Microsoft Print to PDF"): no text to tell what it is. */
+  | { kind: "IMAGE_ONLY"; locked: boolean }
   | { kind: "UNREADABLE"; error: string };
 
 const looksLikeCas = (text: string) =>
@@ -100,7 +102,7 @@ export async function identifyPdf(bytes: Uint8Array, candidates: string[]): Prom
   } catch {
     return { kind: "UNREADABLE", error: "The PDF opened but its text could not be read (scanned image?)." };
   }
-  if (imageOnly(lines)) return { kind: "UNREADABLE", error: IMAGE_ONLY_CAS.replace("This CAS PDF", "This PDF").replace("CAS PDF as received", "PDF as received") };
+  if (imageOnly(lines)) return { kind: "IMAGE_ONLY", locked: password !== null };
   // Try the CAS reader, then the report readers; the words on the page decide only when both fail
   // (reports often quote "Consolidated Account Statement" and CAMS/KFintech too).
   let casError: string | null = null;

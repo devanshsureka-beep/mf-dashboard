@@ -3,7 +3,9 @@
 import { str } from "@/lib/actions";
 import { readCasAnyPdf } from "@/lib/integrations/cas-ai";
 import { casPasswordTemplate, passwordCandidates } from "@/lib/cas/password";
-import { readReportPdf } from "@/lib/cas/reader";
+import { readReportDetailed } from "@/lib/cas/reader";
+import { reportAiConfigured } from "@/lib/integrations/report-ai";
+import { resolveWithClaude } from "@/services/report-resolve";
 import { documentChecks, type DocumentCheck } from "@/lib/domain/document-checks";
 import type { PlanItemDraft, SipItemDraft } from "@/lib/domain/report-plan";
 import { AppError, logServerError, toUserMessage } from "@/lib/errors";
@@ -42,9 +44,22 @@ export async function checkDocumentsAction(fd: FormData): Promise<CheckResult> {
       fileName: casFile.fileName,
       phones,
     });
-    const { parsed: cas } = await readCasAnyPdf(casFile.bytes, candidates);
-    const report = await readReportPdf(reportFile.bytes, candidates);
-    const preview = previewOnboarding(cas, report);
+    const deadline = Date.now() + 270_000; // the page allows 300 s
+    const { parsed: cas } = await readCasAnyPdf(casFile.bytes, candidates, { timeoutMs: Math.min(200_000, deadline - Date.now()) });
+    // Same as onboarding: the built-in reader, then Claude for a report it cannot read or tie out.
+    const read = await readReportDetailed(reportFile.bytes, candidates);
+    let report = read.report;
+    let preview = report ? previewOnboarding(cas, report) : null;
+    if ((!report || preview!.problems.length) && reportAiConfigured()) {
+      const r = await resolveWithClaude({
+        cas, reportPdf: reportFile.bytes, draft: report, readerError: read.error,
+        problems: preview?.problems ?? [`The built-in reader could not read the report: ${read.error}`], deadline, reportFileName: reportFile.fileName,
+      });
+      if (r.status === "WRONG_PAIR") throw new AppError(`${r.message} Use this client's own report with this CAS.`);
+      if (r.status === "RESOLVED") report = r.report;
+      preview = report ? previewOnboarding(cas, report) : null;
+    }
+    if (!report || !preview) throw new AppError(`The advisory report could not be read: ${read.error ?? "unknown layout"}`);
     const existing = await actionTx((tx) => findClientByPan(tx, cas.investor.pan));
     // Summary straight from the CAS (also when the documents do not match).
     const held = cas.schemes.filter((x) => (x.closingUnits ?? 0) > 0.0005 && (!cas.investor.pan || !x.pan || x.pan === cas.investor.pan));

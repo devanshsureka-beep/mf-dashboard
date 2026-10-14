@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { readCasAnyPdf } from "@/lib/integrations/cas-ai";
+import { askClaudeWhatPdfIs, readCasAnyPdf } from "@/lib/integrations/cas-ai";
 import { str } from "@/lib/actions";
 import { casPasswordTemplate, fileNamePasswords, passwordCandidates } from "@/lib/cas/password";
 import { identifyPdf, readReportDetailed } from "@/lib/cas/reader";
@@ -71,6 +71,19 @@ export async function identifyBulkFileAction(fd: FormData): Promise<BulkFileInfo
         };
       case "LOCKED":
         return { ...base, kind: "LOCKED", message: "Password protected, and no part of the file name opened it. Rename the file to include the password." };
+      case "IMAGE_ONLY": {
+        // Pages are pictures: Claude says what it is and whose; the pair step then reads it in full.
+        if (id.locked) return { ...base, message: "Its pages are pictures and it is password protected, so it cannot be read. Upload the original PDF." };
+        if (!reportAiConfigured()) return { ...base, message: "Its pages are pictures (scanned / \"Microsoft Print to PDF\") and the Claude reader is not set up. Upload the original PDF." };
+        const what = await askClaudeWhatPdfIs(file.bytes);
+        if (what.kind === "OTHER") return { ...base, message: "Its pages are pictures, and Claude says it is neither a CAS nor an advisory report." };
+        const existing = what.kind === "CAS" && what.pan ? await run((tx) => findClientByPan(tx, what.pan)) : null;
+        return {
+          ...base, kind: what.kind, name: what.name, panMasked: what.pan ? maskPan(what.pan) : null, casDate: what.kind === "CAS" ? what.date : null,
+          existingClient: existing ? `${existing.full_name} (${existing.client_code})` : null,
+          message: what.kind === "CAS" ? "Pages are pictures: Claude will read this CAS (its snapshot then needs a check)." : "Pages are pictures: Claude will read this report.",
+        };
+      }
       case "CAS_UNREADABLE":
         return { ...base, message: `A CAS, but it could not be read: ${id.error}` };
       default:
@@ -117,7 +130,7 @@ export async function onboardBulkPairAction(fd: FormData): Promise<BulkOnboardRo
     if (casUpload.mimeType !== "application/pdf" || reportUpload.mimeType !== "application/pdf") return fail("FAILED", "Both files must be PDFs.");
 
     const casCandidates = await candidatesFor(run, casUpload.fileName);
-    const { parsed: cas, passwordProtected } = await readCasAnyPdf(casUpload.bytes, casCandidates);
+    const { parsed: cas, passwordProtected } = await readCasAnyPdf(casUpload.bytes, casCandidates, { timeoutMs: Math.min(200_000, deadline - Date.now()) });
     if (!cas.investor.pan) return fail("FAILED", "The CAS shows no PAN, so the client cannot be identified.");
 
     // Same report already onboarded for this client: nothing to do.
