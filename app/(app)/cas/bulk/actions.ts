@@ -7,7 +7,7 @@ import { readCasPdf } from "@/lib/cas/reader";
 import { AppError, logServerError, toUserMessage } from "@/lib/errors";
 import { actionTx } from "@/lib/server";
 import { maskPan } from "@/lib/format";
-import { objectPath, prepareUpload, uploadAsUser } from "@/lib/storage";
+import { objectPath, uploadAsUser, fileFromForm, formFileName } from "@/lib/storage";
 import { findClientByPan, ingestParsedCas, isDuplicateCas, knownClientPhones } from "@/services/cas-intake";
 
 export interface BulkCasRow {
@@ -32,10 +32,9 @@ export interface BulkCasRow {
  * stored or logged.
  */
 export async function processCasFileAction(fd: FormData): Promise<BulkCasRow> {
-  const f = fd.get("file");
-  const fileName = f instanceof File ? f.name : "file";
+  const fileName = formFileName(fd, "file");
   try {
-    const file = await prepareUpload(f as File | null);
+    const file = await fileFromForm(fd, "file");
     if (file.mimeType !== "application/pdf") throw new AppError("A CAS must be a PDF.");
 
     const phones = await actionTx((tx) => knownClientPhones(tx));

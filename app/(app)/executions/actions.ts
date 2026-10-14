@@ -5,7 +5,7 @@ import { num, optStr, reqStr, runAction, str, type ActionResult } from "@/lib/ac
 import { AppError } from "@/lib/errors";
 import { todayIST } from "@/lib/format";
 import { actionTx } from "@/lib/server";
-import { objectPath, prepareUpload, uploadAsUser } from "@/lib/storage";
+import { fileFromForm, formHasFile, objectPath, uploadAsUser, type PreparedFile } from "@/lib/storage";
 import { registerDocument } from "@/services/documents";
 import { confirmPendingExecution, getAdviceItem, recordExecution, voidExecution } from "@/services/executions";
 import { VERIFICATION_TYPES } from "@/types/domain";
@@ -16,16 +16,15 @@ export async function recordExecutionAction(adviceItemId: string, _p: ActionResu
     if (!VERIFICATION_TYPES.includes(verification)) throw new AppError("Invalid verification type (CAS verification happens only through reconciliation).");
     const date = str(fd, "execution_date") || todayIST();
     const status = (str(fd, "status") || "EXECUTED") as "EXECUTED" | "PENDING";
-    const proof = fd.get("proof");
-    const hasProof = proof instanceof File && proof.size > 0;
+    const hasProof = formHasFile(fd, "proof");
     if (verification === "PROOF_VERIFIED" && !hasProof) throw new AppError("Attach the proof document for PROOF_VERIFIED executions.");
 
     // Upload proof first (outside the DB transaction); the DB row references it.
-    let prepared: Awaited<ReturnType<typeof prepareUpload>> | null = null;
+    let prepared: PreparedFile | null = null;
     let path: string | null = null;
     const advice = await actionTx((tx) => getAdviceItem(tx, adviceItemId), { roles: ["ADMIN"] });
     if (hasProof) {
-      prepared = await prepareUpload(proof as File);
+      prepared = await fileFromForm(fd, "proof");
       path = objectPath(advice.client_id, "EXECUTION_PROOF", prepared);
       await uploadAsUser(path, prepared);
     }

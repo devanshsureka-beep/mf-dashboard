@@ -7,7 +7,7 @@ import { AppError } from "@/lib/errors";
 import { advisoryReportResultSchema } from "@/lib/integrations/contracts";
 import { n8nConfigured, notify, triggerAdvisoryParse } from "@/lib/integrations/n8n";
 import { actionTx, ADVISORY_ROLES } from "@/lib/server";
-import { objectPath, prepareUpload, signedUrlForService, uploadAsUser } from "@/lib/storage";
+import { objectPath, signedUrlForService, uploadAsUser, fileFromForm } from "@/lib/storage";
 import { getClientSummary } from "@/services/clients";
 import { registerDocument } from "@/services/documents";
 import { ingestAdvisoryReport } from "@/services/plans";
@@ -18,7 +18,7 @@ export async function uploadDocumentAction(clientId: string, _p: ActionResult | 
   return runAction("uploadDocument", async () => {
     const type = reqStr(fd, "document_type", "Type");
     if (!TYPES.includes(type)) throw new AppError("Invalid document type (upload CAS files from the CAS page).");
-    const file = await prepareUpload(fd.get("file") as File | null);
+    const file = await fileFromForm(fd, "file");
     const client = await actionTx((tx) => getClientSummary(tx, clientId));
     const path = objectPath(clientId, type, file);
     const extract = type === "ADVISORY_REPORT" && str(fd, "extract") === "yes" && n8nConfigured.advisoryParse();

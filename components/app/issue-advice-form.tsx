@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useMemo, useState } from "react";
+import { safeAction } from "@/lib/safe-action";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select, Textarea } from "@/components/ui/form";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
@@ -41,7 +42,8 @@ export function IssueAdviceForm({
   preselect?: string | null;
   advisors?: { id: string; full_name: string }[];
 }) {
-  const [state, formAction, pending] = useActionState(action, null);
+  const safe = useMemo(() => safeAction(action), [action]);
+  const [state, formAction, pending] = useActionState(safe, null);
   const navOf = useMemo(() => new Map(holdings.map((h) => [h.security_id, h.nav])), [holdings]);
   const unitsOf = useMemo(() => new Map(holdings.map((h) => [h.security_id, h.units])), [holdings]);
   const visible = planItems.filter((p) => side === "ALL" || p.side === side);

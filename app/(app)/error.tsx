@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect } from "react";
+import { transportError } from "@/lib/safe-action";
 
 // A tab opened before a new deploy asks for files the deploy replaced; reloading picks up the new version.
 const STALE = /ChunkLoadError|Loading (CSS )?chunk|dynamically imported module|Failed to load chunk|server action|deployment/i;
@@ -31,7 +32,7 @@ export default function AppError({ error, retry }: { error: Error & { digest?: s
         Nothing was saved by the step that failed. Try again; if it keeps happening, note what you clicked and share the reference below.
       </p>
       {error.digest ? <p className="mt-2 text-xs text-muted">Reference: <span className="num">{error.digest}</span></p>
-        : error.message ? <p className="mt-2 break-words text-xs text-muted">In the browser: {error.message.slice(0, 200)}</p> : null}
+        : error.message ? <p className="mt-2 break-words text-xs text-muted">{/unexpected response|server action/i.test(error.message) ? transportError(error) : `In the browser: ${error.message.slice(0, 200)}`}</p> : null}
       <div className="mt-4 flex justify-center gap-2">
         <button type="button" onClick={() => retry()} className="rounded-md bg-brand px-3 py-1.5 text-sm font-medium text-white">Try again</button>
         <Link href="/" className="rounded-md px-3 py-1.5 text-sm ring-1 ring-border">Go to Overview</Link>

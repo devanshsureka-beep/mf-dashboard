@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useMemo, useState } from "react";
+import { safeAction, transportError } from "@/lib/safe-action";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select, Textarea } from "@/components/ui/form";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +14,8 @@ import type { BulkLine } from "@/services/bulk-advice";
 import { CHANNELS } from "@/types/domain";
 import { issueBulkAction, previewBulkAction } from "./actions";
 
+const safeIssue = safeAction(issueBulkAction);
+
 export interface BulkClient { id: string; name: string; code: string; advisor: string | null; risk: string | null; value: number; moneyLeft: number; hasPlan: boolean }
 
 export function BulkCallForm({ clients, searchFunds, initial = [] }: { clients: BulkClient[]; searchFunds: (q: string) => Promise<FundOption[]>; initial?: string[] }) {
@@ -22,7 +25,7 @@ export function BulkCallForm({ clients, searchFunds, initial = [] }: { clients: 
   const [mode, setMode] = useState<BulkMode>("FIXED");
   const [value, setValue] = useState("");
   const [preview, setPreview] = useState<{ lines: BulkLine[]; error?: string; key: string } | null>(null);
-  const [state, formAction, pending] = useActionState(issueBulkAction, null);
+  const [state, formAction, pending] = useActionState(safeIssue, null);
 
   const spec = useMemo(() => ({ clientIds: [...selected], fundRef: fund?.value ?? "", action, mode, value: Number(value) || 0 }), [selected, fund, action, mode, value]);
   const specKey = JSON.stringify(spec);
@@ -32,7 +35,12 @@ export function BulkCallForm({ clients, searchFunds, initial = [] }: { clients: 
     if (!ready) return;
     let live = true;
     const t = setTimeout(async () => {
-      const r = await previewBulkAction(JSON.parse(specKey));
+      let r: Awaited<ReturnType<typeof previewBulkAction>>;
+      try {
+        r = await previewBulkAction(JSON.parse(specKey));
+      } catch (e) {
+        r = { lines: [], error: transportError(e) };
+      }
       if (live) setPreview({ ...r, key: specKey });
     }, 350);
     return () => {

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { stageLargeFiles } from "@/lib/stage-files";
 import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -58,6 +59,7 @@ export function BulkOnboarder({ advisors, defaultAdvisorId }: { advisors: { id: 
       const fd = new FormData();
       fd.set("file", files[i]);
       try {
+        await stageLargeFiles(fd);
         got[i] = await identifyBulkFileAction(fd);
       } catch {
         got[i] = { fileName: files[i].name, kind: "UNREADABLE", name: null, panMasked: null, casDate: null, readerOk: false, existingClient: null, message: "Upload failed (network or file too large)." };
@@ -86,6 +88,7 @@ export function BulkOnboarder({ advisors, defaultAdvisorId }: { advisors: { id: 
       fd.set("report_kind", p.kind);
       let res: Result;
       try {
+        await stageLargeFiles(fd);
         res = await onboardBulkPairAction(fd);
       } catch {
         res = { outcome: "FAILED", message: "The request failed (network, timeout or file too large). Retry this client.", problems: [], usedClaude: false, corrections: [] };

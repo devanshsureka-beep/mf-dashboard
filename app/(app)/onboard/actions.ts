@@ -6,7 +6,7 @@ import { num, runAction, str, type ActionResult } from "@/lib/actions";
 import { casPasswordTemplate, passwordCandidates } from "@/lib/cas/password";
 import { readCasPdf, readReportDetailed, readReportPdf } from "@/lib/cas/reader";
 import { fileNamePasswords } from "@/lib/cas/password";
-import { objectPath, uploadAsUser } from "@/lib/storage";
+import { objectPath, uploadAsUser, fileFromForm } from "@/lib/storage";
 import { reportAiConfigured } from "@/lib/integrations/report-ai";
 import type { AdvisoryReportParse } from "@/lib/parsers/advisory-report";
 import { createNewInvestor, newInvestorMessage, newInvestorPlan, previewNewInvestor } from "@/services/onboarding";
@@ -14,7 +14,6 @@ import { resolveWithClaude } from "@/services/report-resolve";
 import { AppError } from "@/lib/errors";
 import { ALL_ROLES } from "@/lib/server";
 import { requireActorForAction } from "@/lib/auth/session";
-import { prepareUpload } from "@/lib/storage";
 import { knownClientPhones } from "@/services/cas-intake";
 import { decideReportKind, problemsMessage, type ReportKindChoice } from "@/services/onboarding";
 import { checkAdvisor, hasActivePlanForPan, onboardingTx, saveOnboarding } from "./save";
@@ -29,8 +28,8 @@ export async function onboardAction(_p: ActionResult | null, fd: FormData): Prom
     const actor = await requireActorForAction(ALL_ROLES);
     const advisorId = str(fd, "advisor_id") || null;
     await checkAdvisor(actor, advisorId);
-    const casFile = await prepareUpload(fd.get("cas") as File | null);
-    const reportFile = await prepareUpload(fd.get("report") as File | null);
+    const casFile = await fileFromForm(fd, "cas");
+    const reportFile = await fileFromForm(fd, "report");
     if (casFile.mimeType !== "application/pdf" || reportFile.mimeType !== "application/pdf") throw new AppError("Both files must be PDFs.");
     const secret = str(fd, "password") || null;
     const mobile = str(fd, "mobile").replace(/\D/g, "").slice(-10) || null;
@@ -80,7 +79,7 @@ export async function onboardNewInvestorAction(_p: ActionResult | null, fd: Form
     const actor = await requireActorForAction(ALL_ROLES);
     const advisorId = str(fd, "advisor_id") || null;
     await checkAdvisor(actor, advisorId);
-    const reportFile = await prepareUpload(fd.get("report") as File | null);
+    const reportFile = await fileFromForm(fd, "report");
     if (reportFile.mimeType !== "application/pdf") throw new AppError("The report must be a PDF.");
     const who = {
       fullName: str(fd, "full_name"),

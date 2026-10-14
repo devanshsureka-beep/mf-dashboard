@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { stageLargeFiles } from "@/lib/stage-files";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -47,6 +48,7 @@ export function BulkUploader() {
       if (password) fd.set("password", password);
       let res: Row;
       try {
+        await stageLargeFiles(fd);
         res = await processCasFileAction(fd);
       } catch {
         res = { ok: false, fileName: list[i].name, outcome: "ERROR", message: "Upload failed (network or file too large)." };

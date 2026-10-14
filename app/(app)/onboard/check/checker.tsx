@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { stageLargeFiles } from "@/lib/stage-files";
 import { useState } from "react";
 import { CheckCircle2, AlertTriangle, XCircle } from "lucide-react";
 import { Money } from "@/components/app/money";
@@ -31,7 +32,9 @@ export function Checker() {
     setBusy(true);
     setResult(null);
     try {
-      setResult(await checkDocumentsAction(new FormData(e.currentTarget)));
+      const fd = new FormData(e.currentTarget);
+      await stageLargeFiles(fd);
+      setResult(await checkDocumentsAction(fd));
     } catch {
       setResult({ ok: false, error: "The check could not run (network or file too large). Please try again." });
     } finally {

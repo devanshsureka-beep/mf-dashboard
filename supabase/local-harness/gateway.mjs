@@ -13,7 +13,7 @@
 // =============================================================================
 import http from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { dirname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -61,7 +61,7 @@ function safePath(objectPath) {
 }
 
 function json(res, status, body) {
-  res.writeHead(status, { "content-type": "application/json" });
+  res.writeHead(status, { "content-type": "application/json", "access-control-allow-origin": "*" });
   res.end(JSON.stringify(body));
 }
 
@@ -85,6 +85,18 @@ function extractMultipartFile(buf, contentType) {
 }
 
 async function handleStorage(req, res, path, query) {
+  // Signed upload (browser PUTs a large file straight to storage; no bearer needed)
+  let u = /^\/object\/upload\/sign\/(.+)$/.exec(path);
+  if (u && req.method === "PUT") {
+    if (!checkToken(`upload:${u[1]}`, query.get("token"))) return json(res, 400, { error: "InvalidSignature" });
+    const file = safePath(u[1]);
+    if (existsSync(file)) return json(res, 400, { statusCode: "409", error: "Duplicate", message: "The resource already exists" });
+    const raw = await readBody(req);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, extractMultipartFile(raw, req.headers["content-type"]));
+    return json(res, 200, { Key: u[1] });
+  }
+
   // Signed URL download (no bearer needed)
   let m = /^\/object\/sign\/(.+)$/.exec(path);
   if (m && req.method === "GET") {
@@ -97,6 +109,17 @@ async function handleStorage(req, res, path, query) {
 
   const auth = req.headers.authorization?.replace(/^Bearer /, "");
   if (!auth || !verifyJwt(auth)) return json(res, 403, { error: "Unauthorized", message: "invalid JWT" });
+
+  u = /^\/object\/upload\/sign\/(.+)$/.exec(path);
+  if (u && req.method === "POST") {
+    return json(res, 200, { url: `/object/upload/sign/${u[1]}?token=${signToken(`upload:${u[1]}`, 7200)}` });
+  }
+  const del = /^\/object\/([^/]+)$/.exec(path);
+  if (del && req.method === "DELETE") {
+    const body = JSON.parse((await readBody(req)).toString() || "{}");
+    for (const pfx of body.prefixes ?? []) rmSync(safePath(`${del[1]}/${pfx}`), { force: true });
+    return json(res, 200, []);
+  }
 
   if (m && req.method === "POST") {
     const body = JSON.parse((await readBody(req)).toString() || "{}");

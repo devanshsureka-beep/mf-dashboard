@@ -1,5 +1,5 @@
 import "server-only";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
 import { AppError } from "@/lib/errors";
 
@@ -26,6 +26,59 @@ export async function prepareUpload(file: File | null): Promise<PreparedFile> {
     throw new AppError("The file does not look like a valid PDF.");
   }
   return { bytes, sha256: createHash("sha256").update(bytes).digest("hex"), fileName: file.name, mimeType, size: file.size };
+}
+
+/*
+ * Large files skip the app server: Vercel refuses a request body over 4.5 MB
+ * before the app sees it. The browser asks for a one-time signed upload link,
+ * puts the file straight into storage under staging/<user>/, and the form
+ * sends only that path. The action then reads (and removes) the staged file.
+ */
+const STAGING = "staging";
+
+export async function createStagedUpload(userId: string): Promise<{ path: string; url: string }> {
+  const path = `${STAGING}/${userId}/${randomUUID()}.bin`;
+  const { data, error } = await createSupabaseAdminClient().storage.from(BUCKET).createSignedUploadUrl(path);
+  if (error || !data) throw new AppError(`Could not prepare the upload: ${error?.message ?? "no link"}`);
+  return { path, url: data.signedUrl };
+}
+
+async function currentUserId(): Promise<string> {
+  const { data } = await (await createSupabaseServerClient()).auth.getUser();
+  if (!data.user) throw new AppError("Sign in again to upload.", "FORBIDDEN");
+  return data.user.id;
+}
+
+async function takeStagedUpload(path: string, fileName: string, mimeType: string): Promise<PreparedFile> {
+  const userId = await currentUserId();
+  // Only the signed-in user's own staged files, by the exact shape we hand out.
+  if (!new RegExp(`^${STAGING}/${userId}/[0-9a-f-]{36}\\.bin$`).test(path)) throw new AppError("The uploaded file was not found. Choose it again.");
+  const store = createSupabaseAdminClient().storage.from(BUCKET);
+  const { data, error } = await store.download(path);
+  if (error || !data) throw new AppError("The uploaded file was not found. Choose it again.");
+  await store.remove([path]);
+  return prepareUpload(new File([await data.arrayBuffer()], fileName, { type: mimeType }));
+}
+
+/** The form's file `name`: sent in the request, or staged in storage by the browser (large files). */
+export async function fileFromForm(fd: FormData, name: string): Promise<PreparedFile> {
+  const staged = fd.get(`${name}__staged`);
+  if (typeof staged === "string" && staged) {
+    return takeStagedUpload(staged, String(fd.get(`${name}__name`) || "upload.pdf"), String(fd.get(`${name}__type`) || "application/pdf"));
+  }
+  return prepareUpload(fd.get(name) as File | null);
+}
+
+/** Whether the form carries a non-empty file `name` (sent or staged). */
+export function formHasFile(fd: FormData, name: string): boolean {
+  const f = fd.get(name);
+  return Boolean(fd.get(`${name}__staged`)) || (f instanceof File && f.size > 0);
+}
+
+/** The original file name of the form's file `name`. */
+export function formFileName(fd: FormData, name: string): string {
+  const f = fd.get(name);
+  return f instanceof File ? f.name : String(fd.get(`${name}__name`) || "file");
 }
 
 export function objectPath(clientId: string, type: string, f: Pick<PreparedFile, "sha256" | "fileName">): string {

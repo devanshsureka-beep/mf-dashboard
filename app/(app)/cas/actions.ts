@@ -7,7 +7,7 @@ import { AppError } from "@/lib/errors";
 import { casParseResultSchema, CAS_SOURCES } from "@/lib/integrations/contracts";
 import { n8nConfigured, notify, triggerCasParse } from "@/lib/integrations/n8n";
 import { actionTx } from "@/lib/server";
-import { downloadAsUser, objectPath, prepareUpload, signedUrlForService, uploadAsUser } from "@/lib/storage";
+import { downloadAsUser, objectPath, signedUrlForService, uploadAsUser, fileFromForm } from "@/lib/storage";
 import { getClientSummary } from "@/services/clients";
 import {
   confirmSnapshot, findDuplicateDocument, ingestCasParseResult, registerCasDocument, rejectSnapshot, setCasStatus,
@@ -20,7 +20,7 @@ export async function uploadCasAction(clientId: string, _p: ActionResult | null,
   const res = await runAction("uploadCas", async () => {
     const source = str(fd, "source") || "OTHER";
     if (!(CAS_SOURCES as readonly string[]).includes(source)) throw new AppError("Invalid source.");
-    const file = await prepareUpload(fd.get("file") as File | null);
+    const file = await fileFromForm(fd, "file");
     if (file.mimeType !== "application/pdf") throw new AppError("A CAS must be a PDF.");
     // The password lives only in this request's memory. Never stored, never logged.
     const password = str(fd, "password") || null;

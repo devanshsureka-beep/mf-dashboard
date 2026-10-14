@@ -7,7 +7,7 @@ import { documentChecks, type DocumentCheck } from "@/lib/domain/document-checks
 import type { PlanItemDraft, SipItemDraft } from "@/lib/domain/report-plan";
 import { AppError, logServerError, toUserMessage } from "@/lib/errors";
 import { actionTx } from "@/lib/server";
-import { prepareUpload } from "@/lib/storage";
+import { fileFromForm } from "@/lib/storage";
 import { findClientByPan, knownClientPhones } from "@/services/cas-intake";
 import { previewOnboarding } from "@/services/onboarding";
 
@@ -31,8 +31,8 @@ export type CheckResult =
  */
 export async function checkDocumentsAction(fd: FormData): Promise<CheckResult> {
   try {
-    const casFile = await prepareUpload(fd.get("cas") as File | null);
-    const reportFile = await prepareUpload(fd.get("report") as File | null);
+    const casFile = await fileFromForm(fd, "cas");
+    const reportFile = await fileFromForm(fd, "report");
     if (casFile.mimeType !== "application/pdf" || reportFile.mimeType !== "application/pdf") throw new AppError("Both files must be PDFs.");
     const phones = await actionTx((tx) => knownClientPhones(tx));
     const candidates = passwordCandidates({

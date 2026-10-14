@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { optStr, reqNum, reqStr, runAction, type ActionResult } from "@/lib/actions";
 import { actionTx, ADVISORY_ROLES } from "@/lib/server";
-import { objectPath, prepareUpload, uploadAsUser } from "@/lib/storage";
+import { objectPath, uploadAsUser, fileFromForm, formHasFile } from "@/lib/storage";
 import { addAgreement, addPayment, refundPayment, saveReportNotes, setAgreementStatus, validateAgreement } from "@/services/client-record";
 import { registerDocument } from "@/services/documents";
 
@@ -18,8 +18,7 @@ export async function addAgreementAction(clientId: string, _p: ActionResult | nu
       status: optStr(fd, "status") ?? "SIGNED", notes: optStr(fd, "notes"),
     };
     validateAgreement(input); // before the file is stored
-    const f = fd.get("file");
-    const file = f instanceof File && f.size > 0 ? await prepareUpload(f) : null;
+    const file = formHasFile(fd, "file") ? await fileFromForm(fd, "file") : null;
     const path = file ? objectPath(clientId, "OTHER", file) : null;
     if (file && path) await uploadAsUser(path, file);
     // The document record and the agreement are saved together.

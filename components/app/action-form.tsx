@@ -1,10 +1,11 @@
 "use client";
 
-import { useActionState, useEffect, useRef } from "react";
+import { useActionState, useEffect, useMemo, useRef } from "react";
 import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
 import type { ActionResult } from "@/lib/actions";
 import { cn } from "@/lib/utils";
+import { safeAction } from "@/lib/safe-action";
 
 type Action = (prev: ActionResult | null, formData: FormData) => Promise<ActionResult>;
 
@@ -42,7 +43,8 @@ export function ActionForm({ action, children, className, resetOnSuccess = false
   className?: string;
   resetOnSuccess?: boolean;
 }) {
-  const [state, formAction] = useActionState(action, null);
+  const safe = useMemo(() => safeAction(action), [action]);
+  const [state, formAction] = useActionState(safe, null);
   const ref = useRef<HTMLFormElement>(null);
   useEffect(() => {
     if (state?.ok && resetOnSuccess) ref.current?.reset();

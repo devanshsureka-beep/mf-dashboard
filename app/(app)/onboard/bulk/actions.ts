@@ -9,7 +9,7 @@ import { reportAiConfigured } from "@/lib/integrations/report-ai";
 import { requireActorForAction } from "@/lib/auth/session";
 import { ALL_ROLES } from "@/lib/server";
 import { maskPan } from "@/lib/format";
-import { prepareUpload, type PreparedFile } from "@/lib/storage";
+import { type PreparedFile, fileFromForm, formFileName } from "@/lib/storage";
 import type { AdvisoryReportParse } from "@/lib/parsers/advisory-report";
 import { findClientByPan, knownClientPhones } from "@/services/cas-intake";
 import { findDuplicateDocument } from "@/services/portfolio";
@@ -46,13 +46,12 @@ async function candidatesFor(actorRun: ReturnType<typeof onboardingTx>, fileName
 }
 
 export async function identifyBulkFileAction(fd: FormData): Promise<BulkFileInfo> {
-  const f = fd.get("file");
-  const fileName = f instanceof File ? f.name : "file";
+  const fileName = formFileName(fd, "file");
   const base: BulkFileInfo = { fileName, kind: "UNREADABLE", name: null, panMasked: null, casDate: null, readerOk: false, existingClient: null, message: "" };
   try {
     const actor = await requireActorForAction(ALL_ROLES);
     const run = onboardingTx(actor);
-    const file = await prepareUpload(f as File | null);
+    const file = await fileFromForm(fd, "file");
     if (file.mimeType !== "application/pdf") return { ...base, message: "Not a PDF." };
     const id = await identifyPdf(file.bytes, await candidatesFor(run, file.fileName));
     switch (id.kind) {
@@ -112,8 +111,8 @@ export async function onboardBulkPairAction(fd: FormData): Promise<BulkOnboardRo
     const advisorId = str(fd, "advisor_id") || null;
     await checkAdvisor(actor, advisorId);
 
-    const casUpload = await prepareUpload(fd.get("cas") as File | null);
-    const reportUpload = await prepareUpload(fd.get("report") as File | null);
+    const casUpload = await fileFromForm(fd, "cas");
+    const reportUpload = await fileFromForm(fd, "report");
     if (casUpload.mimeType !== "application/pdf" || reportUpload.mimeType !== "application/pdf") return fail("FAILED", "Both files must be PDFs.");
 
     const casCandidates = await candidatesFor(run, casUpload.fileName);
