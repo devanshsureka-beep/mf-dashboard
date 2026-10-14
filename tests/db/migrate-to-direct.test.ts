@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { advisoryReportResultSchema } from "@/lib/integrations/contracts";
 import { convertMigrateNotes, countMigrateNotes } from "@/services/migrations";
-import { issueAdvice, linkCallsToPlan } from "@/services/advice";
+import { closeAdvice, issueAdvice, linkCallsToPlan, reviseAdvice } from "@/services/advice";
 import { addPlanItem, approvePlan, ingestAdvisoryReport } from "@/services/plans";
 import { ingestNavFeed } from "@/services/nav";
 import { resolveFundRef } from "@/services/fund-search";
@@ -131,6 +131,26 @@ describeDb("Plan lines are Buy, Sell or Keep", () => {
         select pi.id, pi.action, pi.target_amount::float8, pi.needs_review, pi.report_answer
         from public.advice_items ai join public.advisory_plan_items pi on pi.id = ai.plan_item_id where ai.id = ${call.itemIds[0]}`)[0];
       expect(line).toMatchObject({ id: keep, action: "SELL", target_amount: 120000, needs_review: false, report_answer: "Sold ₹1,20,000 on advice" });
+
+      // The call is revised down: the line follows. Cancelled: the line is a Keep again and the question re-opens.
+      const rev = await ctx.as("advisor", (t) => reviseAdvice(t, ctx.users.advisor, {
+        adviceItemId: call.itemIds[0], newTotalAmount: 80000, newTotalUnits: null, reason: "smaller sell", channel: "PHONE",
+        communicatedAt: new Date("2026-09-18T10:00:00+05:30"),
+      }));
+      const lineNow = async () => (await ctx.tx<{ action: string; target_amount: number; needs_review: boolean; report_answer: string | null; reason: string; status: string }[]>`
+        select action, target_amount::float8, needs_review, report_answer, reason, status from public.advisory_plan_items where id = ${keep}`)[0];
+      expect(await lineNow()).toMatchObject({ action: "SELL", target_amount: 80000 });
+      await ctx.as("advisor", (t) => closeAdvice(t, rev.newItemId, "CANCELLED", "client changed mind"));
+      expect(await lineNow()).toEqual({ action: "RETAIN", target_amount: 0, needs_review: true, report_answer: null, reason: "Report: Trim (no amount given)", status: "OPEN" });
+
+      // A line added for a fund the plan did not cover is cancelled with its only call.
+      const y = await ctx.as("advisor", (t) => issueAdvice(t, ctx.users.advisor, {
+        clientId: p.clientId, communicatedAt: new Date("2026-09-19T10:00:00+05:30"), channel: "PHONE",
+        items: [{ security_id: ctx.sec.Z, action: "BUY", quantity_basis: "AMOUNT", advised_amount: 70000 }],
+      }));
+      const added = (await ctx.tx<{ plan_item_id: string }[]>`select plan_item_id from public.advice_items where id = ${y.itemIds[0]}`)[0].plan_item_id;
+      await ctx.as("advisor", (t) => closeAdvice(t, y.itemIds[0], "CANCELLED", "wrong fund"));
+      expect((await ctx.tx<{ status: string }[]>`select status from public.advisory_plan_items where id = ${added}`)[0].status).toBe("CANCELLED");
     });
   });
 

@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { advisoryReportResultSchema } from "@/lib/integrations/contracts";
-import { answerReportQuestion, approvePlan, ingestAdvisoryReport, listReportQuestions } from "@/services/plans";
+import { answerReportQuestion, approvePlan, ingestAdvisoryReport, listReportQuestions, updatePlanItem } from "@/services/plans";
 import { clientWithActivePlan, scenario, sql, TEST_DB } from "./harness";
 
 const describeDb = TEST_DB ? describe : describe.skip;
@@ -31,6 +31,9 @@ describeDb("Questions from the report", () => {
       expect(await ctx.expectError("advisor", (t) => approvePlan(t, ctx.users.advisor, planId, "go"))).toMatch(/review/i);
 
       const [x, y] = qs;
+      // Editing the line (e.g. picking the fund) does not answer the question.
+      await ctx.as("advisor", (t) => updatePlanItem(t, x.id, { security_id: ctx.sec.X, scheme_name: nameOf(ctx.sec.X), action: "RETAIN", target_amount: 0, current_amount: 300000, reason: "Report: Rebalance towards target" }));
+      expect(await ctx.expectError("advisor", (t) => approvePlan(t, ctx.users.advisor, planId, "go"))).toMatch(/review/i);
       expect(await ctx.expectError("ops", (t) => answerReportQuestion(t, ctx.users.ops, x.id, { action: "RETAIN", explanation: "keep" }))).toMatch(/advisor or admin/);
       expect(await ctx.expectError("advisor", (t) => answerReportQuestion(t, ctx.users.advisor, x.id, { action: "SELL", percent: 33, explanation: " " }))).toMatch(/Explain/);
       await ctx.as("advisor", (t) => answerReportQuestion(t, ctx.users.advisor, x.id, { action: "SELL", percent: 33, explanation: "Advisor confirmed: sell a third" }));
@@ -39,7 +42,7 @@ describeDb("Questions from the report", () => {
       qs = await ctx.as("advisor", (t) => listReportQuestions(t, planId));
       expect(qs.every((q) => !q.open)).toBe(true);
       const lines = await ctx.tx<{ action: string; target_amount: number; needs_review: boolean; report_answer: string; reason: string }[]>`
-        select action, target_amount::float8, needs_review, report_answer, reason from public.advisory_plan_items where plan_id = ${planId} order by priority`;
+        select action, target_amount::float8, needs_review, report_answer, reason from public.advisory_plan_items where plan_id = ${planId} order by (id = ${x.id}) desc`;
       expect(lines[0]).toMatchObject({ action: "SELL", target_amount: 99000, needs_review: false, report_answer: "Advisor confirmed: sell a third" });
       expect(lines[0].reason).toMatch(/Rebalance towards target → Sell ₹99,000 \(33%\): Advisor confirmed/);
       expect(lines[1]).toMatchObject({ action: "RETAIN", target_amount: 0, needs_review: false });

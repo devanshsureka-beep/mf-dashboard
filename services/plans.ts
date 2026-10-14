@@ -4,6 +4,7 @@ import { AppError } from "@/lib/errors";
 import type { AdvisoryReportResult } from "@/lib/integrations/contracts";
 import type { PlanItemProgress, PlanRow, PlanTransition, SipItem } from "@/types/domain";
 import { suggestSecurity } from "./securities";
+import { MIGRATE_BUY_REASON, migrateSellReason, switchBuyReason } from "@/lib/domain/report-plan";
 import type { SecurityCandidate } from "@/lib/domain/securities";
 
 // -----------------------------------------------------------------------------
@@ -153,7 +154,9 @@ export async function updatePlanItem(tx: Tx, itemId: string, item: PlanItemInput
       action = ${item.action}, target_amount = ${item.target_amount}, target_units = ${item.target_units ?? null},
       current_amount = ${item.current_amount ?? null}, target_weight = ${item.target_weight ?? null},
       reason = ${item.reason ?? null}, priority = ${item.priority ?? 100}, notes = ${item.notes ?? null},
-      needs_review = case when ${item.security_id}::uuid is null then needs_review else false end
+      -- A report question stays open (and blocks approval) until it is answered on the plan.
+      needs_review = case when ${item.security_id}::uuid is null then needs_review
+                          else (report_question is not null and report_answer is null) end
     where id = ${itemId}`;
 }
 
@@ -424,7 +427,7 @@ export async function ingestAdvisoryReport(
     if (flag) needsReview++;
     const moves = it.action === "MIGRATE" || it.action === "SWITCH";
     const reason = it.action === "MIGRATE"
-      ? `Migrate to Direct: redeem the Regular plan${it.reason ? `; ${it.reason.replace(/^(Kept for now: )?(MIGRATE TO DIRECT;?\s*)?/i, "")}` : ""}`.replace(/; $/, "")
+      ? migrateSellReason(it.reason)
       : it.reason ?? null;
     itemRows.push({
       switch_to_security_id: null,
@@ -442,7 +445,7 @@ export async function ingestAdvisoryReport(
         switch_to_security_id: null,
         plan_id: planId, client_id: clientId, security_id: to.id, scheme_name: it.switch_to_scheme_name, folio_number: null,
         action: "BUY", target_amount: it.target_amount, target_units: null, current_amount: null, target_weight: null,
-        reason: it.action === "MIGRATE" ? "Migrate to Direct: buy the Direct plan with the Regular redemption" : `Switch: buy with the money from ${it.scheme_name}`,
+        reason: it.action === "MIGRATE" ? MIGRATE_BUY_REASON : switchBuyReason(it.scheme_name),
         priority: (it.priority ?? priority) + 1, needs_review: !to.confident,
         notes: to.confident ? null : "Security match needs confirmation (extracted from report).", created_by: createdBy,
         report_question: null,

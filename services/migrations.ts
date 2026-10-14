@@ -7,6 +7,7 @@ import type { Actor, Tx } from "@/lib/db/tx";
 import { setAuditReason } from "@/lib/db/tx";
 import { detectPlanType, nameSimilarity } from "@/lib/domain/securities";
 import { resolveOrCreateSecurity } from "./securities";
+import { MIGRATE_BUY_REASON, directPlanName, migrateSellReason } from "@/lib/domain/report-plan";
 
 /**
  * The Direct plan of the same fund, from the AMFI list: same AMC, same option
@@ -51,18 +52,16 @@ export async function convertMigrateNotes(tx: Tx, actor: Actor, planId: string):
   await setAuditReason(tx, "Migrate to Direct notes turned into Sell (Regular) + Buy (Direct) lines");
   for (const r of regular) {
     const to = (await findDirectVariant(tx, r.isin, actor.id))
-      ?? (await resolveOrCreateSecurity(tx, { scheme_name: directName(r.sec_name ?? r.scheme_name), plan_type: "DIRECT", amc: null }, actor.id));
+      ?? (await resolveOrCreateSecurity(tx, { scheme_name: directPlanName(r.sec_name ?? r.scheme_name), plan_type: "DIRECT", amc: null }, actor.id));
     const toName = (await tx<{ scheme_name: string }[]>`select scheme_name from public.security_master where id = ${to}`)[0].scheme_name;
     await tx`
       insert into public.advisory_plan_items (plan_id, security_id, scheme_name, action, target_amount, reason, priority, status, created_by, tranche_plan_id)
-      select plan_id, ${to}, ${toName}, 'BUY', ${r.current_amount}, 'Migrate to Direct: buy the Direct plan with the Regular redemption',
+      select plan_id, ${to}, ${toName}, 'BUY', ${r.current_amount}, ${MIGRATE_BUY_REASON},
              coalesce(priority, 0) + 1, 'OPEN', ${actor.id}, tranche_plan_id
       from public.advisory_plan_items where id = ${r.id}`;
     await tx`
       update public.advisory_plan_items
-      set action = 'SELL', target_amount = ${r.current_amount},
-          reason = 'Migrate to Direct: redeem the Regular plan'
-                   || coalesce('; ' || nullif(regexp_replace(coalesce(reason, ''), '^(Kept for now: )?(MIGRATE TO DIRECT;?[[:space:]]*)?', '', 'i'), ''), '')
+      set action = 'SELL', target_amount = ${r.current_amount}, reason = ${migrateSellReason(r.reason)}
       where id = ${r.id}`;
   }
   return regular.length;
@@ -71,9 +70,4 @@ export async function convertMigrateNotes(tx: Tx, actor: Actor, planId: string):
 /** Keep lines the convert button would turn into Sell + Buy (shown as a prompt). */
 export async function countMigrateNotes(tx: Tx, planId: string): Promise<number> {
   return (await migrateNoteLines(tx, planId)).length;
-}
-
-/** "X Fund - Regular Plan - Growth" -> "X Fund - Direct Plan - Growth" (a name only). */
-function directName(name: string): string {
-  return /regular/i.test(name) ? name.replace(/regular/gi, "Direct") : `${name} - Direct Plan`;
 }

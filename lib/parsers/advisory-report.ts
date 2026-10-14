@@ -173,23 +173,40 @@ function planTypeOf(s: string): "DIRECT" | "REGULAR" | null {
 export function mapSellAction(text: string): ReportSellAction {
   const t = text.toLowerCase();
   if (/switch|consolidat|merge into|move (in)?to|shift (in)?to/.test(t)) return "SWITCH";
-  if (/full exit|exit|redeem|redemption|sell|trim|partial|reduce|withdraw|liquidat|book(ing)? profits?|right[- ]?size|cut|prune|scale down|lighten/.test(t)) return "SELL";
+  // A deferred exit ("exit later", "redeem in 2027") is not a sell now.
+  if (/\b(exit|sell|redeem|liquidate)\s+(later|after|in \d{4}|next)\b/.test(t)) return "RETAIN";
+  if (/full exit|\bexit|redeem|redemption|\bsell|\btrim|partial|\breduce|withdraw|liquidat|book(ing)? profits?|right[- ]?size|\bcut\b|\bprune|scale down|lighten/.test(t)) return "SELL";
   if (/retain|hold|keep|continue|stay invested|maintain|no change/.test(t)) return "RETAIN";
   return "UNKNOWN";
 }
 
-/** "Trim 33%" / "sell 50 %" / "reduce by one-third" -> 33 / 50 / 33.33; null when no share is given. */
-export function percentOf(text: string): number | null {
-  const m = /(\d+(?:\.\d+)?)\s*%/.exec(text);
+const SELL_VERB = /\b(trim|sell|reduce|redeem|exit|book(?:ing)? profits?|cut|lighten|right[- ]?size|withdraw)\b/i;
+
+/**
+ * The share of a holding to sell: "Trim 33%" / "sell 50 %" / "sell half" /
+ * "reduce by one-third" -> 33 / 50 / 50 / 33.33. A share only counts next to a
+ * sell word (so a date like 21/3 or a "12.4%" return is never read as one);
+ * `bare` also accepts a cell that is nothing but a percentage ("33%").
+ */
+export function percentOf(text: string, opts: { bare?: boolean } = {}): number | null {
+  const t = text.trim();
+  if (opts.bare) {
+    const m = /^(\d+(?:\.\d+)?)\s*%$/.exec(t);
+    if (m) return Number(m[1]) > 0 && Number(m[1]) <= 100 ? Number(m[1]) : null;
+  }
+  const verb = SELL_VERB.exec(t);
+  if (!verb) return null;
+  // The share comes straight after the sell word ("trim 33%", "reduce by one-third", "sell half").
+  const after = t.slice(verb.index + verb[0].length).trimStart().toLowerCase().replace(/^(by|about|approx\.?|~|the)\s*/, "");
+  const m = /^(\d+(?:\.\d+)?)\s*%/.exec(after);
   if (m) {
     const p = Number(m[1]);
     return p > 0 && p <= 100 ? p : null;
   }
-  const t = text.toLowerCase();
-  if (/\bhalf\b/.test(t)) return 50;
-  if (/one[- ]third|1\/3/.test(t)) return Math.round(10000 / 3) / 100;
-  if (/two[- ]thirds|2\/3/.test(t)) return Math.round(20000 / 3) / 100;
-  if (/one[- ]fourth|one[- ]quarter|1\/4/.test(t)) return 25;
+  if (/^half\b/.test(after)) return 50;
+  if (/^one[- ]third\b/.test(after)) return 33.33;
+  if (/^two[- ]thirds\b/.test(after)) return 66.67;
+  if (/^one[- ](fourth|quarter)\b/.test(after)) return 25;
   return null;
 }
 
@@ -209,7 +226,7 @@ function mapVerdict(text: string): { verdict: ReviewVerdict | null; amount: numb
   const word = VERDICT_RE.exec(text)?.[1] ?? "";
   const amount = money(/₹\s?[\d,.]+\s*(L|Cr|k)?/i.exec(text)?.[0]);
   // "EXIT LATER" / "EXIT 2027" / "EXIT AFTER …": kept now, sold in a later tranche.
-  if (/^(EXIT|SELL)\s+(LATER|AFTER|IN|\d{4}|NEXT)/i.test(text)) return { verdict: "HOLD", amount: null, deferred: true };
+  if (/^(EXIT|SELL|REDEEM|LIQUIDATE)\s+(LATER|AFTER|IN|\d{4}|NEXT)/i.test(text)) return { verdict: "HOLD", amount: null, deferred: true };
   if (/^(EXIT|SELL|REDEEM|LIQUIDATE)$/.test(word)) return { verdict: "EXIT", amount: null };
   if (/^(HOLD|KEEP|RETAIN|CONTINUE|MAINTAIN)$/.test(word)) return { verdict: "HOLD", amount: null };
   if (/^(TRIM|REDUCE|BOOK PROFITS?|PARTIAL.*)$/.test(word)) return { verdict: "TRIM", amount };
@@ -293,7 +310,7 @@ export function parseAdvisoryReportLines(rawLines: string[]): AdvisoryReportPars
           planType: planTypeOf(c[0]),
           actionText,
           action,
-          partial: /trim|partial|reduce|part of|₹/i.test(actionText) && !/full/i.test(actionText),
+          partial: /trim|partial|reduce|part of|book(ing)? profits?|right[- ]?size|lighten|₹|\d\s*%/i.test(actionText) && !/full/i.test(actionText),
           value: money(c[vIdx])!,
         });
       } else if (sells.length && c.length === 1 && !/^(Why|Values|Total|All|Later)/i.test(c[0]) && c[0].length < 60 && !c[0].includes("₹")) {

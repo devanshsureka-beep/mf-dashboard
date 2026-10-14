@@ -1,6 +1,7 @@
 import type { Actor, Tx } from "@/lib/db/tx";
 import { setAuditReason } from "@/lib/db/tx";
 import { AppError } from "@/lib/errors";
+import { syncOutsideLine } from "./advice";
 import type { Channel } from "@/types/domain";
 
 /**
@@ -33,8 +34,8 @@ export interface CallCorrection {
 
 export async function correctAdvice(tx: Tx, actor: Actor, itemId: string, c: CallCorrection): Promise<void> {
   const reason = assertAdmin(actor, c.reason);
-  const cur = (await tx<{ advice_batch_id: string; client_id: string; security_id: string }[]>`
-    select advice_batch_id, client_id, security_id from public.advice_items where id = ${itemId} for update`)[0];
+  const cur = (await tx<{ advice_batch_id: string; client_id: string; security_id: string; plan_item_id: string | null }[]>`
+    select advice_batch_id, client_id, security_id, plan_item_id from public.advice_items where id = ${itemId} for update`)[0];
   if (!cur) throw new AppError("Call not found.", "NOT_FOUND");
   if (!(c.advisedAmount >= 0)) throw new AppError("Enter the advised amount.");
   if (c.quantityBasis === "UNITS" && !(Number(c.advisedUnits) > 0)) throw new AppError("Enter the advised units for a units-based call.");
@@ -61,6 +62,9 @@ export async function correctAdvice(tx: Tx, actor: Actor, itemId: string, c: Cal
     // Executions follow the call's fund.
     await tx`update public.executions set security_id = ${securityId} where advice_item_id = ${itemId}`;
   }
+  // Lines that exist only for calls outside the report follow the corrected call.
+  await syncOutsideLine(tx, cur.plan_item_id);
+  if (c.planItemId !== cur.plan_item_id) await syncOutsideLine(tx, c.planItemId);
   // When and how the client was told belongs to the call batch.
   await tx`
     update public.advice_batches set communicated_at = ${c.communicatedAt}, communication_channel = ${c.channel}

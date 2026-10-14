@@ -177,7 +177,7 @@ export function parseAdvisoryReportGeneric(pages: PdfPage[]): AdvisoryReportPars
       const value = amount(r.cells[amt]);
       const note = Object.entries(r.cells).filter(([k]) => ![t.columns[0].label, amt].includes(k)).map(([, v]) => v).join(" · ");
       // A sell given only as a share ("Trim 33%"): the amount comes from the CAS holding.
-      const percent = kind === "SELL" && value === null ? percentOf(`${r.cells[amt] ?? ""} ${note}`) : null;
+      const percent = kind === "SELL" && value === null ? (percentOf(r.cells[amt] ?? "", { bare: true }) ?? percentOf(r.cells[amt] ?? "") ?? percentOf(note)) : null;
       if (!f.name || (value === null && percent === null)) {
         problems.push(`Row "${r.fund || "(no fund name)"}" on page ${t.page}: fund or amount unreadable.`);
         continue;

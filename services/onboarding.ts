@@ -331,7 +331,15 @@ export async function createNewInvestor(
   if (problems.length) throw new AppError(newInvestorMessage(problems));
   const pan = args.who.pan.trim().toUpperCase();
   const existing = await findClientByPan(tx, pan);
-  if (existing) throw new AppError(`${existing.full_name} (${existing.client_code}) already has this PAN: upload the report on their page instead.`);
+  if (existing) {
+    // An earlier attempt that stopped after creating the client (no plan, no CAS yet): carry on with it.
+    const unfinished = (await tx<{ ok: boolean }[]>`
+      select not exists (select 1 from public.advisory_plans where client_id = ${existing.id})
+         and not exists (select 1 from public.cas_documents where client_id = ${existing.id})
+         and exists (select 1 from public.portfolio_snapshots where client_id = ${existing.id} and is_baseline and source = 'MANUAL' and holdings_count = 0) as ok`)[0]?.ok;
+    if (unfinished) return { id: existing.id, client_code: existing.client_code };
+    throw new AppError(`${existing.full_name} (${existing.client_code}) already has this PAN: upload the report on their page instead.`);
+  }
   const c = await createClient(tx, actor, {
     full_name: args.who.fullName.trim(),
     email: args.who.email?.trim().toLowerCase() || null,

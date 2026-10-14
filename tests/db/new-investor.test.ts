@@ -43,12 +43,16 @@ describeDb("A new investor with no mutual funds yet (no CAS)", () => {
       const who = { fullName: "Kavya Iyer", pan: `KAVYA${String(Math.floor(Math.random() * 1e4)).padStart(4, "0")}F` };
       const r = report();
       const client = await ctx.as("advisor", (t) => createNewInvestor(t, ctx.users.advisor, { who, report: r }));
-      // The same PAN cannot be onboarded twice.
-      expect(await ctx.expectError("advisor", (t) => createNewInvestor(t, ctx.users.advisor, { who, report: r }))).toMatch(/already has this PAN/);
+      // Stopped before the plan was saved: trying again carries on with the same client.
+      const again = await ctx.as("advisor", (t) => createNewInvestor(t, ctx.users.advisor, { who, report: r }));
+      expect(again.id).toBe(client.id);
       const plan = await ctx.as("advisor", (t) => newInvestorPlan(t, ctx.users.advisor, {
         clientId: client.id, who, report: r,
         reportFile: { fileName: "report.pdf", mimeType: "application/pdf", size: 10, sha256: "a".repeat(64), path: `${client.id}/ADVISORY_REPORT/report.pdf` },
       }));
+
+      // Once the client has a plan, the same PAN cannot be onboarded again.
+      expect(await ctx.expectError("advisor", (t) => createNewInvestor(t, ctx.users.advisor, { who, report: r }))).toMatch(/already has this PAN/);
 
       const p = (await ctx.tx<{ plan_name: string; plan_kind: string; fresh_money: number; buy_target: number; sell_target: number }[]>`
         select a.plan_name, a.plan_kind, a.fresh_money::float8, t.buy_target::float8, t.sell_target::float8

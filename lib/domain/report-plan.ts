@@ -236,7 +236,8 @@ export function buildPlanFromReport(
       // One row for several folios of the same fund ("x2 folios"): all of them, values summed.
       const group = wholeFund ? allFolios : sameFundHoldings(s.fund, live.filter((x) => !taken.has(x)), planType);
       const total = group.reduce((t, x) => t + x.current_value, 0);
-      if (s.partial && !s.value && s.percent) s.value = Math.round(total * s.percent) / 100;
+      // "Trim 33%": that share of the CAS holding (computed here, the report itself is not changed).
+      const sold = s.partial && !s.value && s.percent ? Math.round(total * s.percent) / 100 : s.value;
       if (!wholeFund && group.length !== s.folioCount) {
         problems.push(`Sell row "${s.fund}" covers ${s.folioCount} folios, but the CAS has ${group.length} matching folio(s).`);
         continue;
@@ -247,7 +248,7 @@ export function buildPlanFromReport(
       alias.push({ fund: s.fund, holdings: group });
       for (const g of group) {
         taken.add(g);
-        items.push({ action: s.action === "SWITCH" ? "SWITCH" : "SELL", scheme_name: g.scheme_name, isin: g.isin, folio_number: g.folio_number, target_amount: s.partial ? Math.round((s.value * g.current_value / total) * 100) / 100 : g.current_value, current_amount: g.current_value, reason: `${s.actionText} (${group.length} folios)`, priority: (priority += 10) });
+        items.push({ action: s.action === "SWITCH" ? "SWITCH" : "SELL", scheme_name: g.scheme_name, isin: g.isin, folio_number: g.folio_number, target_amount: s.partial ? Math.round((sold * g.current_value / total) * 100) / 100 : g.current_value, current_amount: g.current_value, reason: `${s.actionText} (${group.length} folios)`, priority: (priority += 10) });
       }
       continue;
     }
@@ -269,13 +270,13 @@ export function buildPlanFromReport(
     }
     taken.add(h);
     alias.push({ fund: s.fund, holdings: [h] });
-    // "Trim 33%": that share of the CAS holding.
-    if (s.partial && !s.value && s.percent) s.value = Math.round(h.current_value * s.percent) / 100;
+    // "Trim 33%": that share of the CAS holding (computed here, the report itself is not changed).
+    const sold = s.partial && !s.value && s.percent ? Math.round(h.current_value * s.percent) / 100 : s.value;
     if (!s.partial && !valueOk(s.value, h.current_value, h.scheme_name)) {
       problems.push(`${h.scheme_name}: the report sells ${inr(s.value)} as a full exit, but the CAS holding is ${inr(h.current_value)}${sameStatement ? "" : ` (more than ${NAV_DRIFT_LIMIT * 100}% apart, too much for NAV movement)`}.`);
     }
-    if (s.partial && s.value >= h.current_value) {
-      problems.push(`${h.scheme_name}: the report trims ${inr(s.value)}, but the CAS holding is only ${inr(h.current_value)}.`);
+    if (s.partial && sold >= h.current_value) {
+      problems.push(`${h.scheme_name}: the report trims ${inr(sold)}, but the CAS holding is only ${inr(h.current_value)}.`);
     }
     items.push({
       action: s.action === "SWITCH" ? "SWITCH" : "SELL",
@@ -283,7 +284,7 @@ export function buildPlanFromReport(
       isin: h.isin,
       folio_number: h.folio_number,
       // A full exit sells every unit: its value is the CAS holding, whatever the NAV did since the report.
-      target_amount: s.partial ? s.value : h.current_value,
+      target_amount: s.partial ? sold : h.current_value,
       current_amount: h.current_value,
       reason: s.actionText || null,
       priority: (priority += 10),
@@ -299,8 +300,7 @@ export function buildPlanFromReport(
   // Holdings whose recommendation the desk must explain (see report.questions).
   const asked = new Map<PlanHolding, NonNullable<AdvisoryReportParse["questions"]>[number]>();
   const isMigrate = (note: string | null | undefined) => /MIGRATE TO DIRECT/i.test(note ?? "");
-  const directName = (fund: string) =>
-    withPlanType(fund.replace(/\s*[-(]?\s*\b(regular|reg)\b(\s+plan)?\s*\)?/gi, " ").replace(/\s+/g, " ").trim(), "DIRECT");
+  const directName = directPlanName;
   if (report.review.length) {
     const reviewed = new Set<PlanHolding>();
     const fundKey = (h: PlanHolding) => h.isin ?? h.scheme_name.toLowerCase();
@@ -547,6 +547,19 @@ export function buildPlanFromReport(
   };
 }
 
+// ---- One wording for a migration / switch stored as Sell + Buy (report import, checker, Keep-note conversion). ----
+/** "X Fund - Regular Plan - Growth" -> "X Fund - Direct Plan - Growth" (a name; the AMFI match is looked up separately). */
+export function directPlanName(fund: string): string {
+  return withPlanType(fund.replace(/\s*[-(]?\s*\b(regular|reg)\b(\s+plan)?\s*\)?/gi, " ").replace(/\s+/g, " ").trim(), "DIRECT");
+}
+export const MIGRATE_BUY_REASON = "Migrate to Direct: buy the Direct plan with the Regular redemption";
+export const switchBuyReason = (from: string) => `Switch: buy with the money from ${from}`;
+/** The Sell leg's reason, keeping what the report said after "Migrate to Direct" ("Hold", "Consolidate"). */
+export function migrateSellReason(reportReason: string | null | undefined): string {
+  const rest = (reportReason ?? "").replace(/^(Kept for now: )?(Migrate to Direct;?\s*)?/i, "").trim();
+  return `Migrate to Direct: redeem the Regular plan${rest ? `; ${rest}` : ""}`;
+}
+
 /**
  * The draft as the plan stores it: Buy, Sell or Keep. A Migrate to Direct is a
  * Sell of the Regular plan and a Buy of the Direct plan (same amount); a Switch
@@ -560,11 +573,11 @@ export function asBuySellKeep(items: PlanItemDraft[]): (PlanItemDraft & { action
       out.push({ ...i, action: i.action });
       continue;
     }
-    out.push({ ...i, action: "SELL", switch_to_scheme_name: null, reason: i.action === "MIGRATE" ? `Migrate to Direct: redeem the Regular plan${i.reason ? `; ${i.reason}` : ""}` : i.reason });
+    out.push({ ...i, action: "SELL", switch_to_scheme_name: null, reason: i.action === "MIGRATE" ? migrateSellReason(i.reason) : i.reason });
     if (i.switch_to_scheme_name && i.target_amount > 0) {
       out.push({
         action: "BUY", scheme_name: i.switch_to_scheme_name, isin: null, folio_number: null, target_amount: i.target_amount, current_amount: null,
-        reason: i.action === "MIGRATE" ? "Migrate to Direct: buy the Direct plan" : `Switch: buy with the money from ${i.scheme_name}`,
+        reason: i.action === "MIGRATE" ? MIGRATE_BUY_REASON : switchBuyReason(i.scheme_name),
         priority: i.priority + 1, plan_type: i.action === "MIGRATE" ? "DIRECT" : i.plan_type ?? null,
       });
     }

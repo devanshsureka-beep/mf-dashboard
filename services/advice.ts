@@ -62,6 +62,7 @@ export async function issueAdvice(tx: Tx, actor: Actor, input: IssueAdviceInput)
               ${it.reference_price || null}, ${it.valid_until || null}, ${actor.id})
       returning id`;
     itemIds.push(rows[0].id);
+    await syncOutsideLine(tx, planItemId);
   }
   return { batchId: batch[0].id, batchCode: batch[0].batch_code, itemIds };
 }
@@ -99,7 +100,7 @@ export const OUTSIDE_REPORT = "Advised outside the report";
  *  - else, for a sell, the fund's Keep line becomes a Sell of this amount (an
  *    open question on it is answered by the call);
  *  - else a new line of this amount is added.
- * A line made this way grows with each further call on it. Audited; returns
+ * A line made this way follows its calls (syncOutsideLine). Audited; returns
  * null when the client has no ACTIVE plan.
  */
 export async function ensurePlanLine(
@@ -124,14 +125,7 @@ async function placeCall(
   const amount = Math.round(a.amount * 100) / 100;
   const label = `${OUTSIDE_REPORT}${a.why ? ` (${a.why.slice(0, 120)})` : ""}`;
   const found = await findPlanLine(tx, a.clientId, a.securityId, a.action);
-  if (found) {
-    const line = (await tx<{ reason: string | null }[]>`select reason from public.advisory_plan_items where id = ${found}`)[0];
-    if (line?.reason?.startsWith(OUTSIDE_REPORT)) {
-      await setAuditReason(tx, `${OUTSIDE_REPORT}: a further call on this fund`);
-      await tx`update public.advisory_plan_items set target_amount = target_amount + ${amount} where id = ${found}`;
-    }
-    return found;
-  }
+  if (found) return found;
   if (a.action !== "BUY") {
     const keep = (await tx<{ id: string; report_question: string | null; reason: string | null }[]>`
       select id, report_question, reason from public.advisory_plan_items
@@ -157,6 +151,44 @@ async function placeCall(
   return ins[0].id;
 }
 
+/**
+ * A line that exists only because of calls outside the report keeps its target
+ * equal to what those calls advise (after revisions, cancellations and
+ * corrections). With nothing advised any more, a Keep line turned Sell goes back
+ * to Keep (its report question re-opens) and an added line is cancelled.
+ */
+export async function syncOutsideLine(tx: Tx, planItemId: string | null | undefined): Promise<void> {
+  if (!planItemId) return;
+  const line = (await tx<{ reason: string | null; target_amount: number; status: string; report_answer: string | null }[]>`
+    select reason, target_amount::float8 as target_amount, status, report_answer from public.advisory_plan_items where id = ${planItemId}`)[0];
+  if (!line?.reason?.startsWith(OUTSIDE_REPORT) || line.status === "CANCELLED") return;
+  const total = Math.round(Number((await tx<{ t: number }[]>`
+    select coalesce(sum(effective_advised_amount), 0)::float8 as t from public.v_advice_items where plan_item_id = ${planItemId}`)[0].t) * 100) / 100;
+  if (Math.abs(total - line.target_amount) < 0.01) return;
+  const prev = (await tx<{ r: string | null }[]>`select current_setting('app.audit_reason', true) as r`)[0]?.r ?? null;
+  try {
+    if (total > 0) {
+      await setAuditReason(tx, `${OUTSIDE_REPORT}: target follows the calls on this line`);
+      await tx`update public.advisory_plan_items set target_amount = ${total} where id = ${planItemId}`;
+      return;
+    }
+    const kept = /\(the report said: ([\s\S]*)\)$/.exec(line.reason)?.[1];
+    if (line.reason.startsWith(`${OUTSIDE_REPORT}: sold`) && kept !== undefined) {
+      await setAuditReason(tx, `${OUTSIDE_REPORT}: no call left on it, back to Keep`);
+      await tx`
+        update public.advisory_plan_items set action = 'RETAIN', target_amount = 0, reason = ${kept},
+          report_answer = case when report_answer like 'Sold ₹% on advice' then null else report_answer end,
+          needs_review = (report_question is not null and (report_answer is null or report_answer like 'Sold ₹% on advice'))
+        where id = ${planItemId}`;
+    } else {
+      await setAuditReason(tx, `${OUTSIDE_REPORT}: no call left on it`);
+      await tx`update public.advisory_plan_items set status = 'CANCELLED' where id = ${planItemId}`;
+    }
+  } finally {
+    await setAuditReason(tx, prev);
+  }
+}
+
 export async function linkCallsToPlan(tx: Tx, actor: Actor, clientId: string): Promise<{ linked: number; left: number }> {
   if (actor.role !== "ADMIN") throw new AppError("Only an admin can re-link recorded calls.", "FORBIDDEN");
   const calls = await tx<{ id: string; security_id: string; scheme_name: string; action: "BUY" | "SELL" | "SWITCH"; advised_amount: number }[]>`
@@ -164,6 +196,8 @@ export async function linkCallsToPlan(tx: Tx, actor: Actor, clientId: string): P
     from public.advice_items ai join public.advice_batches b on b.id = ai.advice_batch_id
     where ai.client_id = ${clientId} and ai.plan_item_id is null and b.status = 'ACTIVE'
       and ai.status not in ('CANCELLED', 'REVISED')
+      -- Only calls given under the current plan: older plans' calls belong to their own plan.
+      and b.plan_id = (select id from public.advisory_plans where client_id = ${clientId} and status = 'ACTIVE')
     order by ai.created_at`;
   if (!calls.length) return { linked: 0, left: 0 };
   let linked = 0;
@@ -172,6 +206,7 @@ export async function linkCallsToPlan(tx: Tx, actor: Actor, clientId: string): P
     if (!line) continue;
     await setAuditReason(tx, "Admin correction: link a call outside the plan to the plan line of its fund");
     await tx`update public.advice_items set plan_item_id = ${line} where id = ${c.id}`;
+    await syncOutsideLine(tx, line);
     linked += 1;
   }
   return { linked, left: calls.length - linked };
@@ -272,6 +307,7 @@ export async function reviseAdvice(tx: Tx, actor: Actor, input: ReviseInput): Pr
             ${orig.folio_number}, ${orig.action}, ${orig.quantity_basis}, ${remainder.amount}, ${remainder.units},
             ${input.referencePrice ?? orig.reference_price}, ${orig.valid_until}, ${orig.id}, ${actor.id})
     returning id`;
+  await syncOutsideLine(tx, orig.plan_item_id);
   return { newItemId: item[0].id, batchCode: batch[0].batch_code };
 }
 
@@ -282,6 +318,7 @@ export async function closeAdvice(tx: Tx, adviceItemId: string, status: "CANCELL
   if (!item.is_open) throw new AppError(`Call is already ${item.status}.`);
   await setAuditReason(tx, reason);
   await tx`update public.advice_items set status = ${status}, status_reason = ${reason} where id = ${adviceItemId}`;
+  await syncOutsideLine(tx, item.plan_item_id);
 }
 
 // -----------------------------------------------------------------------------

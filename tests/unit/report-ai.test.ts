@@ -161,6 +161,10 @@ describe("Report wording becomes Buy, Sell or Keep; what cannot is asked", () =>
     expect(["Redemption", "Liquidate", "Book profits", "Right-size", "Lighten"].map(mapSellAction)).toEqual(["SELL", "SELL", "SELL", "SELL", "SELL"]);
     expect(["Consolidate into PPFAS", "Move to Direct", "Switch"].map(mapSellAction)).toEqual(["SWITCH", "SWITCH", "SWITCH"]);
     expect(["Stay invested", "Maintain", "No change"].map(mapSellAction)).toEqual(["RETAIN", "RETAIN", "RETAIN"]);
-    expect(["Trim 33%", "sell 12.5 %", "sell half", "reduce by one-third", "Trim"].map(percentOf)).toEqual([33, 12.5, 50, 33.33, null]);
+    expect(["Trim 33%", "sell 12.5 %", "sell half", "reduce by one-third", "Trim"].map((t) => percentOf(t))).toEqual([33, 12.5, 50, 33.33, null]);
+    // Never a share by accident: dates, returns, "half" far from a sell word.
+    expect(["Exit after 21/3/2026", "1Y return 12.4%", "Exit in second half of 2026", "Weight 12%"].map((t) => percentOf(t))).toEqual([null, null, null, null]);
+    expect(percentOf("33%", { bare: true })).toBe(33);
+    expect(["Redeem later", "Exit in 2027", "Hold - execute later"].map(mapSellAction)).toEqual(["RETAIN", "RETAIN", "RETAIN"]);
   });
 });
