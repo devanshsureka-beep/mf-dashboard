@@ -79,7 +79,8 @@ describeDb("Plan lines are Buy, Sell or Keep", () => {
       const sellLine = (await ctx.tx<{ id: string }[]>`select id from public.advisory_plan_items where plan_id = ${planId} and action = 'SELL'`)[0].id;
       expect(out.planItemId).toBe(sellLine);
 
-      // Calls given outside any plan line: the Direct buy, and a buy of a fund not in the plan.
+      // Calls given without a plan line: the Direct buy goes on its Buy line; a fund the plan does not
+      // cover gets a Buy line of its own (and it grows with a further call). Nothing stays outside the plan.
       const loose = await ctx.as("advisor", (t) => issueAdvice(t, ctx.users.advisor, {
         clientId: p.clientId, communicatedAt: new Date("2026-09-17T10:00:00+05:30"), channel: "PHONE",
         items: [
@@ -87,17 +88,49 @@ describeDb("Plan lines are Buy, Sell or Keep", () => {
           { security_id: ctx.sec.Z, action: "BUY", quantity_basis: "AMOUNT", advised_amount: 50000 },
         ],
       }));
+      await ctx.as("advisor", (t) => issueAdvice(t, ctx.users.advisor, {
+        clientId: p.clientId, communicatedAt: new Date("2026-09-18T10:00:00+05:30"), channel: "PHONE",
+        items: [{ security_id: ctx.sec.Z, action: "BUY", quantity_basis: "AMOUNT", advised_amount: 25000 }],
+      }));
+      const lineOf = async (itemId: string) => (await ctx.tx<{ action: string; target_amount: number; reason: string }[]>`
+        select pi.action, pi.target_amount::float8, pi.reason from public.advice_items ai join public.advisory_plan_items pi on pi.id = ai.plan_item_id
+        where ai.id = ${itemId}`)[0];
+      expect(await lineOf(loose.itemIds[0])).toMatchObject({ action: "BUY", target_amount: 1500000 });
+      expect(await lineOf(loose.itemIds[1])).toMatchObject({ action: "BUY", target_amount: 75000, reason: expect.stringMatching(/^Advised outside the report/) });
       const offPlan = async () => (await ctx.as("advisor", (t) => t<{ sell: number; buy: number }[]>`
         select off_plan_sell_advised::float8 as sell, off_plan_buy_advised::float8 as buy from public.v_client_rebalance_extra where client_id = ${p.clientId}`))[0];
-      expect(await offPlan()).toEqual({ sell: 0, buy: 350000 });
+      expect(await offPlan()).toEqual({ sell: 0, buy: 0 });
 
+      // A call recorded before its line existed (no plan link): only an admin re-links it, onto its fund's line.
+      await ctx.asSuper(async (t) => {
+        await t`set local session_replication_role = replica`;
+        await t`update public.advice_items set plan_item_id = null where id = ${loose.itemIds[0]}`;
+        await t`set local session_replication_role = origin`;
+      });
+      expect(await offPlan()).toEqual({ sell: 0, buy: 300000 });
       await expect(ctx.as("advisor", (t) => linkCallsToPlan(t, ctx.users.advisor, p.clientId))).rejects.toThrow(/Only an admin/);
-      expect(await ctx.as("admin", (t) => linkCallsToPlan(t, ctx.users.admin, p.clientId))).toEqual({ linked: 1, left: 1 });
-      const linked = (await ctx.tx<{ action: string; target_amount: number }[]>`
-        select pi.action, pi.target_amount::float8 from public.advice_items ai join public.advisory_plan_items pi on pi.id = ai.plan_item_id
-        where ai.id = ${loose.itemIds[0]}`)[0];
-      expect(linked).toEqual({ action: "BUY", target_amount: 1500000 });
-      expect(await offPlan()).toEqual({ sell: 0, buy: 50000 });
+      expect(await ctx.as("admin", (t) => linkCallsToPlan(t, ctx.users.admin, p.clientId))).toEqual({ linked: 1, left: 0 });
+      expect(await lineOf(loose.itemIds[0])).toMatchObject({ action: "BUY", target_amount: 1500000 });
+      expect(await offPlan()).toEqual({ sell: 0, buy: 0 });
+    });
+  });
+
+  it("a sell on a fund the plan keeps turns its Keep line into a Sell, answering an open question", async () => {
+    await scenario(async (ctx) => {
+      const p = await clientWithActivePlan(ctx);
+      const z = (await ctx.tx<{ scheme_name: string }[]>`select scheme_name from public.security_master where id = ${ctx.sec.Z}`)[0];
+      const keep = await ctx.as("advisor", (t) => addPlanItem(t, ctx.users.advisor, p.planId, {
+        security_id: ctx.sec.Z, scheme_name: z.scheme_name, action: "RETAIN", target_amount: 0, current_amount: 400000, reason: "Report: Trim (no amount given)",
+      }, "test: trim with no amount"));
+      await ctx.asSuper((t) => t`update public.advisory_plan_items set report_question = 'How much should be sold?', needs_review = true where id = ${keep}`);
+      const call = await ctx.as("advisor", (t) => issueAdvice(t, ctx.users.advisor, {
+        clientId: p.clientId, communicatedAt: new Date("2026-09-17T10:00:00+05:30"), channel: "PHONE",
+        items: [{ security_id: ctx.sec.Z, action: "SELL", quantity_basis: "AMOUNT", advised_amount: 120000 }],
+      }));
+      const line = (await ctx.tx<{ id: string; action: string; target_amount: number; needs_review: boolean; report_answer: string }[]>`
+        select pi.id, pi.action, pi.target_amount::float8, pi.needs_review, pi.report_answer
+        from public.advice_items ai join public.advisory_plan_items pi on pi.id = ai.plan_item_id where ai.id = ${call.itemIds[0]}`)[0];
+      expect(line).toMatchObject({ id: keep, action: "SELL", target_amount: 120000, needs_review: false, report_answer: "Sold ₹1,20,000 on advice" });
     });
   });
 

@@ -50,10 +50,14 @@ export async function issueAdvice(tx: Tx, actor: Actor, input: IssueAdviceInput)
     if (it.quantity_basis === "UNITS" && !(Number(it.advised_units) > 0)) throw new AppError("Unit-based calls need advised units.");
     const sec = await tx<{ scheme_name: string }[]>`select scheme_name from public.security_master where id = ${it.security_id}`;
     if (!sec[0]) throw new AppError("Unknown security selected.");
+    // Every call sits on a Buy or Sell line of the active plan (added when the plan has none for this fund).
+    const planItemId = it.plan_item_id || (activePlan[0]
+      ? await ensurePlanLine(tx, { clientId: input.clientId, securityId: it.security_id, schemeName: it.scheme_name || sec[0].scheme_name, action: it.action, amount: it.advised_amount, why: input.notes })
+      : null);
     const rows = await tx<{ id: string }[]>`
       insert into public.advice_items (advice_batch_id, client_id, plan_item_id, security_id, scheme_name, folio_number, action,
                                        quantity_basis, advised_amount, advised_units, reference_price, valid_until, created_by)
-      values (${batch[0].id}, ${input.clientId}, ${it.plan_item_id || null}, ${it.security_id}, ${it.scheme_name || sec[0].scheme_name},
+      values (${batch[0].id}, ${input.clientId}, ${planItemId}, ${it.security_id}, ${it.scheme_name || sec[0].scheme_name},
               ${it.folio_number || null}, ${it.action}, ${it.quantity_basis}, ${it.advised_amount}, ${it.advised_units || null},
               ${it.reference_price || null}, ${it.valid_until || null}, ${actor.id})
       returning id`;
@@ -81,24 +85,92 @@ export async function findPlanLine(tx: Tx, clientId: string, securityId: string,
 }
 
 /**
- * Admin repair: link a client's calls that sit outside the plan to the open
- * plan line for the same fund (see findPlanLine), e.g. calls recorded from CAS
- * trades before the plan had a line for that fund. Audited.
+ * Admin repair: put a client's calls that sit outside the plan on the plan
+ * line of their fund (see ensurePlanLine: an existing Buy / Sell line, a Keep
+ * line turned Sell, or a new line). Audited.
  */
+/** Lines added or changed because a call was given for a fund the plan did not cover. */
+export const OUTSIDE_REPORT = "Advised outside the report";
+
+/**
+ * The Buy / Sell line of the client's ACTIVE plan for this call, so every call
+ * is tracked against Buy, Sell or Keep and nothing floats outside the plan:
+ *  - the open Sell (sell / switch) or Buy line of the same fund;
+ *  - else, for a sell, the fund's Keep line becomes a Sell of this amount (an
+ *    open question on it is answered by the call);
+ *  - else a new line of this amount is added.
+ * A line made this way grows with each further call on it. Audited; returns
+ * null when the client has no ACTIVE plan.
+ */
+export async function ensurePlanLine(
+  tx: Tx,
+  a: { clientId: string; securityId: string; schemeName: string; action: "BUY" | "SELL" | "SWITCH"; amount: number; why?: string | null },
+): Promise<string | null> {
+  // The caller's audit reason is put back afterwards (this only changes it for the plan line).
+  const prev = (await tx<{ r: string | null }[]>`select current_setting('app.audit_reason', true) as r`)[0]?.r ?? null;
+  try {
+    return await placeCall(tx, a);
+  } finally {
+    await setAuditReason(tx, prev);
+  }
+}
+
+async function placeCall(
+  tx: Tx,
+  a: { clientId: string; securityId: string; schemeName: string; action: "BUY" | "SELL" | "SWITCH"; amount: number; why?: string | null },
+): Promise<string | null> {
+  const plan = (await tx<{ id: string }[]>`select id from public.advisory_plans where client_id = ${a.clientId} and status = 'ACTIVE'`)[0];
+  if (!plan) return null;
+  const amount = Math.round(a.amount * 100) / 100;
+  const label = `${OUTSIDE_REPORT}${a.why ? ` (${a.why.slice(0, 120)})` : ""}`;
+  const found = await findPlanLine(tx, a.clientId, a.securityId, a.action);
+  if (found) {
+    const line = (await tx<{ reason: string | null }[]>`select reason from public.advisory_plan_items where id = ${found}`)[0];
+    if (line?.reason?.startsWith(OUTSIDE_REPORT)) {
+      await setAuditReason(tx, `${OUTSIDE_REPORT}: a further call on this fund`);
+      await tx`update public.advisory_plan_items set target_amount = target_amount + ${amount} where id = ${found}`;
+    }
+    return found;
+  }
+  if (a.action !== "BUY") {
+    const keep = (await tx<{ id: string; report_question: string | null; reason: string | null }[]>`
+      select id, report_question, reason from public.advisory_plan_items
+      where plan_id = ${plan.id} and security_id = ${a.securityId} and action = 'RETAIN' and status = 'OPEN'
+      order by current_amount desc nulls last limit 1`)[0];
+    if (keep) {
+      await setAuditReason(tx, `${OUTSIDE_REPORT}: Keep line became a Sell of ₹${amount.toLocaleString("en-IN")}`);
+      await tx`
+        update public.advisory_plan_items set
+          action = 'SELL', target_amount = ${amount}, needs_review = false,
+          reason = ${`${OUTSIDE_REPORT}: sold ₹${amount.toLocaleString("en-IN")} (the report said: ${(keep.reason ?? "keep").slice(0, 200)})`},
+          report_answer = case when report_question is not null and report_answer is null
+                               then ${`Sold ₹${amount.toLocaleString("en-IN")} on advice`} else report_answer end
+        where id = ${keep.id}`;
+      return keep.id;
+    }
+  }
+  await setAuditReason(tx, `${OUTSIDE_REPORT}: ${a.action === "BUY" ? "Buy" : "Sell"} line added for a call`);
+  const ins = await tx<{ id: string }[]>`
+    insert into public.advisory_plan_items (plan_id, security_id, scheme_name, action, target_amount, reason, priority, status)
+    values (${plan.id}, ${a.securityId}, ${a.schemeName}, ${a.action === "BUY" ? "BUY" : "SELL"}, ${amount}, ${label}, 9000, 'OPEN')
+    returning id`;
+  return ins[0].id;
+}
+
 export async function linkCallsToPlan(tx: Tx, actor: Actor, clientId: string): Promise<{ linked: number; left: number }> {
   if (actor.role !== "ADMIN") throw new AppError("Only an admin can re-link recorded calls.", "FORBIDDEN");
-  const calls = await tx<{ id: string; security_id: string; action: "BUY" | "SELL" | "SWITCH" }[]>`
-    select ai.id, ai.security_id, ai.action
+  const calls = await tx<{ id: string; security_id: string; scheme_name: string; action: "BUY" | "SELL" | "SWITCH"; advised_amount: number }[]>`
+    select ai.id, ai.security_id, ai.scheme_name, ai.action, ai.advised_amount::float8 as advised_amount
     from public.advice_items ai join public.advice_batches b on b.id = ai.advice_batch_id
     where ai.client_id = ${clientId} and ai.plan_item_id is null and b.status = 'ACTIVE'
       and ai.status not in ('CANCELLED', 'REVISED')
     order by ai.created_at`;
   if (!calls.length) return { linked: 0, left: 0 };
-  await setAuditReason(tx, "Admin correction: link calls outside the plan to the plan line of the same fund");
   let linked = 0;
   for (const c of calls) {
-    const line = await findPlanLine(tx, clientId, c.security_id, c.action);
+    const line = await ensurePlanLine(tx, { clientId, securityId: c.security_id, schemeName: c.scheme_name, action: c.action, amount: c.advised_amount, why: "linked later" });
     if (!line) continue;
+    await setAuditReason(tx, "Admin correction: link a call outside the plan to the plan line of its fund");
     await tx`update public.advice_items set plan_item_id = ${line} where id = ${c.id}`;
     linked += 1;
   }

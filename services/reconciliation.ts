@@ -11,7 +11,7 @@ import {
 import { matchTransactions, istDate, type MatchCall, type MatchTxn, type SwitchTarget, type TxnProposal } from "@/lib/domain/txn-matching";
 import type { Channel, ReconciliationMatchRow, ReconciliationRunRow } from "@/types/domain";
 import { effectiveTxnType } from "@/lib/parsers/cas";
-import { findPlanLine, issueAdvice } from "./advice";
+import { issueAdvice } from "./advice";
 
 export const TXN_ENGINE_VERSION = "v2-transactions";
 
@@ -614,8 +614,6 @@ export async function recordAdvisedOffline(
     throw new AppError(`The call must have been given on or before the trade (${m.transaction_date}).`);
   }
 
-  // The plan line for this fund: Sell or Buy.
-  const planItemId = await findPlanLine(tx, m.client_id, m.security_id, action);
 
   await setAuditReason(tx, opts.note?.trim() || "Call given outside the dashboard; recorded from the CAS trade");
   const b = await issueAdvice(tx, actor, {
@@ -624,7 +622,6 @@ export async function recordAdvisedOffline(
     channel: opts.channel,
     notes: `Recorded after the trade: advised outside the dashboard${opts.note ? ` (${opts.note})` : ""}`,
     items: [{
-      plan_item_id: planItemId,
       security_id: m.security_id,
       scheme_name: m.scheme_name,
       folio_number: m.folio_numbers?.[0] ?? null,
@@ -655,5 +652,7 @@ export async function recordAdvisedOffline(
       resolution_note = ${`${RECORDED_AS_ADVISED} (call ${b.batchCode})${opts.note ? `: ${opts.note}` : ""}`}
     where id = ${m.id}`;
   const res = await resolveMatch(tx, actor, ins[0].id, "CONFIRM", { note: opts.note ?? "Advised outside the dashboard" });
+  // issueAdvice put the call on the fund's Buy / Sell line (adding or converting one when needed).
+  const planItemId = (await tx<{ plan_item_id: string | null }[]>`select plan_item_id from public.advice_items where id = ${adviceItemId}`)[0]?.plan_item_id ?? null;
   return { adviceItemId, executionId: res.executionId, planItemId };
 }
