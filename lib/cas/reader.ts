@@ -2,11 +2,25 @@
  * Read a CAS PDF: open it (trying password candidates), extract text lines and
  * parse them deterministically. Pure Node: no Next.js, no network.
  */
-import { extractPdfLines, extractPdfPages, findWorkingPassword, PdfPasswordError } from "@/lib/pdf/text";
+import { extractPdfLines, extractPdfPages, findWorkingPassword, pagesToLines, PdfPasswordError } from "@/lib/pdf/text";
 import { CasParseError, parseCasLines, type CasParseOutput } from "@/lib/parsers/cas";
 import { AppError } from "@/lib/errors";
 import { ReportParseError, type AdvisoryReportParse } from "@/lib/parsers/advisory-report";
 import { parseAdvisoryReportPages } from "@/lib/parsers/report";
+
+/**
+ * A PDF whose pages are pictures (scanned, or re-saved with "Microsoft Print to
+ * PDF" / "Save as image") has no text to read.
+ */
+export function imageOnly(lines: string[]): boolean {
+  const letters = lines.filter((l) => !l.startsWith("@@PAGE_BREAK")).join("").replace(/[^A-Za-z]/g, "").length;
+  return letters < 40;
+}
+
+export const IMAGE_ONLY_CAS =
+  "This CAS PDF has no text: its pages are pictures (it was scanned, or re-saved with \"Microsoft Print to PDF\" / \"Print → Save as PDF\"). Upload the original CAS PDF as received from CAMS / KFintech (the password-protected one from the email or the CAMS / MF Central website). Do not print or re-save it.";
+export const IMAGE_ONLY_REPORT =
+  "This report PDF has no text: its pages are pictures (scanned, or re-saved with \"Microsoft Print to PDF\"). Upload the original report PDF.";
 
 export interface CasReadResult {
   parsed: CasParseOutput;
@@ -29,6 +43,7 @@ export async function readCasPdf(bytes: Uint8Array, candidates: string[]): Promi
   } catch {
     throw new AppError("The PDF opened but its text could not be read.");
   }
+  if (imageOnly(lines)) throw new AppError(IMAGE_ONLY_CAS);
   try {
     return { parsed: parseCasLines(lines), passwordProtected: password !== null };
   } catch (e) {
@@ -41,7 +56,9 @@ export async function readCasPdf(bytes: Uint8Array, candidates: string[]): Promi
 export async function readReportPdf(bytes: Uint8Array, candidates: string[]): Promise<AdvisoryReportParse> {
   try {
     const pw = await findWorkingPassword(bytes, candidates);
-    return parseAdvisoryReportPages(await extractPdfPages(bytes, pw));
+    const pages = await extractPdfPages(bytes, pw);
+    if (imageOnly(pagesToLines(pages))) throw new AppError(IMAGE_ONLY_REPORT);
+    return parseAdvisoryReportPages(pages);
   } catch (e) {
     if (e instanceof PdfPasswordError) throw new AppError("The advisory report is password protected and none of the passwords worked.");
     if (e instanceof ReportParseError) throw new AppError(`The advisory report could not be read: ${e.message}`);
@@ -83,6 +100,7 @@ export async function identifyPdf(bytes: Uint8Array, candidates: string[]): Prom
   } catch {
     return { kind: "UNREADABLE", error: "The PDF opened but its text could not be read (scanned image?)." };
   }
+  if (imageOnly(lines)) return { kind: "UNREADABLE", error: IMAGE_ONLY_CAS.replace("This CAS PDF", "This PDF").replace("CAS PDF as received", "PDF as received") };
   // Try the CAS reader, then the report readers; the words on the page decide only when both fail
   // (reports often quote "Consolidated Account Statement" and CAMS/KFintech too).
   let casError: string | null = null;
@@ -109,7 +127,9 @@ export async function readReportDetailed(bytes: Uint8Array, candidates: string[]
     throw new AppError("The advisory report could not be read as a PDF.");
   }
   try {
-    return { report: parseAdvisoryReportPages(await extractPdfPages(bytes, pw)), error: null };
+    const pages = await extractPdfPages(bytes, pw);
+    if (imageOnly(pagesToLines(pages))) return { report: null, error: IMAGE_ONLY_REPORT };
+    return { report: parseAdvisoryReportPages(pages), error: null };
   } catch (e) {
     if (e instanceof ReportParseError) return { report: null, error: e.message };
     return { report: null, error: "The report's text could not be read." };
