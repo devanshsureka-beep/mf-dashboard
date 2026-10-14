@@ -13,7 +13,7 @@ const hold = (fund: string, value: number) => ({ fund, folio: null, folio_count:
 // Sells HDFC Defence, keeps four funds; HSBC Value is never mentioned in the report.
 const base: ReportAiAnswer = {
   client_name: "Test Investor", report_cas_date: "2026-09-18", prepared_date: null, portfolio_value: null, risk_profile: null, goal: null,
-  sells: [{ fund: "HDFC Defence Fund", folio: "00004000/14", folio_count: 1, plan_type: "DIRECT", partial: false, value: 227651.49 }],
+  sells: [{ fund: "HDFC Defence Fund", folio: "00004000/14", folio_count: 1, plan_type: "DIRECT", partial: false, value: 227651.49, percent: null }],
   sell_total: 227651.49,
   buys: [{ fund: "Parag Parikh Flexi Cap Fund", plan_type: "DIRECT", amount: 227651.49, kind: "NEW", amc: null, category: null }],
   buy_total: 227651.49,
@@ -24,19 +24,21 @@ const base: ReportAiAnswer = {
   ],
   report_kind: "FULL_REVIEW", fresh_money: null,
   cas_funds_not_in_report: [],
+  questions: [],
   corrections: ["Read the sell table."],
 };
 const reply = (a: ReportAiAnswer) => ({ report: answerToReport(a, null), corrections: a.corrections });
 const far = () => Date.now() + 600_000;
 
 describe("Claude resolves what the built-in reader could not, in rounds", () => {
-  it("a TRIM with no amount is kept with a note for the advisor, not a sell and not a blocker", () => {
-    const trim = answerToReport({ ...base, holds: base.holds.slice(1), sells: [...base.sells, { fund: "360 ONE Flexicap Fund (formerly IIFL Focused Equity Fund)", folio: null, folio_count: 1, plan_type: "DIRECT", partial: true, value: 0 }], cas_funds_not_in_report: ["HSBC Value Fund - Direct Growth"] }, null);
+  it("a TRIM with no amount or percentage is kept and asked to the advisor, not a sell and not a blocker", () => {
+    const trim = answerToReport({ ...base, holds: base.holds.slice(1), sells: [...base.sells, { fund: "360 ONE Flexicap Fund (formerly IIFL Focused Equity Fund)", folio: null, folio_count: 1, plan_type: "DIRECT", partial: true, value: 0, percent: null }], cas_funds_not_in_report: ["HSBC Value Fund - Direct Growth"] }, null);
     expect(trim.problems).toEqual([]);
     const plan = buildPlanFromReport(trim, holdingsFromCas(cas), cas.valuationDate);
     expect(plan.problems).toEqual([]);
-    expect(plan.items.find((i) => /360 ONE/.test(i.scheme_name))).toMatchObject({ action: "RETAIN", reason: expect.stringMatching(/TRIM advised .* advisor to set the amount/) });
-    expect(plan.notes).toMatch(/360 ONE .* says TRIM but gives no amount/);
+    expect(plan.items.find((i) => /360 ONE/.test(i.scheme_name))).toMatchObject({
+      action: "RETAIN", reason: "Report: Trim (no amount given)", question: expect.stringMatching(/How much should be sold/),
+    });
   });
 
   it("a CAS fund the report never mentions blocks, unless Claude confirms it is absent; then it is kept and flagged", () => {

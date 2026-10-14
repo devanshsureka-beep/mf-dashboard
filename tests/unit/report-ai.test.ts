@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { answerToReport, askClaudeForReport, buildReportAiRequest, REPORT_AI_SCHEMA, type ReportAiAnswer } from "@/lib/integrations/report-ai";
 import { buildPlanFromReport, type PlanHolding } from "@/lib/domain/report-plan";
+import { mapSellAction, percentOf } from "@/lib/parsers/advisory-report";
 
 const holdings: PlanHolding[] = [
   { scheme_name: "HDFC Flexi Cap Fund - Regular Plan - Growth", isin: "INF179K01BE2", folio_number: "1111/11", current_value: 500000, plan_type: "REGULAR" },
@@ -11,7 +12,7 @@ const holdings: PlanHolding[] = [
 const answer: ReportAiAnswer = {
   client_name: "Sample Client", report_cas_date: "2026-09-20", prepared_date: "2026-09-22", portfolio_value: 1000000,
   risk_profile: "Aggressive", goal: null,
-  sells: [{ fund: "HDFC Flexi Cap Fund (Regular)", folio: "1111/11", folio_count: 1, plan_type: "REGULAR", partial: false, value: 495000 }],
+  sells: [{ fund: "HDFC Flexi Cap Fund (Regular)", folio: "1111/11", folio_count: 1, plan_type: "REGULAR", partial: false, value: 495000, percent: null }],
   sell_total: 495000,
   buys: [
     { fund: "HDFC Flexi Cap Fund", plan_type: "DIRECT", amount: 300000, kind: "NEW", amc: "HDFC", category: "Flexi Cap" },
@@ -25,6 +26,7 @@ const answer: ReportAiAnswer = {
   ],
   report_kind: "FULL_REVIEW", fresh_money: null,
   cas_funds_not_in_report: [],
+  questions: [],
   corrections: ["Added the HDFC Flexi Cap exit the reader missed."],
 };
 
@@ -42,7 +44,7 @@ describe("Claude's answer goes through the same CAS tie-out", () => {
   });
 
   it("an invented line or wrong total is still caught", () => {
-    const invented = answerToReport({ ...answer, sells: [...answer.sells, { fund: "Quant Active Fund", folio: null, folio_count: 1, plan_type: "DIRECT", partial: false, value: 100000 }] }, null);
+    const invented = answerToReport({ ...answer, sells: [...answer.sells, { fund: "Quant Active Fund", folio: null, folio_count: 1, plan_type: "DIRECT", partial: false, value: 100000, percent: null }] }, null);
     expect(invented.problems[0]).toMatch(/sell lines add up to ₹5,95,000.*₹4,95,000/);
     const plan = buildPlanFromReport(invented, holdings, "2026-09-23");
     expect(plan.problems.some((p) => /Quant Active/.test(p))).toBe(true);
@@ -125,5 +127,40 @@ describe("calling Claude through n8n", () => {
     vi.unstubAllEnvs();
     vi.stubEnv("REPORT_AI_URL", "");
     await expect(askClaudeForReport(input)).rejects.toThrow(/not set up/);
+  });
+});
+
+describe("Report wording becomes Buy, Sell or Keep; what cannot is asked", () => {
+  it("a trim given as a percentage sells that share of the CAS holding", () => {
+    const report = answerToReport({
+      ...answer,
+      sells: [...answer.sells, { fund: "Axis Small Cap Fund", folio: null, folio_count: 1, plan_type: "DIRECT", partial: true, value: 0, percent: 33 }],
+      sell_total: null,
+      holds: answer.holds.filter((h) => !/Axis/.test(h.fund)),
+    }, null);
+    expect(report.problems).toEqual([]);
+    const plan = buildPlanFromReport(report, holdings, "2026-09-23");
+    expect(plan.problems).toEqual([]);
+    expect(plan.items.find((i) => i.isin === "INF846K01K35")).toMatchObject({ action: "SELL", target_amount: 99000, reason: "Trim 33%" });
+  });
+
+  it("an unclear recommendation is a Keep line carrying the question, not a blocker", () => {
+    const report = answerToReport({
+      ...answer,
+      holds: answer.holds.filter((h) => !/Axis/.test(h.fund)),
+      questions: [{ fund: "Axis Small Cap Fund", folio: null, folio_count: 1, plan_type: "DIRECT", report_text: "Rebalance towards target weight", question: "Sell how much, or keep?" }],
+    }, null);
+    const plan = buildPlanFromReport(report, holdings, "2026-09-23");
+    expect(plan.problems).toEqual([]);
+    expect(plan.items.find((i) => i.isin === "INF846K01K35")).toMatchObject({
+      action: "RETAIN", target_amount: 0, reason: "Report: Rebalance towards target weight", question: "Sell how much, or keep?",
+    });
+  });
+
+  it("reads other words for sell, switch and keep, and shares given as words", () => {
+    expect(["Redemption", "Liquidate", "Book profits", "Right-size", "Lighten"].map(mapSellAction)).toEqual(["SELL", "SELL", "SELL", "SELL", "SELL"]);
+    expect(["Consolidate into PPFAS", "Move to Direct", "Switch"].map(mapSellAction)).toEqual(["SWITCH", "SWITCH", "SWITCH"]);
+    expect(["Stay invested", "Maintain", "No change"].map(mapSellAction)).toEqual(["RETAIN", "RETAIN", "RETAIN"]);
+    expect(["Trim 33%", "sell 12.5 %", "sell half", "reduce by one-third", "Trim"].map(percentOf)).toEqual([33, 12.5, 50, 33.33, null]);
   });
 });

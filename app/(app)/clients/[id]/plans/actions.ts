@@ -7,7 +7,7 @@ import { AppError } from "@/lib/errors";
 import { actionTx, ADVISORY_ROLES } from "@/lib/server";
 import {
   addPlanItem, addSipItem, approvePlan, cancelPlanItem, closePlan, createDraftPlan, deleteDraftPlanItem,
-  deleteDraftSipItem, updatePlanItem, type PlanItemInput,
+  deleteDraftSipItem, updatePlanItem, answerReportQuestion, type PlanItemInput,
 } from "@/services/plans";
 import type { Tx } from "@/lib/db/tx";
 import { convertMigrateNotes } from "@/services/migrations";
@@ -198,5 +198,22 @@ export async function updateSipAmountsAction(clientId: string, planId: string, s
     }, reqStr(fd, "reason", "Reason")), opts);
     refresh(clientId, planId);
     return "SIP line updated.";
+  });
+}
+
+/** The desk explains a recommendation the reader could not place: Buy, Sell (₹ or %) or Keep. */
+export async function answerReportQuestionAction(clientId: string, planId: string, itemId: string, _p: ActionResult | null, fd: FormData): Promise<ActionResult> {
+  return runAction("answerReportQuestion", async () => {
+    const action = str(fd, "action");
+    if (!["SELL", "BUY", "RETAIN"].includes(action)) throw new AppError("Choose Buy, Sell or Keep.");
+    const raw = str(fd, "size").replace(/[₹,\s]/g, "");
+    const percent = /%$/.test(raw) ? Number(raw.slice(0, -1)) : null;
+    const amount = percent === null && raw ? Number(raw) : null;
+    if ((percent !== null && !Number.isFinite(percent)) || (amount !== null && !Number.isFinite(amount))) throw new AppError("Enter the amount as ₹ (e.g. 150000) or a percentage (e.g. 33%).");
+    await actionTx((tx, actor) => answerReportQuestion(tx, actor, itemId, {
+      action: action as "SELL" | "BUY" | "RETAIN", amount, percent, explanation: reqStr(fd, "explanation", "Explanation"),
+    }), opts);
+    refresh(clientId, planId);
+    return action === "RETAIN" ? "Answered: kept." : `Answered: ${action === "SELL" ? "sell" : "buy"} line set.`;
   });
 }

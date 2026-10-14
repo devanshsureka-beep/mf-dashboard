@@ -34,6 +34,8 @@ export interface PlanItemDraft {
   current_amount: number | null;
   reason: string | null;
   priority: number;
+  /** The report's wording could not be read as Buy, Sell or Keep: asked on the plan (the line is a Keep until answered). */
+  question?: string | null;
   /** For BUY rows: details used to create a name-only security if needed. */
   amc?: string | null;
   plan_type?: "DIRECT" | "REGULAR" | null;
@@ -234,6 +236,7 @@ export function buildPlanFromReport(
       // One row for several folios of the same fund ("x2 folios"): all of them, values summed.
       const group = wholeFund ? allFolios : sameFundHoldings(s.fund, live.filter((x) => !taken.has(x)), planType);
       const total = group.reduce((t, x) => t + x.current_value, 0);
+      if (s.partial && !s.value && s.percent) s.value = Math.round(total * s.percent) / 100;
       if (!wholeFund && group.length !== s.folioCount) {
         problems.push(`Sell row "${s.fund}" covers ${s.folioCount} folios, but the CAS has ${group.length} matching folio(s).`);
         continue;
@@ -266,6 +269,8 @@ export function buildPlanFromReport(
     }
     taken.add(h);
     alias.push({ fund: s.fund, holdings: [h] });
+    // "Trim 33%": that share of the CAS holding.
+    if (s.partial && !s.value && s.percent) s.value = Math.round(h.current_value * s.percent) / 100;
     if (!s.partial && !valueOk(s.value, h.current_value, h.scheme_name)) {
       problems.push(`${h.scheme_name}: the report sells ${inr(s.value)} as a full exit, but the CAS holding is ${inr(h.current_value)}${sameStatement ? "" : ` (more than ${NAV_DRIFT_LIMIT * 100}% apart, too much for NAV movement)`}.`);
     }
@@ -291,6 +296,8 @@ export function buildPlanFromReport(
   const unreported: string[] = [];
   // Holdings the report moves from Regular to the Direct plan of the same fund -> Direct fund name.
   const migrateTo = new Map<PlanHolding, string>();
+  // Holdings whose recommendation the desk must explain (see report.questions).
+  const asked = new Map<PlanHolding, NonNullable<AdvisoryReportParse["questions"]>[number]>();
   const isMigrate = (note: string | null | undefined) => /MIGRATE TO DIRECT/i.test(note ?? "");
   const directName = (fund: string) =>
     withPlanType(fund.replace(/\s*[-(]?\s*\b(regular|reg)\b(\s+plan)?\s*\)?/gi, " ").replace(/\s+/g, " ").trim(), "DIRECT");
@@ -376,6 +383,19 @@ export function buildPlanFromReport(
         if (isMigrate(m.note)) migrateTo.set(g, directName(m.fund));
       }
     }
+    // Recommendations that could not be read as Buy / Sell / Keep: a Keep line with the question.
+    for (const q of report.questions ?? []) {
+      const group = pick(q.fund, q.folio, q.folioCount, q.planType).filter((g) => !taken.has(g));
+      if (!group.length) {
+        items.push({ action: "RETAIN", scheme_name: q.fund, isin: null, folio_number: q.folio, target_amount: 0, current_amount: null,
+          reason: `Report: ${q.reportText}`.slice(0, 300), question: q.question, priority: (priority += 10), plan_type: q.planType });
+        continue;
+      }
+      for (const g of group) {
+        covered.add(g);
+        asked.set(g, q);
+      }
+    }
     for (const x of [...report.sips.filter((z) => z.change !== "START").map((z) => ({ fund: z.fund, planType: z.planType })), ...report.buys.filter((b) => b.kind === "TOP_UP").map((b) => ({ fund: b.fund, planType: b.planType }))]) {
       const pt = x.planType ?? detectPlanType(x.fund);
       for (const g of [...viaAlias(x.fund, pt), ...sameFundHoldings(x.fund, live, pt)]) covered.add(g);
@@ -402,6 +422,12 @@ export function buildPlanFromReport(
 
   for (const h of live) {
     if (taken.has(h)) continue;
+    const q = asked.get(h);
+    if (q) {
+      items.push({ action: "RETAIN", scheme_name: h.scheme_name, isin: h.isin, folio_number: h.folio_number, target_amount: 0,
+        current_amount: h.current_value, reason: `Report: ${q.reportText}`.slice(0, 300), question: q.question, priority: (priority += 10) });
+      continue;
+    }
     const to = migrateTo.get(h);
     if (to && holdingPlan(h) === "REGULAR") {
       items.push({

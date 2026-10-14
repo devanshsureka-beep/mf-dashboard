@@ -1,6 +1,7 @@
 import type { Actor, Tx } from "@/lib/db/tx";
 import { setAuditReason } from "@/lib/db/tx";
 import { AppError } from "@/lib/errors";
+import { countOpenReportQuestions } from "./plans";
 
 /**
  * Everything kept about a premium client beyond the plan and calls:
@@ -293,6 +294,8 @@ export interface ClientAlerts {
   draftPlan: { id: string; name: string; kind: string } | null;
   followUpsDue: number;
   openCalls: number;
+  /** Report wording the desk must explain (Buy / Sell / Keep), on the plan that has the most pressing ones. */
+  reportQuestions: { planId: string; n: number } | null;
 }
 
 export async function getClientAlerts(tx: Tx, clientId: string): Promise<ClientAlerts> {
@@ -310,7 +313,9 @@ export async function getClientAlerts(tx: Tx, clientId: string): Promise<ClientA
     where client_id = ${clientId} and deleted_at is null and follow_up_date is not null and follow_up_date <= app.today_ist()
       and follow_up_done_at is null`)[0];
   const calls = (await tx<{ n: number }[]>`select count(*)::int as n from public.v_advice_items where client_id = ${clientId} and is_open`)[0];
+  const questions = await countOpenReportQuestions(tx, clientId);
   return {
+    reportQuestions: questions,
     unadvised: un.length ? { runId: un[0].run_id, runs: un.length, count: un.reduce((t, r) => t + r.n, 0), amount: un.reduce((t, r) => t + r.amount, 0) } : null,
     draftPlan: draft ? { id: draft.id, name: draft.plan_name, kind: draft.plan_kind } : null,
     followUpsDue: fu?.n ?? 0,

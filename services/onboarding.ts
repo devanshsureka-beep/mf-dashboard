@@ -249,6 +249,7 @@ export async function onboardFromDocuments(
       action: i.action, scheme_name: i.scheme_name, isin: i.isin, folio_number: i.folio_number,
       target_amount: i.target_amount, current_amount: i.current_amount, reason: i.reason, priority: i.priority,
       switch_to_scheme_name: i.switch_to_scheme_name ?? null,
+      question: i.question ?? null,
     })),
     sip_items: draft.sip_items.map((s) => ({
       action: s.action, scheme_name: s.scheme_name, isin: s.isin, folio_number: s.folio_number,

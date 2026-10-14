@@ -25,6 +25,8 @@ export interface ReportSellRow {
   /** Part of the holding only ("Trim ₹5L", "partial"), not a full exit. */
   partial: boolean;
   value: number;
+  /** "Trim 33%": the share of the holding to sell, when the report gives a percentage and no amount. */
+  percent?: number | null;
   /** One row covering several folios of the same fund ("x2 folios"). */
   folioCount?: number;
   /** "(Reg)" / "(Direct)" in the fund cell. */
@@ -99,10 +101,26 @@ export interface AdvisoryReportParse {
   reportKind?: "FULL" | "ADDITIONAL" | null;
   /** Fresh money the report invests (rupees), when it says so. */
   freshMoney?: number | null;
+  /**
+   * Funds whose recommendation could not be read as Buy, Sell or Keep: kept for
+   * now, and the question goes to the advisor on the plan (not a blocking problem).
+   */
+  questions?: ReportQuestion[];
   /** Anything that does not reconcile. Callers must block on any entry. */
   problems: string[];
   /** @deprecated alias of `problems` */
   warnings: string[];
+}
+
+export interface ReportQuestion {
+  fund: string;
+  folio: string | null;
+  folioCount: number;
+  planType: "DIRECT" | "REGULAR" | null;
+  /** What the report says about the fund, word for word. */
+  reportText: string;
+  /** What the desk must tell us to turn it into Buy, Sell or Keep. */
+  question: string;
 }
 
 export class ReportParseError extends Error {
@@ -148,12 +166,31 @@ function planTypeOf(s: string): "DIRECT" | "REGULAR" | null {
   return null;
 }
 
+/**
+ * The report's action word -> Sell / Switch / Keep. A switch (or consolidating /
+ * moving into another fund) is a Sell here plus a Buy of the fund it goes to.
+ */
 export function mapSellAction(text: string): ReportSellAction {
   const t = text.toLowerCase();
-  if (/switch/.test(t)) return "SWITCH";
-  if (/full exit|exit|redeem|sell|trim|partial|reduce|withdraw/.test(t)) return "SELL";
-  if (/retain|hold|keep|continue/.test(t)) return "RETAIN";
+  if (/switch|consolidat|merge into|move (in)?to|shift (in)?to/.test(t)) return "SWITCH";
+  if (/full exit|exit|redeem|redemption|sell|trim|partial|reduce|withdraw|liquidat|book(ing)? profits?|right[- ]?size|cut|prune|scale down|lighten/.test(t)) return "SELL";
+  if (/retain|hold|keep|continue|stay invested|maintain|no change/.test(t)) return "RETAIN";
   return "UNKNOWN";
+}
+
+/** "Trim 33%" / "sell 50 %" / "reduce by one-third" -> 33 / 50 / 33.33; null when no share is given. */
+export function percentOf(text: string): number | null {
+  const m = /(\d+(?:\.\d+)?)\s*%/.exec(text);
+  if (m) {
+    const p = Number(m[1]);
+    return p > 0 && p <= 100 ? p : null;
+  }
+  const t = text.toLowerCase();
+  if (/\bhalf\b/.test(t)) return 50;
+  if (/one[- ]third|1\/3/.test(t)) return Math.round(10000 / 3) / 100;
+  if (/two[- ]thirds|2\/3/.test(t)) return Math.round(20000 / 3) / 100;
+  if (/one[- ]fourth|one[- ]quarter|1\/4/.test(t)) return 25;
+  return null;
 }
 
 export function mapRisk(text: string | null): string | null {
@@ -167,17 +204,17 @@ export function mapRisk(text: string | null): string | null {
   return null;
 }
 
-const VERDICT_RE = /^(EXIT|SELL|HOLD|KEEP|RETAIN|TRIM|REDUCE|ADD|TOP[- ]?UP|BUY|SWITCH)\b/;
+const VERDICT_RE = /^(EXIT|SELL|REDEEM|LIQUIDATE|HOLD|KEEP|RETAIN|CONTINUE|MAINTAIN|TRIM|REDUCE|BOOK PROFITS?|PARTIAL(?: EXIT| SELL)?|ADD|TOP[- ]?UP|BUY|ACCUMULATE|SWITCH|CONSOLIDATE)\b/;
 function mapVerdict(text: string): { verdict: ReviewVerdict | null; amount: number | null; deferred?: boolean } {
   const word = VERDICT_RE.exec(text)?.[1] ?? "";
   const amount = money(/₹\s?[\d,.]+\s*(L|Cr|k)?/i.exec(text)?.[0]);
   // "EXIT LATER" / "EXIT 2027" / "EXIT AFTER …": kept now, sold in a later tranche.
   if (/^(EXIT|SELL)\s+(LATER|AFTER|IN|\d{4}|NEXT)/i.test(text)) return { verdict: "HOLD", amount: null, deferred: true };
-  if (/^(EXIT|SELL)$/.test(word)) return { verdict: "EXIT", amount: null };
-  if (/^(HOLD|KEEP|RETAIN)$/.test(word)) return { verdict: "HOLD", amount: null };
-  if (/^(TRIM|REDUCE)$/.test(word)) return { verdict: "TRIM", amount };
-  if (/^(ADD|TOP[- ]?UP|BUY)$/.test(word)) return { verdict: "ADD", amount };
-  if (word === "SWITCH") return { verdict: "SWITCH", amount: null };
+  if (/^(EXIT|SELL|REDEEM|LIQUIDATE)$/.test(word)) return { verdict: "EXIT", amount: null };
+  if (/^(HOLD|KEEP|RETAIN|CONTINUE|MAINTAIN)$/.test(word)) return { verdict: "HOLD", amount: null };
+  if (/^(TRIM|REDUCE|BOOK PROFITS?|PARTIAL.*)$/.test(word)) return { verdict: "TRIM", amount };
+  if (/^(ADD|TOP[- ]?UP|BUY|ACCUMULATE)$/.test(word)) return { verdict: "ADD", amount };
+  if (/^(SWITCH|CONSOLIDATE)$/.test(word)) return { verdict: "SWITCH", amount: null };
   return { verdict: null, amount: null };
 }
 

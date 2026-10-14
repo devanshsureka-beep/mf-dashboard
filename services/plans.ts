@@ -418,7 +418,7 @@ export async function ingestAdvisoryReport(
   let switchedInAmount = 0;
   for (const it of payload.items) {
     const sug = known(it.scheme_name) ?? (await suggestSecurity(tx, it.scheme_name, it.isin, pool));
-    const flag = !sug.confident && it.action !== "RETAIN";
+    const flag = (!sug.confident && it.action !== "RETAIN") || Boolean(it.question);
     if (flag) needsReview++;
     const moves = it.action === "MIGRATE" || it.action === "SWITCH";
     const reason = it.action === "MIGRATE"
@@ -429,7 +429,8 @@ export async function ingestAdvisoryReport(
       plan_id: planId, client_id: clientId, security_id: sug.id, scheme_name: it.scheme_name, folio_number: it.folio_number ?? null,
       action: moves ? "SELL" : it.action, target_amount: it.target_amount, target_units: it.target_units ?? null, current_amount: it.current_amount ?? null,
       target_weight: it.target_weight ?? null, reason, priority: it.priority ?? priority, needs_review: flag,
-      notes: flag ? "Security match needs confirmation (extracted from report)." : null, created_by: createdBy,
+      notes: flag && !it.question ? "Security match needs confirmation (extracted from report)." : null, created_by: createdBy,
+      report_question: it.question ?? null,
     });
     if (moves && it.switch_to_scheme_name && it.target_amount > 0) {
       // The Buy leg: the fund to move to (resolved by the caller, or a confident match).
@@ -442,6 +443,7 @@ export async function ingestAdvisoryReport(
         reason: it.action === "MIGRATE" ? "Migrate to Direct: buy the Direct plan with the Regular redemption" : `Switch: buy with the money from ${it.scheme_name}`,
         priority: (it.priority ?? priority) + 1, needs_review: !to.confident,
         notes: to.confident ? null : "Security match needs confirmation (extracted from report).", created_by: createdBy,
+        report_question: null,
       });
       if (it.action === "MIGRATE") migratedAmount += it.target_amount;
       switchedInAmount += it.target_amount;
@@ -483,4 +485,91 @@ export async function ingestAdvisoryReport(
     await tx`update public.advisory_plans set notes = coalesce(notes || E'\n\n', '') || ${`Extraction warnings:\n- ${warnings.join("\n- ")}`} where id = ${planId}`;
   }
   return { planId, clientId, itemsNeedingReview: needsReview, warnings };
+}
+
+// -----------------------------------------------------------------------------
+// Questions from the report: wording that could not be read as Buy / Sell / Keep
+// -----------------------------------------------------------------------------
+export interface ReportQuestionRow {
+  id: string;
+  plan_id: string;
+  scheme_name: string;
+  folio_number: string | null;
+  security_id: string | null;
+  current_amount: number | null;
+  reason: string | null;
+  report_question: string;
+  report_answer: string | null;
+  action: string;
+  target_amount: number;
+  open: boolean;
+}
+
+export async function listReportQuestions(tx: Tx, planId: string): Promise<ReportQuestionRow[]> {
+  return tx<ReportQuestionRow[]>`
+    select id, plan_id, scheme_name, folio_number, security_id, current_amount::float8 as current_amount, reason,
+           report_question, report_answer, action, target_amount::float8 as target_amount,
+           (report_answer is null and status = 'OPEN') as open
+    from public.advisory_plan_items
+    where plan_id = ${planId} and report_question is not null and status <> 'CANCELLED'
+    order by (report_answer is null) desc, priority, scheme_name`;
+}
+
+/** Open report questions on a client's DRAFT / ACTIVE plans (for alerts). */
+export async function countOpenReportQuestions(tx: Tx, clientId: string): Promise<{ planId: string; n: number } | null> {
+  const r = (await tx<{ plan_id: string; n: number }[]>`
+    select pi.plan_id, count(*)::int as n
+    from public.advisory_plan_items pi join public.advisory_plans p on p.id = pi.plan_id and p.status in ('DRAFT', 'ACTIVE')
+    where pi.client_id = ${clientId} and pi.report_question is not null and pi.report_answer is null and pi.status = 'OPEN'
+    group by pi.plan_id, p.status order by (p.status = 'ACTIVE') desc limit 1`)[0];
+  return r ? { planId: r.plan_id, n: r.n } : null;
+}
+
+export interface ReportAnswer {
+  action: "SELL" | "BUY" | "RETAIN";
+  /** Rupees; or percent of the holding for a Sell. */
+  amount?: number | null;
+  percent?: number | null;
+  explanation: string;
+}
+
+/**
+ * The desk explains a recommendation the reader could not place: the line
+ * becomes a Buy, Sell or Keep with the explanation kept on it. On an ACTIVE
+ * plan the explanation is the audit reason.
+ */
+export async function answerReportQuestion(tx: Tx, actor: Actor, itemId: string, a: ReportAnswer): Promise<void> {
+  if (actor.role === "OPERATIONS") throw new AppError("Only an advisor or admin can answer a question on the plan.", "FORBIDDEN");
+  const explanation = a.explanation.trim();
+  if (!explanation) throw new AppError("Explain what the report means for this fund.");
+  const it = (await tx<{ plan_id: string; scheme_name: string; security_id: string | null; current_amount: number | null; report_question: string | null; reason: string | null; status: string }[]>`
+    select plan_id, scheme_name, security_id, current_amount::float8 as current_amount, report_question, reason, status
+    from public.advisory_plan_items where id = ${itemId} for update`)[0];
+  if (!it || !it.report_question) throw new AppError("Question not found.", "NOT_FOUND");
+  if (it.status !== "OPEN") throw new AppError("This plan line is closed.");
+  await assertPlanStatus(tx, it.plan_id, ["DRAFT", "ACTIVE"]);
+  let target = 0;
+  if (a.action !== "RETAIN") {
+    const pct = Number(a.percent) > 0 ? Number(a.percent) : null;
+    if (pct && a.action === "SELL") {
+      if (pct > 100) throw new AppError("A percentage cannot be over 100.");
+      if (!(Number(it.current_amount) > 0)) throw new AppError("The holding's value is not known: enter the amount in rupees.");
+      target = Math.round(Number(it.current_amount) * pct) / 100;
+    } else {
+      target = Number(a.amount);
+    }
+    if (!(target > 0)) throw new AppError(`Enter the amount to ${a.action === "SELL" ? "sell (₹ or % of the holding)" : "buy"}.`);
+    if (a.action === "SELL" && Number(it.current_amount) > 0 && target > Number(it.current_amount) * 1.02) {
+      throw new AppError("That is more than the client holds in this fund.");
+    }
+    if (!it.security_id) throw new AppError("Pick the fund for this line first (Edit on the plan line).");
+  }
+  await setAuditReason(tx, `Report question answered: ${explanation}`.slice(0, 500));
+  const what = a.action === "RETAIN" ? "Keep" : `${a.action === "SELL" ? "Sell" : "Buy"} ₹${target.toLocaleString("en-IN")}${a.percent && a.action === "SELL" ? ` (${a.percent}%)` : ""}`;
+  await tx`
+    update public.advisory_plan_items set
+      action = ${a.action}, target_amount = ${target}, report_answer = ${explanation.slice(0, 2000)},
+      reason = ${`${it.reason ?? "Report"} → ${what}: ${explanation}`.slice(0, 4000)},
+      needs_review = (security_id is null and ${a.action} <> 'RETAIN')
+    where id = ${itemId}`;
 }

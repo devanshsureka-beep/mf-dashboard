@@ -48,7 +48,8 @@ export const REPORT_AI_SCHEMA = obj({
       folio_count: { type: "integer", description: "Folios this one row covers (1 unless the report says e.g. '2 folios')" },
       plan_type: PLAN,
       partial: { type: "boolean", description: "true when only part of the holding is sold now" },
-      value: NUM("Rupees sold now (for a full exit: the value the report shows)"),
+      value: NUM("Rupees sold now (for a full exit: the value the report shows). 0 when the report gives only a percentage."),
+      percent: NUM("Share of the holding sold now when the report gives a percentage or fraction ('trim 33%' -> 33, 'sell half' -> 50); 0 otherwise"),
     }),
   },
   sell_total: NUM("0 if the report prints no sell total"),
@@ -96,6 +97,18 @@ export const REPORT_AI_SCHEMA = obj({
     description: "CAS fund names (exactly as in the CAS list) that the report does not mention anywhere, after searching every page.",
     items: { type: "string" },
   },
+  questions: {
+    type: "array",
+    description: "Funds whose recommendation you cannot read as a buy, a sell (with an amount or percentage) or a keep. Never guess: ask.",
+    items: obj({
+      fund: TEXT("Fund name as in the CAS list when the client holds it"),
+      folio: TEXT("\"\" unless the report prints it"),
+      folio_count: { type: "integer" },
+      plan_type: PLAN,
+      report_text: TEXT("What the report says about this fund, word for word"),
+      question: TEXT("One short question to the adviser, e.g. 'Trim by how much?' or 'Does \"rebalance to target\" mean sell, and how much?'"),
+    }),
+  },
   corrections: {
     type: "array",
     description: "Short notes: what differs from the draft you were given and why (empty if nothing).",
@@ -114,8 +127,14 @@ Return the report's own recommendations in the given JSON shape. Your answer is 
 Rules:
 - Report only what the report says. Never invent a line, an amount or a total. If the report does not print a total, use 0.
 - Amounts are rupees as plain numbers: "₹5.2L" = 520000, "₹1.15 Cr" = 11500000, "16,500/mo" = 16500.
-- sells: every fund the report sells / exits / redeems / switches out NOW. partial = true when only part is sold ("trim ₹5L", "sell 50%"); value = the rupees sold now. A switch is a sell here plus a buy of the target fund.
-- A fund marked TRIM / REDUCE / RIGHT-SIZE without a rupee amount or percentage: put it in sells with partial = true and value 0 (the adviser sets the amount). Never guess an amount.
+- Every recommendation becomes a sell, a buy or a hold (keep), whatever word the report uses:
+  * sell (full): exit, sell, redeem, redemption, withdraw, liquidate, discontinue the fund.
+  * sell (partial): trim, reduce, partial exit, book profit, right-size, cut / lighten exposure, rebalance down.
+  * switch / consolidate / move / merge into another fund: a sell of this fund plus a buy of the fund it goes to.
+  * buy: buy, add, top up, accumulate, invest, new fund.
+  * hold: hold, keep, retain, continue, maintain, stay invested, no change; and "exit later" / "next tranche" (deferred).
+- sells: every fund the report sells NOW. partial = true when only part is sold. value = the rupees sold now when the report prints them. When the report gives only a share ("trim 33%", "sell half", "reduce by one-third"), set percent (33, 50, 33.33) and value 0: the app computes the rupees from the CAS. Never compute it yourself.
+- questions: if a fund's recommendation cannot be read as one of the above without guessing (a trim / reduce with no amount and no percentage, an unclear word, conflicting instructions, a condition like "sell if it underperforms"), do NOT put it in sells, buys or holds: add it to questions with the report's exact words and one short question for the adviser. The fund is kept until the adviser answers.
 - "Migrate to Direct" / "switch to the Direct plan" of the SAME fund (Regular -> Direct, money stays in that fund): not a sell and not a buy. Put the fund in holds with its value and a note that starts with "MIGRATE TO DIRECT" followed by the rest of the action (e.g. "MIGRATE TO DIRECT; Hold", "MIGRATE TO DIRECT; Consolidate"). If the same row also says Trim / Exit, apply that rule instead and mention the migration in the note.
 - holds: every fund the report keeps, holds, continues, or defers ("exit later", "next tranche", "after 1 year") with the value the report shows for it (null if none). deferred = true for anything to be sold later, not now.
 - buys: lump-sum purchases. kind = TOP_UP when the client already holds that fund (see the CAS list), else NEW.
@@ -190,7 +209,7 @@ export function buildReportAiRequest(input: ReportAiInput) {
 // ---------------------------------------------------------------------------
 // Answer -> the report shape every check already understands
 // ---------------------------------------------------------------------------
-const TRIM_NOTE = "TRIM advised in the report, amount not stated: advisor to set the amount before issuing the call.";
+const TRIM_QUESTION = "The report says trim / reduce but gives no amount or percentage. How much should be sold?";
 const inr = (n: number) => `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 const near = (a: number, b: number) => Math.abs(a - b) <= Math.max(100, Math.abs(b) * 0.005);
 
@@ -206,8 +225,8 @@ export function answerToReport(a: ReportAiAnswer, base: AdvisoryReportParse | nu
     if (s.change !== "STOP" && !s.next) problems.push(`SIP ${s.change.toLowerCase()} in ${s.fund} has no new amount.`);
   }
   for (const x of [...a.sells, ...a.buys, ...a.sips, ...a.holds]) if (!x.fund) problems.push("Claude returned a line without a fund name.");
-  // "TRIM" / "REDUCE" with no amount is advice without a size: kept for now, the advisor sets the amount.
-  const trimNoAmount = a.sells.filter((x) => !x.value && x.partial);
+  // "TRIM" / "REDUCE" with no amount and no percentage is advice without a size: asked to the desk.
+  const trimNoAmount = a.sells.filter((x) => !x.value && !x.percent && x.partial);
   for (const x of a.sells) if (!x.value && !x.partial) problems.push(`Exit of ${x.fund}: no amount found in the report.`);
   for (const x of a.buys) if (!x.amount) problems.push(`Buy of ${x.fund}: no amount found in the report.`);
   return {
@@ -221,9 +240,9 @@ export function answerToReport(a: ReportAiAnswer, base: AdvisoryReportParse | nu
     valuationDate: a.report_cas_date ?? base?.valuationDate ?? null,
     preparedDate: a.prepared_date ?? base?.preparedDate ?? null,
     currentValue: a.portfolio_value ?? base?.currentValue ?? null,
-    sells: a.sells.filter((s) => s.value > 0).map((s) => ({
-      fund: s.fund, folio: s.folio, actionText: s.partial ? "Trim" : "Exit", action: "SELL", partial: s.partial,
-      value: s.value, folioCount: s.folio_count, planType: s.plan_type,
+    sells: a.sells.filter((s) => s.value > 0 || (s.partial && s.percent)).map((s) => ({
+      fund: s.fund, folio: s.folio, actionText: s.partial ? (s.percent && !s.value ? `Trim ${s.percent}%` : "Trim") : "Exit", action: "SELL", partial: s.partial,
+      value: s.value, percent: s.value ? null : s.percent, folioCount: s.folio_count, planType: s.plan_type,
     })),
     sellTotal: a.sell_total,
     buys: a.buys.map((b) => ({ fund: b.fund, amc: b.amc, category: b.category, planType: b.plan_type, amount: b.amount, mode: null, fundedBy: null, kind: b.kind })),
@@ -244,11 +263,13 @@ export function answerToReport(a: ReportAiAnswer, base: AdvisoryReportParse | nu
         fund: h.fund, planType: h.plan_type, folio: h.folio, folioCount: h.folio_count,
         note: [h.deferred ? "Exit later (not now)" : "Kept", h.note].filter(Boolean).join(": "),
       })),
-      ...trimNoAmount.map((t) => ({ fund: t.fund, planType: t.plan_type, folio: t.folio, folioCount: t.folio_count, note: TRIM_NOTE })),
+    ],
+    questions: [
+      ...trimNoAmount.map((t) => ({ fund: t.fund, planType: t.plan_type, folio: t.folio, folioCount: t.folio_count, reportText: "Trim (no amount given)", question: TRIM_QUESTION })),
+      ...a.questions.map((q) => ({ fund: q.fund, planType: q.plan_type, folio: q.folio, folioCount: q.folio_count, reportText: q.report_text, question: q.question })),
     ],
     notInReport: a.cas_funds_not_in_report,
     deploymentNotes: [
-      ...trimNoAmount.map((t) => `${t.fund}: the report says TRIM but gives no amount. Kept for now; set the amount before issuing the call.`),
       ...(base?.deploymentNotes ?? []).filter((n) => !/^Report read with Claude|^  - |the report says TRIM but gives no amount/.test(n)),
       ...(a.corrections.length ? ["Report read with Claude's help; corrected lines:", ...a.corrections.map((c) => `  - ${c}`)] : ["Report read with Claude's help."]),
     ],

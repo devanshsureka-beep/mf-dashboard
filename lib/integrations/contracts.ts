@@ -98,6 +98,8 @@ export const advisoryPlanItemSchema = z.object({
   reason: z.string().trim().max(4000).optional().nullable(),
   priority: z.coerce.number().int().min(1).max(1000).optional().nullable(),
   switch_to_scheme_name: optionalText,
+  /** The report's wording could not be read as Buy / Sell / Keep: asked on the plan; the line needs review. */
+  question: z.string().trim().max(500).optional().nullable(),
 });
 
 export const advisorySipItemSchema = z.object({
@@ -201,6 +203,8 @@ export const reportAiAnswerSchema = z.object({
   sells: z.array(z.object({
     fund: fundZ, folio: textZ, folio_count: countZ,
     plan_type: planZ, partial: z.boolean(), value: aiAmountZ,
+    // "Trim 33%" -> 33; 0 when the report gives no percentage.
+    percent: z.number().min(0).max(100).nullish().transform((p) => (p && p > 0 ? p : null)),
   })).max(200),
   sell_total: optAmountZ,
   buys: z.array(z.object({
@@ -219,6 +223,11 @@ export const reportAiAnswerSchema = z.object({
   report_kind: z.enum(["FULL_REVIEW", "ADDITIONAL_INVESTMENT"]).nullable().default(null),
   fresh_money: optAmountZ.default(null),
   cas_funds_not_in_report: z.array(z.string()).max(200).default([]),
+  // Recommendations Claude could not read as Buy / Sell / Keep: asked to the desk on the plan.
+  questions: z.array(z.object({
+    fund: fundZ, folio: textZ, folio_count: countZ, plan_type: planZ,
+    report_text: z.string().trim().min(1).max(1000), question: z.string().trim().min(1).max(500),
+  })).max(100).default([]),
   corrections: z.array(z.string()).max(100),
 });
 export type ReportAiAnswer = z.output<typeof reportAiAnswerSchema>;

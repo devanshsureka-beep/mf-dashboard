@@ -213,6 +213,7 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
                 </Alert>
               ) : null}
               {unchecked ? <Alert href={`/cas/${unchecked.cas_document_id}`} tone="amber">CAS of {formatDate(unchecked.snapshot_date)} to check</Alert> : null}
+              {alerts.reportQuestions ? <Alert href={`/clients/${id}/plans/${alerts.reportQuestions.planId}#questions`} tone="amber">{alerts.reportQuestions.n} question(s) on the report to answer</Alert> : null}
               {alerts.draftPlan ? <Alert href={`/clients/${id}/plans/${alerts.draftPlan.id}`} tone="blue">{alerts.draftPlan.kind === "ADDITIONAL" ? "Additional-investment" : "Draft"} plan to approve</Alert> : null}
               {!c.active_plan_id ? <Alert href={canAdvise ? `/clients/${id}/plans/new` : tabHref("tranches")} tone="amber">No active plan</Alert> : null}
               {alerts.followUpsDue ? <Alert href={tabHref("file", "#notes")} tone="amber">{alerts.followUpsDue} follow-up(s) due</Alert> : null}

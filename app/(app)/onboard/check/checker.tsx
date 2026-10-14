@@ -150,7 +150,10 @@ function Result({ r }: { r: Extract<CheckResult, { ok: true }> }) {
                   <TD className="num text-xs">{i.folio_number ?? "—"}</TD>
                   <TD className="text-right">{i.action === "RETAIN" ? "—" : <Money value={i.target_amount} full />}</TD>
                   <TD className="text-right"><Money value={i.current_amount} full /></TD>
-                  <TD className="max-w-64 text-xs text-muted"><div className="truncate" title={i.reason ?? ""}>{i.reason ?? ""}</div></TD>
+                  <TD className="max-w-64 text-xs text-muted">
+                    <div className="truncate" title={i.reason ?? ""}>{i.reason ?? ""}</div>
+                    {i.question ? <div className="text-amber-800" title={i.question}>To ask on the plan: {i.question}</div> : null}
+                  </TD>
                 </TR>
               ))}
             </TBody>

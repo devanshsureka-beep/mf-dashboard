@@ -15,7 +15,8 @@ import { EmptyState } from "@/components/app/page-header";
 import { formatDate, formatDateTime, humanize } from "@/lib/format";
 import { pageData } from "@/lib/server";
 import { getClientSummary } from "@/services/clients";
-import { getPlan, getPlanItems, getSipItems, getTranches } from "@/services/plans";
+import { getPlan, getPlanItems, getSipItems, getTranches, listReportQuestions } from "@/services/plans";
+import { ReportQuestions } from "./questions";
 import { getSipProgress } from "@/services/sip";
 import { countMigrateNotes } from "@/services/migrations";
 import { listAllSecurities } from "@/services/securities";
@@ -32,7 +33,7 @@ export const metadata = { title: "Portfolio plan" };
 
 export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[planId]">) {
   const { id, planId } = await props.params;
-  const { c, plan, items: allItems, sips, sipProgress, securities, heldIds, tranches, migrateNotes, actor } = await pageData(async (tx) => {
+  const { c, plan, items: allItems, sips, sipProgress, securities, heldIds, tranches, migrateNotes, questions, actor } = await pageData(async (tx) => {
     const c = await getClientSummary(tx, id);
     const plan = await getPlan(tx, planId);
     const holdings = c.latest_snapshot_id ? await getHoldings(tx, c.latest_snapshot_id) : [];
@@ -43,6 +44,7 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
       sipProgress: await getSipProgress(tx, planId),
       tranches: await getTranches(tx, planId),
       migrateNotes: await countMigrateNotes(tx, planId),
+      questions: await listReportQuestions(tx, planId),
       securities: await listAllSecurities(tx),
       heldIds: holdings.map((h) => h.security_id).filter((x): x is string => Boolean(x)),
     };
@@ -109,6 +111,8 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
         <TransitionSummary side="SELL" n={{ target: plan.sell_target, advised: plan.sell_advised, executed: plan.sell_executed, pending: plan.sell_pending, yetToAdvise: plan.sell_yet_to_advise }} />
         <TransitionSummary side="BUY" n={{ target: plan.buy_target, advised: plan.buy_advised, executed: plan.buy_executed, pending: plan.buy_pending, yetToAdvise: plan.buy_yet_to_advise }} />
       </div>
+
+      {questions.length ? <ReportQuestions rows={questions} clientId={id} planId={planId} canAnswer={editable} /> : null}
 
       {migrateNotes > 0 && editable ? (
         <Card className="mt-4 border-sky-200">

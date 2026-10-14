@@ -17,7 +17,7 @@ import { detectPlanType, nameSimilarity } from "@/lib/domain/securities";
 import { parseNumber, toIsoDate } from "./cas";
 import { findTables, type ReportTable, type TableColumn } from "./report-tables";
 import type { AdvisoryReportParse, ReportBuyRow, ReportSellRow, ReportSipRow } from "./advisory-report";
-import { ReportParseError, mapRisk } from "./advisory-report";
+import { ReportParseError, mapRisk, mapSellAction, percentOf } from "./advisory-report";
 
 const inr = (n: number) => `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 const amount = (s: string | undefined) => {
@@ -171,17 +171,19 @@ export function parseAdvisoryReportGeneric(pages: PdfPage[]): AdvisoryReportPars
     }
     const amt = amountCol(t.columns)!;
     const values: number[] = [];
-    const rowsOut: { f: ParsedFundCell; value: number; note: string }[] = [];
+    const rowsOut: { f: ParsedFundCell; value: number; note: string; percent: number | null }[] = [];
     for (const r of t.rows) {
       const f = parseFundCell(r.fund, planCol ? r.cells[planCol] : undefined);
       const value = amount(r.cells[amt]);
-      if (!f.name || value === null) {
+      const note = Object.entries(r.cells).filter(([k]) => ![t.columns[0].label, amt].includes(k)).map(([, v]) => v).join(" · ");
+      // A sell given only as a share ("Trim 33%"): the amount comes from the CAS holding.
+      const percent = kind === "SELL" && value === null ? percentOf(`${r.cells[amt] ?? ""} ${note}`) : null;
+      if (!f.name || (value === null && percent === null)) {
         problems.push(`Row "${r.fund || "(no fund name)"}" on page ${t.page}: fund or amount unreadable.`);
         continue;
       }
-      values.push(value);
-      const note = Object.entries(r.cells).filter(([k]) => ![t.columns[0].label, amt].includes(k)).map(([, v]) => v).join(" · ");
-      rowsOut.push({ f, value, note });
+      values.push(value ?? 0);
+      rowsOut.push({ f, value: value ?? 0, note, percent });
     }
     const printed = amount(t.total?.[amt]);
     if (kind === "UNKNOWN") {
@@ -189,12 +191,16 @@ export function parseAdvisoryReportGeneric(pages: PdfPage[]): AdvisoryReportPars
       continue;
     }
     const what = kind === "SELL" ? "Sell" : kind === "BUY" ? "Buy" : "Held / deferred";
-    checkTotal(what, values, printed, t.page);
+    // A printed total cannot be checked line by line when a row gives only a percentage.
+    if (!rowsOut.some((x) => x.percent !== null)) checkTotal(what, values, printed, t.page);
     const fullExit = /100\s*%|full exit/i.test(`${t.columns.map((c) => c.label).join(" ")} ${t.title}`);
-    for (const { f, value, note } of rowsOut) {
+    for (const { f, value, note, percent } of rowsOut) {
       if (kind === "SELL") {
-        const partial = !fullExit && /trim|partial|part of|reduce/i.test(note);
-        sells.push({ fund: labelled(f), folio: f.folio, folioCount: f.folioCount, actionText: partial ? "Partial sell" : "Full exit", action: /switch/i.test(note) ? "SWITCH" : "SELL", partial, value });
+        const partial = percent !== null || (!fullExit && /trim|partial|part of|reduce|book profit|right[- ]?size/i.test(note));
+        sells.push({
+          fund: labelled(f), folio: f.folio, folioCount: f.folioCount, actionText: percent !== null ? `Trim ${percent}%` : partial ? "Partial sell" : "Full exit",
+          action: mapSellAction(note) === "SWITCH" ? "SWITCH" : "SELL", partial, value, percent,
+        });
       } else if (kind === "BUY") {
         const category = col(t.columns, /categor/i);
         buys.push({ fund: labelled(f), amc: null, category: category ? r0(t, f, category) : null, planType: f.planType, amount: value, mode: null, fundedBy: null, kind: f.topUp ? "TOP_UP" : f.isNew ? "NEW" : null });
