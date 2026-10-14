@@ -49,10 +49,12 @@ export async function onboardAction(_p: ActionResult | null, fd: FormData): Prom
     const report = fresh && fresh > 0 ? { ...read, freshMoney: fresh } : read;
     const choiceRaw = str(fd, "report_kind");
     const choice: ReportKindChoice = choiceRaw === "FULL" || choiceRaw === "ADDITIONAL" ? choiceRaw : "AUTO";
-    const decided = decideReportKind(cas, report, { choice, hasActivePlan: await hasActivePlanForPan(actor, cas.investor.pan) });
+    // The CAS may be newer than the report (the client already acted on part of it): differences are asked on the plan.
+    const newerCas = str(fd, "cas_kind") === "NEWER";
+    const decided = decideReportKind(cas, report, { choice, hasActivePlan: await hasActivePlanForPan(actor, cas.investor.pan), newerCas });
     if (decided.problems.length) throw new AppError(problemsMessage(decided.problems));
 
-    const out = await saveOnboarding(actor, { cas, casFile, passwordProtected, report, reportFile, advisorId, phone: mobile, kind: decided.kind });
+    const out = await saveOnboarding(actor, { cas, casFile, passwordProtected, report, reportFile, advisorId, phone: mobile, kind: decided.kind, newerCas });
     target = `/clients/${out.clientId}/plans/${out.planId}?onboarded=${out.created ? "new" : "existing"}`;
   });
   if (!res.ok) return res;

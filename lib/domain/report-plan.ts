@@ -36,9 +36,34 @@ export interface PlanItemDraft {
   priority: number;
   /** The report's wording could not be read as Buy, Sell or Keep: asked on the plan (the line is a Keep until answered). */
   question?: string | null;
+  /** Report vs a newer CAS: what differs and what the CAS shows done since the report (prefills the answer). */
+  diff?: ReportDiff | null;
   /** For BUY rows: details used to create a name-only security if needed. */
   amc?: string | null;
   plan_type?: "DIRECT" | "REGULAR" | null;
+}
+
+/** A difference between the report and a CAS taken after it, with the trades since the report. */
+export interface ReportDiff {
+  kind: "SELL_GONE" | "SELL_CHANGED" | "KEEP_GONE" | "KEEP_CHANGED" | "BUY_HELD" | "NOT_IN_REPORT" | "TRADED";
+  /** What the report says for the fund (rupees), and what the new CAS holds. */
+  report_amount: number | null;
+  cas_value: number;
+  sold_since: number;
+  bought_since: number;
+  /** Suggested answer: the line becomes this, with `done_amount` already done on `done_date`. */
+  suggest: "SELL" | "BUY" | "RETAIN";
+  done_amount: number;
+  done_date: string | null;
+}
+
+/** A trade from the newer CAS (only those after the report's date count as done since the report). */
+export interface SinceTrade {
+  scheme_name: string;
+  isin: string | null;
+  date: string;
+  type: string;
+  amount: number;
 }
 
 export interface SipItemDraft {
@@ -173,7 +198,14 @@ export function buildPlanFromReport(
   report: AdvisoryReportParse,
   holdings: PlanHolding[],
   casValuationDate: string | null = null,
-  opts: { additional?: boolean } = {},
+  opts: {
+    additional?: boolean;
+    /**
+     * The CAS is newer than the report: differences are not blocking problems but
+     * questions for the desk, prefilled with the trades the CAS shows since the report.
+     */
+    since?: { trades: SinceTrade[] };
+  } = {},
 ): ReportPlanDraft {
   // ADDITIONAL: a report for fresh money on top of the active plan. Only its own
   // lines must tie to the CAS; the rest of the portfolio stays as the active plan has it.
@@ -183,6 +215,31 @@ export function buildPlanFromReport(
   const taken = new Set<PlanHolding>();
   let priority = 10;
   const live = holdings.filter((h) => h.current_value > 0);
+  // Report vs a newer CAS: lines that differ are marked, asked about at the end (see `since`).
+  const tolerant = Boolean(opts.since);
+  const differs = new Map<PlanItemDraft, { kind: ReportDiff["kind"]; report: number | null }>();
+  const flagged = new Map<PlanHolding, { kind: ReportDiff["kind"]; report: number | null }>();
+  /** A fund the report names that the newer CAS no longer holds (a zero balance keeps its ISIN). */
+  const goneHolding = (fund: string, planType: "DIRECT" | "REGULAR" | null): PlanHolding | null => {
+    const zero = holdings.find((h) => h.current_value <= 0 && samePlan(planType, h) && nameSimilarity(fund, h.scheme_name) >= 0.7);
+    if (zero) return zero;
+    // A fully redeemed fund is no longer a holding, but its trades are in the CAS (with its ISIN).
+    const t = (opts.since?.trades ?? [])
+      .map((x) => ({ x, s: nameSimilarity(fund, x.scheme_name) }))
+      .filter((r) => r.s >= 0.7 && samePlan(planType, { scheme_name: r.x.scheme_name, isin: r.x.isin, folio_number: null, current_value: 0 }))
+      .sort((a, b) => b.s - a.s)[0]?.x;
+    return t ? { scheme_name: t.scheme_name, isin: t.isin, folio_number: null, current_value: 0 } : null;
+  };
+  /** A fund the report keeps that the newer CAS no longer holds: a Keep line, asked about. */
+  const keepGone = (fund: string, planType: "DIRECT" | "REGULAR" | null, value: number | null, note: string | null | undefined) => {
+    const gone = goneHolding(fund, planType);
+    const it: PlanItemDraft = { action: "RETAIN", scheme_name: gone?.scheme_name ?? fund, isin: gone?.isin ?? null, folio_number: gone?.folio_number ?? null,
+      target_amount: 0, current_amount: 0, reason: `Report: ${note || "keep"}`.slice(0, 300), priority: (priority += 10), plan_type: planType };
+    items.push(it);
+    differs.set(it, { kind: "KEEP_GONE", report: value });
+  };
+  /** The report buys this fund (so a newer CAS may already hold it). */
+  const boughtInReport = (h: PlanHolding) => report.buys.some((b) => nameSimilarity(b.fund, h.scheme_name) >= 0.7 && samePlan(b.planType ?? detectPlanType(b.fund), h));
 
   // Same statement (both dated, same day): values must agree to ±0.2%. Otherwise
   // (a later CAS, or a report without a date) NAVs moved in between: differences
@@ -264,7 +321,22 @@ export function buildPlanFromReport(
       const byFolio = live.filter((x) => !taken.has(x) && normFolio(x.folio_number) === normFolio(s.folio) && samePlan(planType, x));
       h = byFolio.length === 1 ? byFolio[0] : null;
     }
+    // Report vs a newer CAS: a fund now fully sold may look like another fund still held (same AMC);
+    // the closer name wins.
+    if (h && tolerant) {
+      const gone = goneHolding(s.fund, planType);
+      if (gone && nameSimilarity(s.fund, gone.scheme_name) > nameSimilarity(s.fund, h.scheme_name)) h = null;
+    }
     if (!h) {
+      if (tolerant) {
+        // Already sold, or the fund changed: asked.
+        const gone = goneHolding(s.fund, planType);
+        const it: PlanItemDraft = { action: s.action === "SWITCH" ? "SWITCH" : "SELL", scheme_name: gone?.scheme_name ?? s.fund, isin: gone?.isin ?? null,
+          folio_number: gone?.folio_number ?? s.folio, target_amount: s.value, current_amount: 0, reason: s.actionText || null, priority: (priority += 10), plan_type: planType };
+        items.push(it);
+        differs.set(it, { kind: "SELL_GONE", report: s.value });
+        continue;
+      }
       problems.push(`Sell row "${s.fund}" (folio ${s.folio ?? "—"}) does not match any fund in the CAS.`);
       continue;
     }
@@ -272,11 +344,21 @@ export function buildPlanFromReport(
     alias.push({ fund: s.fund, holdings: [h] });
     // "Trim 33%": that share of the CAS holding (computed here, the report itself is not changed).
     const sold = s.partial && !s.value && s.percent ? Math.round(h.current_value * s.percent) / 100 : s.value;
-    if (!s.partial && !valueOk(s.value, h.current_value, h.scheme_name)) {
+    const exitDiffers = !s.partial && !valueOk(s.value, h.current_value, h.scheme_name);
+    const trimDiffers = s.partial && sold >= h.current_value;
+    if (exitDiffers && !tolerant) {
       problems.push(`${h.scheme_name}: the report sells ${inr(s.value)} as a full exit, but the CAS holding is ${inr(h.current_value)}${sameStatement ? "" : ` (more than ${NAV_DRIFT_LIMIT * 100}% apart, too much for NAV movement)`}.`);
     }
-    if (s.partial && sold >= h.current_value) {
+    if (trimDiffers && !tolerant) {
       problems.push(`${h.scheme_name}: the report trims ${inr(sold)}, but the CAS holding is only ${inr(h.current_value)}.`);
+    }
+    if (tolerant && (exitDiffers || trimDiffers)) {
+      // Partly done since the report (or the holding changed): the report's amount stays the target.
+      const it: PlanItemDraft = { action: s.action === "SWITCH" ? "SWITCH" : "SELL", scheme_name: h.scheme_name, isin: h.isin, folio_number: h.folio_number,
+        target_amount: s.partial ? sold : Math.max(s.value, h.current_value), current_amount: h.current_value, reason: s.actionText || null, priority: (priority += 10) };
+      items.push(it);
+      differs.set(it, { kind: "SELL_CHANGED", report: s.partial ? sold : s.value });
+      continue;
     }
     items.push({
       action: s.action === "SWITCH" ? "SWITCH" : "SELL",
@@ -318,12 +400,17 @@ export function buildPlanFromReport(
         (r.folioCount ? Number(b.length === r.folioCount) - Number(a.length === r.folioCount) : 0) ||
         nameSimilarity(r.fund, b[0].scheme_name) - nameSimilarity(r.fund, a[0].scheme_name))[0];
       if (!group) {
+        if (tolerant) {
+          if (r.verdict !== "EXIT" && r.verdict !== "SWITCH" && r.verdict !== "TRIM") keepGone(r.fund, r.planType ?? null, r.value, r.verdictText);
+          continue;
+        }
         problems.push(`The report reviews ${r.fund} (${inr(r.value)}), but that fund is not in the CAS.`);
         continue;
       }
       group.forEach((h) => reviewed.add(h));
       if (!valueOk(r.value, total(group), group[0].scheme_name)) {
-        problems.push(`${group[0].scheme_name}: the report values it at ${inr(r.value)}, the CAS at ${inr(Math.round(total(group) * 100) / 100)}.`);
+        if (tolerant) for (const h of group) if (!taken.has(h)) flagged.set(h, { kind: "KEEP_CHANGED", report: r.value });
+        else problems.push(`${group[0].scheme_name}: the report values it at ${inr(r.value)}, the CAS at ${inr(Math.round(total(group) * 100) / 100)}.`);
       }
       if (r.verdict === "HOLD") {
         if (group.some((h) => taken.has(h))) problems.push(`${group[0].scheme_name}: the review says ${r.deferred ? r.verdictText : "HOLD"} but it is in the sell list.`);
@@ -334,7 +421,9 @@ export function buildPlanFromReport(
       }
     }
     for (const h of additional ? [] : live) {
-      if (!reviewed.has(h)) problems.push(`${h.scheme_name} (folio ${h.folio_number ?? "—"}, ${inr(h.current_value)}) is in the CAS but not covered by the report.`);
+      if (reviewed.has(h)) continue;
+      if (tolerant) flagged.set(h, { kind: boughtInReport(h) ? "BUY_HELD" : "NOT_IN_REPORT", report: null });
+      else problems.push(`${h.scheme_name} (folio ${h.folio_number ?? "—"}, ${inr(h.current_value)}) is in the CAS but not covered by the report.`);
     }
   }
 
@@ -364,11 +453,18 @@ export function buildPlanFromReport(
         : [];
       const group = byValue.length === 1 ? byValue : pick(hd.fund, hd.folio, hd.folioCount, hd.planType, hd.value);
       if (!group.length) {
+        if (tolerant) {
+          keepGone(hd.fund, hd.planType, hd.value, hd.note);
+          continue;
+        }
         problems.push(`The report keeps "${hd.fund}"${hd.folio ? ` (folio ${hd.folio})` : ""} (${inr(hd.value)}), but that fund is not in the CAS.`);
         continue;
       }
       const total = group.reduce((t, x) => t + x.current_value, 0);
-      if (!valueOk(hd.value, total, group[0].scheme_name)) problems.push(`${group[0].scheme_name}: the report values it at ${inr(hd.value)}, the CAS at ${inr(total)}.`);
+      if (!valueOk(hd.value, total, group[0].scheme_name)) {
+        if (tolerant) for (const g of group) flagged.set(g, { kind: "KEEP_CHANGED", report: hd.value });
+        else problems.push(`${group[0].scheme_name}: the report values it at ${inr(hd.value)}, the CAS at ${inr(total)}.`);
+      }
       for (const g of group) {
         if (taken.has(g)) problems.push(`${g.scheme_name}: the report both sells it and keeps it.`);
         covered.add(g);
@@ -410,6 +506,11 @@ export function buildPlanFromReport(
     const confirmedTotal = confirmed.reduce((t, h) => t + h.current_value, 0);
     const keepConfirmed = confirmed.length > 0 && confirmedTotal <= liveTotal * NOT_IN_REPORT_LIMIT;
     for (const h of uncovered) {
+      if (tolerant) {
+        flagged.set(h, { kind: boughtInReport(h) ? "BUY_HELD" : "NOT_IN_REPORT", report: null });
+        if (!holdReason.has(h)) holdReason.set(h, "Not mentioned in the report");
+        continue;
+      }
       if (keepConfirmed && confirmed.includes(h)) {
         unreported.push(`${h.scheme_name} (folio ${h.folio_number ?? "—"}, ${inr(h.current_value)})`);
         holdReason.set(h, "Not mentioned in the advisory report: kept as it is. Advisor to confirm.");
@@ -438,7 +539,11 @@ export function buildPlanFromReport(
       continue;
     }
     if (additional) continue;
-    items.push({ action: "RETAIN", scheme_name: h.scheme_name, isin: h.isin, folio_number: h.folio_number, target_amount: 0, current_amount: h.current_value, reason: holdReason.get(h) ?? "Not sold in the report", priority: (priority += 10) });
+    const f = flagged.get(h);
+    if (f?.kind === "BUY_HELD") continue; // the report's Buy line covers it (asked there)
+    const keepIt: PlanItemDraft = { action: "RETAIN", scheme_name: h.scheme_name, isin: h.isin, folio_number: h.folio_number, target_amount: 0, current_amount: h.current_value, reason: holdReason.get(h) ?? "Not sold in the report", priority: (priority += 10) };
+    items.push(keepIt);
+    if (f) differs.set(keepIt, f);
   }
 
   // ---- Buys: new funds by name; a top-up must be a fund already held. ----
@@ -450,8 +555,8 @@ export function buildPlanFromReport(
       planType = held ? holdingPlan(held) : "DIRECT";
       if (!held) drift.push(`${b.fund}: the report does not say Direct or Regular, so Direct is assumed (new money is advised in Direct plans).`);
     }
-    if (b.kind === "TOP_UP" && !held) problems.push(`Buy row "${b.fund}" is marked top-up, but no ${planType ?? ""} holding of it is in the CAS.`.replace("  ", " "));
-    items.push({
+    if (b.kind === "TOP_UP" && !held && !tolerant) problems.push(`Buy row "${b.fund}" is marked top-up, but no ${planType ?? ""} holding of it is in the CAS.`.replace("  ", " "));
+    const buyIt: PlanItemDraft = {
       action: "BUY",
       scheme_name: held?.scheme_name ?? withPlanType(b.fund, planType),
       isin: held?.isin ?? null,
@@ -462,7 +567,85 @@ export function buildPlanFromReport(
       priority: (priority += 10),
       amc: b.amc,
       plan_type: planType,
-    });
+    };
+    items.push(buyIt);
+    // A newer CAS may already hold a fund the report buys new.
+    if (tolerant && held && b.kind !== "TOP_UP") differs.set(buyIt, { kind: "BUY_HELD", report: b.amount });
+  }
+
+  // ---- Report vs a newer CAS: each difference, and each trade since the report, becomes a question. ----
+  if (opts.since) {
+    const cutoff = reportDate ?? report.preparedDate ?? null;
+    const trades = opts.since.trades.filter((t) => t.type !== "SIP" && (!cutoff || t.date > cutoff));
+    const isSell = (t: SinceTrade) => t.type === "REDEMPTION" || t.type === "SWITCH_OUT";
+    const isBuy = (t: SinceTrade) => t.type === "PURCHASE" || t.type === "SWITCH_IN";
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    // Each trade counts once: Sell / Buy lines take their fund's trades first, then Keep lines.
+    const used = new Set<SinceTrade>();
+    const sameFund = (it: PlanItemDraft, isin: string | null, name: string) => (it.isin && isin ? it.isin === isin : nameSimilarity(it.scheme_name, name) >= 0.85);
+    const ordered = [...items.filter((i) => i.action !== "RETAIN"), ...items.filter((i) => i.action === "RETAIN")];
+    for (const it of ordered) {
+      const mine = trades.filter((t) => !used.has(t) && sameFund(it, t.isin, t.scheme_name));
+      mine.forEach((t) => used.add(t));
+      // A Keep line whose change is its fund's Buy / Sell line (asked there) is not asked again.
+      if (it.action === "RETAIN" && !mine.length && differs.get(it)?.kind === "KEEP_CHANGED"
+          && items.some((o) => o !== it && o.action !== "RETAIN" && sameFund(o, it.isin, it.scheme_name))) continue;
+      const sold = r2(mine.filter(isSell).reduce((t, x) => t + Math.abs(x.amount), 0));
+      const bought = r2(mine.filter(isBuy).reduce((t, x) => t + Math.abs(x.amount), 0));
+      const lastSell = mine.filter(isSell).map((x) => x.date).sort().pop() ?? null;
+      const lastBuy = mine.filter(isBuy).map((x) => x.date).sort().pop() ?? null;
+      const d = differs.get(it);
+      // A Regular fund being migrated: only its redemption matters (a SIP into it is not a buy call).
+      const migrating = it.action === "MIGRATE";
+      if (!d && sold < 1 && (bought < 1 || migrating)) continue;
+      const kind = d?.kind ?? "TRADED";
+      const cas = it.current_amount ?? 0;
+      const suggest: ReportDiff["suggest"] = it.action === "BUY" ? "BUY" : it.action === "SELL" || it.action === "SWITCH" || migrating ? "SELL"
+        : sold >= 1 ? "SELL" : bought >= 1 ? "BUY" : "RETAIN";
+      const done = suggest === "SELL" ? sold : suggest === "BUY" ? bought : 0;
+      const since = [sold >= 1 ? `${inr(sold)} sold` : null, bought >= 1 ? `${inr(bought)} bought` : null].filter(Boolean).join(" and ");
+      const sinceText = since ? `${since} since the report (last on ${[lastSell, lastBuy].filter(Boolean).sort().pop()})` : "no trade since the report";
+      const rep = d?.report != null ? inr(d.report) : null;
+      const asked = ({
+        SELL_GONE: `The report sells ${rep ?? "this fund"}; the new CAS no longer holds it (${sinceText}). Was it sold on our advice?`,
+        SELL_CHANGED: `The report sells ${rep ?? "this fund"}; the new CAS holds ${inr(cas)} (${sinceText}). How much is done, and how much is left to sell?`,
+        KEEP_GONE: `The report keeps this fund${rep ? ` (${rep})` : ""}, but the new CAS no longer holds it (${sinceText}). Sold on our advice (Sell), or the client's own (Keep)?`,
+        KEEP_CHANGED: `The report keeps this fund at ${rep ?? "its value"}; the new CAS holds ${inr(cas)} (${sinceText}). On our advice, or the client's own (Keep)?`,
+        BUY_HELD: `The report buys ${rep ?? "this fund"}; the new CAS already holds ${inr(cas)} (${sinceText}). Already bought on our advice?`,
+        NOT_IN_REPORT: `Not in the report, but the new CAS holds it (${inr(cas)}; ${sinceText}). Bought on our advice (Buy), or the client's own (Keep)?`,
+        TRADED: `The new CAS shows ${sinceText}. Done on our advice?`,
+      } as const)[kind];
+      // A question the report itself raised (e.g. a trim with no amount) keeps its wording, with what the CAS shows.
+      it.question = it.question ? `${it.question} The new CAS shows ${sinceText}.` : asked;
+      it.diff = {
+        kind, report_amount: d?.report ?? null, cas_value: r2(cas), sold_since: sold, bought_since: bought, suggest,
+        done_amount: done, done_date: suggest === "SELL" ? lastSell : suggest === "BUY" ? lastBuy : null,
+      };
+    }
+  }
+
+  // ---- Report vs a newer CAS: trades of funds no line covers (the report named them differently, or not at all). ----
+  if (opts.since) {
+    const cutoff = reportDate ?? report.preparedDate ?? null;
+    const covered = (t: SinceTrade) => items.some((i) => (i.isin && t.isin ? i.isin === t.isin : nameSimilarity(i.scheme_name, t.scheme_name) >= 0.85));
+    const left = opts.since.trades.filter((t) => t.type !== "SIP" && (!cutoff || t.date > cutoff) && !covered(t));
+    const funds = new Map<string, SinceTrade[]>();
+    for (const t of left) funds.set(t.isin ?? t.scheme_name.toLowerCase(), [...(funds.get(t.isin ?? t.scheme_name.toLowerCase()) ?? []), t]);
+    for (const ts of funds.values()) {
+      const sold = Math.round(ts.filter((t) => t.type === "REDEMPTION" || t.type === "SWITCH_OUT").reduce((a, t) => a + Math.abs(t.amount), 0) * 100) / 100;
+      const bought = Math.round(ts.filter((t) => t.type === "PURCHASE" || t.type === "SWITCH_IN").reduce((a, t) => a + Math.abs(t.amount), 0) * 100) / 100;
+      if (sold < 1 && bought < 1) continue;
+      const suggest = sold >= bought ? "SELL" : "BUY";
+      const date = ts.map((t) => t.date).sort().pop() ?? null;
+      const what = [sold >= 1 ? `${inr(sold)} sold` : null, bought >= 1 ? `${inr(bought)} bought` : null].filter(Boolean).join(" and ");
+      items.push({
+        action: "RETAIN", scheme_name: ts[0].scheme_name, isin: ts[0].isin, folio_number: null, target_amount: 0, current_amount: 0,
+        reason: "Not in the report", priority: (priority += 10),
+        question: `Not in the report under this name; the new CAS shows ${what} since the report (last on ${date}). On our advice (the report may call it by another name), or the client's own (Keep)?`,
+        diff: { kind: "TRADED", report_amount: null, cas_value: 0, sold_since: sold, bought_since: bought, suggest,
+          done_amount: suggest === "SELL" ? sold : bought, done_date: date },
+      });
+    }
   }
 
   // ---- SIPs: stops/changes run in held funds (must tie to the CAS). ----

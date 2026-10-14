@@ -41,6 +41,12 @@ export default async function OnboardPage() {
               <Field label="CAS password (only if the mobile number doesn't open it)">
                 <Input name="password" type="password" autoComplete="off" />
               </Field>
+              <Field label="Which CAS is this?" hint="Newer: the client already acted on part of the report. Each difference becomes a question on the plan, prefilled from the CAS's trades since the report.">
+                <Select name="cas_kind" defaultValue="SAME">
+                  <option value="SAME">The CAS the report was made from</option>
+                  <option value="NEWER">A newer CAS (taken after the report)</option>
+                </Select>
+              </Field>
               <Field label="What is this report?" hint="Auto: an existing client's report that only invests fresh money is added to the active plan.">
                 <Select name="report_kind" defaultValue="AUTO">
                   <option value="AUTO">Auto-detect</option>

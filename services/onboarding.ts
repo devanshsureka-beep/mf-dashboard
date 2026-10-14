@@ -1,7 +1,7 @@
 import type { Actor, Tx } from "@/lib/db/tx";
 import { AppError } from "@/lib/errors";
 import { advisoryReportResultSchema } from "@/lib/integrations/contracts";
-import { buildPlanFromReport, type PlanHolding, type ReportPlanDraft } from "@/lib/domain/report-plan";
+import { buildPlanFromReport, type PlanHolding, type ReportPlanDraft, type SinceTrade } from "@/lib/domain/report-plan";
 import { toCasParseResult, type CasParseOutput } from "@/lib/parsers/cas";
 import { sameInvestor, type AdvisoryReportParse } from "@/lib/parsers/advisory-report";
 import { createClient } from "@/services/clients";
@@ -47,7 +47,14 @@ export function holdingsFromCas(cas: CasParseOutput): PlanHolding[] {
   }));
 }
 
-export function previewOnboarding(cas: CasParseOutput, report: AdvisoryReportParse, kind: PlanKind = "FULL"): {
+/** The CAS's trades, for a report made from an earlier CAS (only those after the report's date count as done since). */
+export function tradesFromCas(cas: CasParseOutput): SinceTrade[] {
+  return toCasParseResult(cas, "00000000-0000-0000-0000-000000000000").transactions.map((t) => ({
+    scheme_name: t.scheme_name, isin: t.isin ?? null, date: t.date, type: t.type, amount: Number(t.amount ?? 0),
+  }));
+}
+
+export function previewOnboarding(cas: CasParseOutput, report: AdvisoryReportParse, kind: PlanKind = "FULL", opts: { newerCas?: boolean } = {}): {
   problems: string[];
   draft: ReportPlanDraft | null;
   holdings: PlanHolding[];
@@ -60,7 +67,11 @@ export function previewOnboarding(cas: CasParseOutput, report: AdvisoryReportPar
   } catch (e) {
     return { problems: [(e as Error).message], draft: null, holdings: [] };
   }
-  const draft = buildPlanFromReport(report, holdings, cas.valuationDate, { additional: kind === "ADDITIONAL" });
+  const draft = buildPlanFromReport(report, holdings, cas.valuationDate, {
+    additional: kind === "ADDITIONAL",
+    // A CAS newer than the report: differences become questions, prefilled from the trades since the report.
+    since: opts.newerCas ? { trades: tradesFromCas(cas) } : undefined,
+  });
   return { problems: draft.problems, draft, holdings };
 }
 
@@ -76,10 +87,10 @@ export type ReportKindChoice = "AUTO" | PlanKind;
 export function decideReportKind(
   cas: CasParseOutput,
   report: AdvisoryReportParse,
-  args: { choice: ReportKindChoice; hasActivePlan: boolean },
+  args: { choice: ReportKindChoice; hasActivePlan: boolean; newerCas?: boolean },
 ): { kind: PlanKind; problems: string[]; draft: ReportPlanDraft | null } {
   const as = (kind: PlanKind) => {
-    const p = previewOnboarding(cas, report, kind);
+    const p = previewOnboarding(cas, report, kind, { newerCas: args.newerCas });
     const problems = kind === "ADDITIONAL" && !args.hasActivePlan
       ? ["This client has no active plan to add to: onboard and approve a full plan first, or choose Full rebalancing.", ...p.problems]
       : p.problems;
@@ -126,10 +137,10 @@ export interface OnboardResult {
 export async function ensureClientFromDocuments(
   tx: Tx,
   actor: Actor,
-  args: { cas: CasParseOutput; report: AdvisoryReportParse; advisorId?: string | null; phone?: string | null; kind?: PlanKind },
+  args: { cas: CasParseOutput; report: AdvisoryReportParse; advisorId?: string | null; phone?: string | null; kind?: PlanKind; newerCas?: boolean },
 ): Promise<{ id: string; client_code: string; full_name: string; created: boolean }> {
-  // Nothing is created unless every line of the report ties to the CAS.
-  const problems = previewOnboarding(args.cas, args.report, args.kind ?? "FULL").problems;
+  // Nothing is created unless every line of the report ties to the CAS (or, for a newer CAS, is asked about).
+  const problems = previewOnboarding(args.cas, args.report, args.kind ?? "FULL", { newerCas: args.newerCas }).problems;
   if (problems.length) throw new AppError(problemsMessage(problems));
   const existing = await findClientByPan(tx, args.cas.investor.pan);
   if (existing) return { id: existing.id, client_code: existing.client_code, full_name: existing.full_name, created: false };
@@ -157,6 +168,8 @@ export async function onboardFromDocuments(
     report: AdvisoryReportParse;
     reportFile: StoredFile;
     kind?: PlanKind;
+    /** The CAS was taken after the report: differences become questions on the plan. */
+    newerCas?: boolean;
   },
 ): Promise<Omit<OnboardResult, "created">> {
   const kind = args.kind ?? "FULL";
@@ -206,7 +219,10 @@ export async function onboardFromDocuments(
     where h.snapshot_id = coalesce(${snapshotId}::uuid,
       (select snapshot_id from public.v_latest_snapshot where client_id = ${client.id}))
     order by h.current_value desc`;
-  const draft = buildPlanFromReport(args.report, holdings, args.cas.valuationDate, { additional: kind === "ADDITIONAL" });
+  const draft = buildPlanFromReport(args.report, holdings, args.cas.valuationDate, {
+    additional: kind === "ADDITIONAL",
+    since: args.newerCas ? { trades: tradesFromCas(args.cas) } : undefined,
+  });
   if (draft.problems.length) throw new AppError(problemsMessage(draft.problems));
 
   const plan = await planFromDraft(tx, actor, { clientId: client.id, reportDocId, report: args.report, draft, holdings });
@@ -272,6 +288,7 @@ async function planFromDraft(
       target_amount: i.target_amount, current_amount: i.current_amount, reason: i.reason, priority: i.priority,
       switch_to_scheme_name: i.switch_to_scheme_name ?? null,
       question: i.question ?? null,
+      report_diff: i.diff ?? null,
     })),
     sip_items: draft.sip_items.map((s) => ({
       action: s.action, scheme_name: s.scheme_name, isin: s.isin, folio_number: s.folio_number,

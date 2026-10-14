@@ -138,8 +138,9 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
       select off_plan_sell_advised::float8 as off_plan_sell_advised, off_plan_sell_executed::float8 as off_plan_sell_executed, off_plan_sell_pending::float8 as off_plan_sell_pending,
              off_plan_buy_advised::float8 as off_plan_buy_advised, off_plan_buy_executed::float8 as off_plan_buy_executed, off_plan_buy_pending::float8 as off_plan_buy_pending
       from public.v_client_rebalance_extra where client_id = ${id}`)[0],
-    bank: (await tx<{ in_bank: number; fresh_money: number }[]>`
-      select in_bank::float8 as in_bank, fresh_money::float8 as fresh_money from public.v_client_bank where client_id = ${id}`)[0] ?? { in_bank: 0, fresh_money: 0 },
+    bank: (await tx<{ in_bank: number; fresh_money: number; cash_at_onboarding: number }[]>`
+      select in_bank::float8 as in_bank, fresh_money::float8 as fresh_money, cash_at_onboarding::float8 as cash_at_onboarding
+      from public.v_client_bank where client_id = ${id}`)[0] ?? { in_bank: 0, fresh_money: 0, cash_at_onboarding: 0 },
     sip: await getClientSip(tx, id),
     premium: await getPremium(tx, id),
     alerts: await getClientAlerts(tx, id),
@@ -163,7 +164,8 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
   const inBank = bank.in_bank;
   const fresh = bank.fresh_money;
   const valueToday = inFunds + inBank;
-  const startValue = (c.initial_portfolio_value ?? 0) + fresh;
+  // Trades done before onboarding (from a CAS newer than the report) left cash that was already the client's.
+  const startValue = (c.initial_portfolio_value ?? 0) + fresh + bank.cash_at_onboarding;
   const change = valueToday - startValue;
   const changePct = startValue ? (change / startValue) * 100 : null;
   const thisMonth = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit" }).format(new Date());

@@ -4,7 +4,9 @@ import { AppError } from "@/lib/errors";
 import type { AdvisoryReportResult } from "@/lib/integrations/contracts";
 import type { PlanItemProgress, PlanRow, PlanTransition, SipItem } from "@/types/domain";
 import { suggestSecurity } from "./securities";
-import { MIGRATE_BUY_REASON, migrateSellReason, switchBuyReason } from "@/lib/domain/report-plan";
+import { issueAdvice } from "./advice";
+import { recordExecution } from "./executions";
+import { MIGRATE_BUY_REASON, migrateSellReason, switchBuyReason, type ReportDiff } from "@/lib/domain/report-plan";
 import type { SecurityCandidate } from "@/lib/domain/securities";
 
 // -----------------------------------------------------------------------------
@@ -215,6 +217,11 @@ export async function approvePlan(
   await tx`
     update public.advisory_plans set status = 'ACTIVE', approved_by = ${actor.id}, approved_at = ${approvedAt}
     where id = ${planId}`;
+  // Parts the desk said were already done before onboarding: their calls and executions.
+  const doneLines = await tx<{ id: string }[]>`
+    select id from public.advisory_plan_items
+    where plan_id = ${planId} and status = 'OPEN' and report_diff ? 'done_answer' and not report_diff ? 'done_call_id'`;
+  for (const d of doneLines) await recordDoneBeforeOnboarding(tx, actor, d.id);
   // Fresh money the plan invests counts in money left: a tranche with no plan to join,
   // or a new investor's first plan (no CAS yet, everything bought with new money).
   const m = meta[0];
@@ -436,6 +443,7 @@ export async function ingestAdvisoryReport(
       target_weight: it.target_weight ?? null, reason, priority: it.priority ?? priority, needs_review: flag,
       notes: flag && !it.question ? "Security match needs confirmation (extracted from report)." : null, created_by: createdBy,
       report_question: it.question ?? null,
+      report_diff: it.report_diff ? tx.json(it.report_diff) : null,
     });
     if (moves && it.switch_to_scheme_name && it.target_amount > 0) {
       // The Buy leg: the fund to move to (resolved by the caller, or a confident match).
@@ -449,6 +457,7 @@ export async function ingestAdvisoryReport(
         priority: (it.priority ?? priority) + 1, needs_review: !to.confident,
         notes: to.confident ? null : "Security match needs confirmation (extracted from report).", created_by: createdBy,
         report_question: null,
+        report_diff: null,
       });
       if (it.action === "MIGRATE") migratedAmount += it.target_amount;
       switchedInAmount += it.target_amount;
@@ -508,12 +517,14 @@ export interface ReportQuestionRow {
   action: string;
   target_amount: number;
   open: boolean;
+  /** Report vs a newer CAS: what differs and what was done since (prefills the answer). */
+  report_diff: (ReportDiff & { done_answer?: { amount: number; date: string }; done_call_id?: string }) | null;
 }
 
 export async function listReportQuestions(tx: Tx, planId: string): Promise<ReportQuestionRow[]> {
   return tx<ReportQuestionRow[]>`
     select id, plan_id, scheme_name, folio_number, security_id, current_amount::float8 as current_amount, reason,
-           report_question, report_answer, action, target_amount::float8 as target_amount,
+           report_question, report_answer, action, target_amount::float8 as target_amount, report_diff,
            (report_answer is null and status = 'OPEN') as open
     from public.advisory_plan_items
     where plan_id = ${planId} and report_question is not null and status <> 'CANCELLED'
@@ -536,12 +547,19 @@ export interface ReportAnswer {
   amount?: number | null;
   percent?: number | null;
   explanation: string;
+  /**
+   * Part already done before onboarding (seen in a CAS newer than the report):
+   * recorded as a call + execution on this line once the plan is active.
+   */
+  done?: { amount: number; date: string } | null;
 }
 
 /**
- * The desk explains a recommendation the reader could not place: the line
- * becomes a Buy, Sell or Keep with the explanation kept on it. On an ACTIVE
- * plan the explanation is the audit reason.
+ * The desk explains a recommendation the reader could not place (or a
+ * difference between the report and a newer CAS): the line becomes a Buy, Sell
+ * or Keep with the explanation kept on it; a part already done is recorded as
+ * a call and its execution (now on an ACTIVE plan, else when the plan is
+ * approved). On an ACTIVE plan the explanation is the audit reason.
  */
 export async function answerReportQuestion(tx: Tx, actor: Actor, itemId: string, a: ReportAnswer): Promise<void> {
   if (actor.role === "OPERATIONS") throw new AppError("Only an advisor or admin can answer a question on the plan.", "FORBIDDEN");
@@ -552,7 +570,14 @@ export async function answerReportQuestion(tx: Tx, actor: Actor, itemId: string,
     from public.advisory_plan_items where id = ${itemId} for update`)[0];
   if (!it || !it.report_question) throw new AppError("Question not found.", "NOT_FOUND");
   if (it.status !== "OPEN") throw new AppError("This plan line is closed.");
-  await assertPlanStatus(tx, it.plan_id, ["DRAFT", "ACTIVE"]);
+  const plan = await assertPlanStatus(tx, it.plan_id, ["DRAFT", "ACTIVE"]);
+  const done = a.done && Number(a.done.amount) > 0 ? { amount: Math.round(Number(a.done.amount) * 100) / 100, date: a.done.date } : null;
+  if (done) {
+    if (a.action === "RETAIN") throw new AppError("A Keep has nothing done on our advice: choose Sell or Buy, or clear the amount already done.");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(done.date)) throw new AppError("Enter the date it was done.");
+    const today = (await tx<{ d: string }[]>`select app.today_ist()::text as d`)[0].d;
+    if (done.date > today) throw new AppError("The date it was done cannot be in the future.");
+  }
   let target = 0;
   if (a.action !== "RETAIN") {
     const pct = Number(a.percent) > 0 ? Number(a.percent) : null;
@@ -561,20 +586,57 @@ export async function answerReportQuestion(tx: Tx, actor: Actor, itemId: string,
       if (!(Number(it.current_amount) > 0)) throw new AppError("The holding's value is not known: enter the amount in rupees.");
       target = Math.round(Number(it.current_amount) * pct) / 100;
     } else {
-      target = Number(a.amount);
+      target = Number(a.amount) > 0 ? Number(a.amount) : done?.amount ?? 0;
     }
     if (!(target > 0)) throw new AppError(`Enter the amount to ${a.action === "SELL" ? "sell (₹ or % of the holding)" : "buy"}.`);
-    if (a.action === "SELL" && Number(it.current_amount) > 0 && target > Number(it.current_amount) * 1.02) {
+    // What is still to sell must be held now (the part already done is no longer in the CAS).
+    if (a.action === "SELL" && Number(it.current_amount) > 0 && target - (done?.amount ?? 0) > Number(it.current_amount) * 1.02) {
       throw new AppError("That is more than the client holds in this fund.");
     }
+    if (done && done.amount > target * 1.02 + 1) throw new AppError("The part already done is more than the line's amount.");
     if (!it.security_id) throw new AppError("Pick the fund for this line first (Edit on the plan line).");
   }
   await setAuditReason(tx, `Report question answered: ${explanation}`.slice(0, 500));
-  const what = a.action === "RETAIN" ? "Keep" : `${a.action === "SELL" ? "Sell" : "Buy"} ₹${target.toLocaleString("en-IN")}${a.percent && a.action === "SELL" ? ` (${a.percent}%)` : ""}`;
+  const what = a.action === "RETAIN" ? "Keep" : `${a.action === "SELL" ? "Sell" : "Buy"} ₹${target.toLocaleString("en-IN")}${a.percent && a.action === "SELL" ? ` (${a.percent}%)` : ""}`
+    + (done ? `, ₹${done.amount.toLocaleString("en-IN")} done on ${done.date}` : "");
   await tx`
     update public.advisory_plan_items set
       action = ${a.action}, target_amount = ${target}, report_answer = ${explanation.slice(0, 2000)},
       reason = ${`${it.reason ?? "Report"} → ${what}: ${explanation}`.slice(0, 4000)},
-      needs_review = (security_id is null and ${a.action} <> 'RETAIN')
+      needs_review = (security_id is null and ${a.action} <> 'RETAIN'),
+      report_diff = case when ${done ? tx.json(done) : null}::jsonb is null then report_diff
+                         else coalesce(report_diff, '{}'::jsonb) || jsonb_build_object('done_answer', ${done ? tx.json(done) : null}::jsonb) end
     where id = ${itemId}`;
+  if (done && plan.status === "ACTIVE") await recordDoneBeforeOnboarding(tx, actor, itemId);
+}
+
+/**
+ * A part already done before onboarding (answered on a report question): one
+ * call and its execution on the line, dated when it was done, proved by the
+ * client's onboarding CAS. Runs once per line (the call id is kept in report_diff).
+ */
+export async function recordDoneBeforeOnboarding(tx: Tx, actor: Actor, itemId: string): Promise<string | null> {
+  const it = (await tx<{ client_id: string; security_id: string; scheme_name: string; action: string; report_diff: { done_answer?: { amount: number; date: string }; done_call_id?: string } | null }[]>`
+    select client_id, security_id, scheme_name, action, report_diff from public.advisory_plan_items where id = ${itemId}`)[0];
+  const done = it?.report_diff?.done_answer;
+  if (!it || !done || it.report_diff?.done_call_id || (it.action !== "SELL" && it.action !== "BUY")) return null;
+  const proof = (await tx<{ document_id: string | null; snapshot_date: string }[]>`
+    select d.document_id, s.snapshot_date::text as snapshot_date from public.portfolio_snapshots s
+    left join public.cas_documents d on d.id = s.cas_document_id
+    where s.client_id = ${it.client_id} and s.is_baseline`)[0];
+  const b = await issueAdvice(tx, actor, {
+    clientId: it.client_id,
+    communicatedAt: new Date(`${done.date}T09:00:00+05:30`),
+    channel: "OTHER",
+    notes: `Done before onboarding: seen in the client's CAS${proof ? ` of ${proof.snapshot_date}` : ""}`,
+    items: [{ plan_item_id: itemId, security_id: it.security_id, scheme_name: it.scheme_name, action: it.action as "SELL" | "BUY", quantity_basis: "AMOUNT", advised_amount: done.amount }],
+  });
+  await recordExecution(tx, actor, {
+    adviceItemId: b.itemIds[0], executionDate: done.date, executedAmount: done.amount, executedUnits: null,
+    verificationType: "PROOF_VERIFIED", proofDocumentId: proof?.document_id ?? null,
+    notes: `Done before onboarding; shown in the client's CAS${proof ? ` of ${proof.snapshot_date}` : ""}`,
+  });
+  await setAuditReason(tx, "Done before onboarding: call recorded on the plan line");
+  await tx`update public.advisory_plan_items set report_diff = report_diff || jsonb_build_object('done_call_id', ${b.itemIds[0]}::text) where id = ${itemId}`;
+  return b.itemIds[0];
 }

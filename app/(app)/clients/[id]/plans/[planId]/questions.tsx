@@ -5,6 +5,19 @@ import { Money } from "@/components/app/money";
 import type { ReportQuestionRow } from "@/services/plans";
 import { answerReportQuestionAction } from "../actions";
 
+/** What the report says vs what the newer CAS shows (report vs a CAS taken after it). */
+function DiffFacts({ d }: { d: NonNullable<ReportQuestionRow["report_diff"]> }) {
+  return (
+    <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-[12px] text-slate-700">
+      <span>Report: {d.report_amount != null ? <Money value={d.report_amount} /> : "—"}</span>
+      <span>New CAS holds: <Money value={d.cas_value} /></span>
+      {d.sold_since > 0 ? <span className="text-red-700">Sold since the report: <Money value={d.sold_since} /></span> : null}
+      {d.bought_since > 0 ? <span className="text-blue-700">Bought since the report: <Money value={d.bought_since} /></span> : null}
+      {d.done_answer ? <span className="text-emerald-700">Done (answered): <Money value={d.done_answer.amount} /> on {d.done_answer.date}{d.done_call_id ? " · recorded" : " · recorded when the plan is approved"}</span> : null}
+    </div>
+  );
+}
+
 /**
  * Recommendations the report reader could not read as Buy, Sell or Keep. Each
  * stays a Keep line until the desk answers; a draft plan cannot be approved
@@ -17,7 +30,7 @@ export function ReportQuestions({ rows, clientId, planId, canAnswer }: { rows: R
       <CardHeader>
         <CardTitle>Questions from the report{open.length ? ` · ${open.length} open` : ""}</CardTitle>
         <span className="text-xs text-muted">
-          The report&rsquo;s words for these funds could not be read as Buy, Sell or Keep. Each is kept until you explain it.
+          The report&rsquo;s words for these funds could not be read as Buy, Sell or Keep, or a newer CAS differs from the report. Each is kept until you answer.
         </span>
       </CardHeader>
       <ul className="divide-y divide-border border-t border-border">
@@ -43,18 +56,29 @@ export function ReportQuestions({ rows, clientId, planId, canAnswer }: { rows: R
                 </div>
               ) : null}
             </div>
+            {r.report_diff ? <DiffFacts d={r.report_diff} /> : null}
             {r.open && canAnswer ? (
               <ActionForm action={answerReportQuestionAction.bind(null, clientId, planId, r.id)} className="mt-2" resetOnSuccess>
-                <div className="grid gap-2 sm:grid-cols-[120px_160px_minmax(0,1fr)_auto]">
-                  <Select name="action" defaultValue="SELL" aria-label="Buy, Sell or Keep">
+                <div className="grid gap-2 sm:grid-cols-[110px_150px_minmax(0,1fr)]">
+                  <Select name="action" defaultValue={r.report_diff?.suggest ?? "SELL"} aria-label="Buy, Sell or Keep">
                     <option value="SELL">Sell</option>
                     <option value="RETAIN">Keep</option>
                     <option value="BUY">Buy</option>
                   </Select>
-                  <Input name="size" placeholder="₹ amount or 33%" aria-label="Amount in rupees, or a percentage of the holding" />
+                  <Input name="size" placeholder="₹ amount or 33%" aria-label="Line amount in rupees, or a percentage of the holding"
+                    defaultValue={r.report_diff ? String(Math.round(Math.max(r.report_diff.report_amount ?? 0, r.report_diff.done_amount) || 0) || "") : ""} />
                   <Textarea name="explanation" rows={1} required placeholder="What the report means (kept on the line)" aria-label="Explanation" className="min-h-9 py-1.5" />
-                  <SubmitButton size="sm">Save answer</SubmitButton>
                 </div>
+                {r.report_diff ? (
+                  <div className="mt-2 grid gap-2 sm:grid-cols-[110px_150px_150px_minmax(0,1fr)] sm:items-center">
+                    <span className="text-xs text-muted">Already done</span>
+                    <Input name="done_amount" inputMode="decimal" aria-label="Amount already done (₹)" placeholder="₹ done, if any"
+                      defaultValue={r.report_diff.done_amount > 0 ? String(r.report_diff.done_amount) : ""} />
+                    <Input name="done_date" type="date" aria-label="Date it was done" defaultValue={r.report_diff.done_date ?? ""} />
+                    <span className="text-[11.5px] text-muted">Recorded as a call and its execution (CAS as proof). Clear it for the client&rsquo;s own trade.</span>
+                  </div>
+                ) : null}
+                <div className="mt-2"><SubmitButton size="sm">Save answer</SubmitButton></div>
               </ActionForm>
             ) : null}
           </li>

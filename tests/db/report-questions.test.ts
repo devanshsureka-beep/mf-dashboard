@@ -51,3 +51,46 @@ describeDb("Questions from the report", () => {
     });
   });
 });
+
+describeDb("Report + a newer CAS: a difference answered as already done", () => {
+  it("records the part done before onboarding as a call + execution when the plan is approved", async () => {
+    await scenario(async (ctx) => {
+      const p = await clientWithActivePlan(ctx); // baseline CAS of 01-Sep: X 10,000 units @150 (₹15L)
+      const x = (await ctx.tx<{ scheme_name: string }[]>`select scheme_name from public.security_master where id = ${ctx.sec.X}`)[0];
+      const payload = advisoryReportResultSchema.parse({
+        client_id: p.clientId, status: "PARSED", plan: { plan_name: "Report with a newer CAS" },
+        items: [{
+          action: "SELL", scheme_name: x.scheme_name, target_amount: 500000, current_amount: 1500000, reason: "Trim",
+          question: "The report sells ₹5,00,000; the new CAS holds ₹15,00,000 (₹2,00,000 sold since the report). How much is done?",
+          report_diff: { kind: "SELL_CHANGED", report_amount: 500000, cas_value: 1500000, sold_since: 200000, bought_since: 0, suggest: "SELL", done_amount: 200000, done_date: "2026-08-25" },
+        }],
+      });
+      const draft = await ctx.as("advisor", (t) => ingestAdvisoryReport(t, payload, ctx.users.advisor.id, { extractionSource: "IMPORT", securityIds: { [x.scheme_name.toLowerCase()]: ctx.sec.X } }));
+      const planId = draft.planId!;
+      const [q] = await ctx.as("advisor", (t) => listReportQuestions(t, planId));
+      expect(q.report_diff).toMatchObject({ kind: "SELL_CHANGED", done_amount: 200000, done_date: "2026-08-25" });
+
+      // A Keep cannot carry a part done on our advice; the done part cannot exceed the line.
+      expect(await ctx.expectError("advisor", (t) => answerReportQuestion(t, ctx.users.advisor, q.id, { action: "RETAIN", explanation: "client's own", done: { amount: 200000, date: "2026-08-25" } }))).toMatch(/Keep has nothing done/);
+      expect(await ctx.expectError("advisor", (t) => answerReportQuestion(t, ctx.users.advisor, q.id, { action: "SELL", amount: 100000, explanation: "x", done: { amount: 200000, date: "2026-08-25" } }))).toMatch(/more than the line/);
+
+      await ctx.as("advisor", (t) => answerReportQuestion(t, ctx.users.advisor, q.id, { action: "SELL", amount: 500000, explanation: "₹2L sold on our advice before onboarding", done: { amount: 200000, date: "2026-08-25" } }));
+      // On the draft nothing is recorded yet; approval records the call and its execution.
+      expect((await ctx.tx<{ n: number }[]>`select count(*)::int as n from public.advice_items where plan_item_id = ${q.id}`)[0].n).toBe(0);
+      await ctx.as("advisor", (t) => approvePlan(t, ctx.users.advisor, planId, "report with a newer CAS"));
+      const prog = (await ctx.tx<{ target_amount: number; advised_amount: number; executed_amount: number; yet_to_advise_amount: number }[]>`
+        select target_amount::float8, advised_amount::float8, executed_amount::float8, yet_to_advise_amount::float8 from public.v_plan_item_progress where plan_item_id = ${q.id}`)[0];
+      expect(prog).toEqual({ target_amount: 500000, advised_amount: 200000, executed_amount: 200000, yet_to_advise_amount: 300000 });
+      const ex = (await ctx.tx<{ verification_type: string; execution_date: string }[]>`
+        select e.verification_type, e.execution_date::text from public.executions e join public.advice_items ai on ai.id = e.advice_item_id where ai.plan_item_id = ${q.id}`)[0];
+      expect(ex).toEqual({ verification_type: "PROOF_VERIFIED", execution_date: "2026-08-25" });
+      // Approving again (or answering again) never records it twice.
+      const lines = await ctx.tx<{ report_diff: { done_call_id?: string } }[]>`select report_diff from public.advisory_plan_items where id = ${q.id}`;
+      expect(lines[0].report_diff.done_call_id).toBeTruthy();
+      // The cash from it was the client's at onboarding (dated before the onboarding CAS).
+      const bank = (await ctx.as("advisor", (t) => t<{ cash_at_onboarding: number }[]>`
+        select cash_at_onboarding::float8 from public.v_client_bank where client_id = ${p.clientId}`))[0];
+      expect(bank.cash_at_onboarding).toBe(200000);
+    });
+  });
+});

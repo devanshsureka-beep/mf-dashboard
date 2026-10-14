@@ -100,6 +100,12 @@ export const advisoryPlanItemSchema = z.object({
   switch_to_scheme_name: optionalText,
   /** The report's wording could not be read as Buy / Sell / Keep: asked on the plan; the line needs review. */
   question: z.string().trim().max(500).optional().nullable(),
+  /** Report vs a newer CAS: what differs and what was done since the report (see lib/domain/report-plan ReportDiff). */
+  report_diff: z.object({
+    kind: z.enum(["SELL_GONE", "SELL_CHANGED", "KEEP_GONE", "KEEP_CHANGED", "BUY_HELD", "NOT_IN_REPORT", "TRADED"]),
+    report_amount: z.number().nullable(), cas_value: z.number(), sold_since: z.number(), bought_since: z.number(),
+    suggest: z.enum(["SELL", "BUY", "RETAIN"]), done_amount: z.number(), done_date: z.string().nullable(),
+  }).optional().nullable(),
 });
 
 export const advisorySipItemSchema = z.object({

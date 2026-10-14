@@ -210,10 +210,16 @@ export async function answerReportQuestionAction(clientId: string, planId: strin
     const percent = /%$/.test(raw) ? Number(raw.slice(0, -1)) : null;
     const amount = percent === null && raw ? Number(raw) : null;
     if ((percent !== null && !Number.isFinite(percent)) || (amount !== null && !Number.isFinite(amount))) throw new AppError("Enter the amount as ₹ (e.g. 150000) or a percentage (e.g. 33%).");
+    // The part already done before onboarding (a CAS newer than the report shows it).
+    const doneRaw = str(fd, "done_amount").replace(/[₹,\s]/g, "");
+    const doneAmount = doneRaw ? Number(doneRaw) : 0;
+    if (!Number.isFinite(doneAmount) || doneAmount < 0) throw new AppError("Enter the amount already done in rupees.");
+    const done = doneAmount > 0 ? { amount: doneAmount, date: str(fd, "done_date") } : null;
     await actionTx((tx, actor) => answerReportQuestion(tx, actor, itemId, {
-      action: action as "SELL" | "BUY" | "RETAIN", amount, percent, explanation: reqStr(fd, "explanation", "Explanation"),
+      action: action as "SELL" | "BUY" | "RETAIN", amount, percent, explanation: reqStr(fd, "explanation", "Explanation"), done,
     }), opts);
     refresh(clientId, planId);
-    return action === "RETAIN" ? "Answered: kept." : `Answered: ${action === "SELL" ? "sell" : "buy"} line set.`;
+    return action === "RETAIN" ? "Answered: kept."
+      : `Answered: ${action === "SELL" ? "sell" : "buy"} line set${done ? "; the part already done is recorded (now, or when the plan is approved)" : ""}.`;
   });
 }
