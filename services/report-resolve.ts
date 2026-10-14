@@ -7,7 +7,7 @@
 import { AppError } from "@/lib/errors";
 import { askClaudeForReport, type ReportAiInput } from "@/lib/integrations/report-ai";
 import type { CasParseOutput } from "@/lib/parsers/cas";
-import type { AdvisoryReportParse } from "@/lib/parsers/advisory-report";
+import { sameInvestor, type AdvisoryReportParse } from "@/lib/parsers/advisory-report";
 import type { PlanKind } from "@/types/domain";
 import { nameScore } from "@/lib/domain/doc-pairing";
 import { isStaleCasProblem } from "@/lib/domain/report-plan";
@@ -21,7 +21,10 @@ export type ResolveResult =
 type Ask = (input: ReportAiInput, timeoutMs: number) => Promise<{ report: AdvisoryReportParse; corrections: string[] }>;
 
 export async function resolveWithClaude(args: {
-  cas: CasParseOutput;
+  /** null: a new investor with no mutual funds yet (no CAS); `check` and `expectedName` then decide. */
+  cas: CasParseOutput | null;
+  /** New investor: the name the desk entered (the report must be for them). */
+  expectedName?: string | null;
   reportPdf: Uint8Array;
   draft: AdvisoryReportParse | null;
   readerError: string | null;
@@ -35,13 +38,15 @@ export async function resolveWithClaude(args: {
   /** Tie-out of a candidate report (default: full rebalancing). */
   check?: (report: AdvisoryReportParse) => { kind: PlanKind; problems: string[] };
 }): Promise<ResolveResult> {
-  const check = args.check ?? ((r: AdvisoryReportParse) => ({ kind: "FULL" as PlanKind, problems: previewOnboarding(args.cas, r).problems }));
+  const cas = args.cas;
+  if (!cas && !args.check) throw new Error("resolveWithClaude: a check is required without a CAS");
+  const check = args.check ?? ((r: AdvisoryReportParse) => ({ kind: "FULL" as PlanKind, problems: previewOnboarding(cas!, r).problems }));
   const ask = args.ask ?? askClaudeForReport;
   const maxRounds = args.maxRounds ?? 3;
   const minRoundMs = args.minRoundMs ?? 75_000;
   let holdings;
   try {
-    holdings = holdingsFromCas(args.cas);
+    holdings = cas ? holdingsFromCas(cas) : [];
   } catch (e) {
     return { status: "OPEN", problems: [`The CAS does not reconcile: ${(e as Error).message}`], corrections: [], rounds: 0, error: null };
   }
@@ -57,7 +62,7 @@ export async function resolveWithClaude(args: {
     let ai;
     try {
       ai = await ask({
-        pdf: args.reportPdf, holdings, casValuationDate: args.cas.valuationDate,
+        pdf: args.reportPdf, holdings, casValuationDate: cas?.valuationDate ?? null,
         draft, readerError: round === 1 ? args.readerError : null, problems,
       }, left - 5_000);
     } catch (e) {
@@ -69,10 +74,14 @@ export async function resolveWithClaude(args: {
     corrections = [...corrections, ...ai.corrections.map((c) => (round > 1 ? `(round ${round}) ${c}` : c))];
     // Never borrow the CAS name: a report with no printed name must at least be named after the client.
     const named = ai.report.clientName
-      ?? (args.reportFileName && nameScore(args.cas.investor.name, args.reportFileName) >= 1 ? args.cas.investor.name : null);
+      ?? (cas && args.reportFileName && nameScore(cas.investor.name, args.reportFileName) >= 1 ? cas.investor.name : null);
     const candidate = { ...ai.report, clientName: named };
-    const together = checkDocumentsBelongTogether(args.cas, candidate);
-    if (together.problem && ai.report.clientName) return { status: "WRONG_PAIR", message: together.problem, corrections, rounds };
+    if (cas) {
+      const together = checkDocumentsBelongTogether(cas, candidate);
+      if (together.problem && ai.report.clientName) return { status: "WRONG_PAIR", message: together.problem, corrections, rounds };
+    } else if (args.expectedName && ai.report.clientName && !sameInvestor(args.expectedName, ai.report.clientName)) {
+      return { status: "WRONG_PAIR", message: `The report is for "${ai.report.clientName}", not "${args.expectedName}".`, corrections, rounds };
+    }
     const checked = check(candidate);
     problems = checked.problems;
     if (!problems.length) {

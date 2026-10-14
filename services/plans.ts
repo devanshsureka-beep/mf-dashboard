@@ -212,12 +212,14 @@ export async function approvePlan(
   await tx`
     update public.advisory_plans set status = 'ACTIVE', approved_by = ${actor.id}, approved_at = ${approvedAt}
     where id = ${planId}`;
-  // A tranche with no plan to join becomes the client's plan; its fresh money still counts.
+  // Fresh money the plan invests counts in money left: a tranche with no plan to join,
+  // or a new investor's first plan (no CAS yet, everything bought with new money).
   const m = meta[0];
-  if (m?.plan_kind === "ADDITIONAL" && m.fresh_money && Number(m.fresh_money) > 0) {
+  if (m?.fresh_money && Number(m.fresh_money) > 0) {
     await tx`
       insert into public.client_fresh_money (client_id, amount, received_on, plan_id, note, created_by)
-      values (${plan.client_id}, ${m.fresh_money}, ${m.plan_date}::date, ${planId}, ${`Additional investment: ${m.plan_name}`}, ${actor.id})`;
+      values (${plan.client_id}, ${m.fresh_money}, ${m.plan_date}::date, ${planId},
+              ${`${m.plan_kind === "ADDITIONAL" ? "Additional investment" : "First investment"}: ${m.plan_name}`}, ${actor.id})`;
   }
   return "ACTIVE";
 }

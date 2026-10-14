@@ -142,6 +142,7 @@ Rules:
 - plan_type: DIRECT or REGULAR when the report or the matching CAS fund shows it; otherwise UNKNOWN.
 - folio: only when the report prints it, else "". folio_count: how many folios one row covers (1 unless the report says otherwise).
 - Anything the report does not show: "" for text, 0 for amounts.
+- An empty CAS fund list means a new investor with no mutual funds yet: every recommendation is a buy or a SIP start (nothing to sell, hold, stop or change); put anything else in questions.
 - Use the CAS fund list to identify which fund / folio a report line means and to write the fund name exactly as the CAS writes it (same fund, same plan type).
 - A CAS fund must not be invented into sells/holds. If, after searching every page (tables, notes, footnotes, annexures, "no change" / "continue" lists), the report never mentions a CAS fund, list its CAS name in cas_funds_not_in_report.
 - You get a draft (from the built-in reader or your previous attempt) and the points that still do not reconcile with the CAS. Keep draft lines that are right, fix the rest, and list each change in corrections (one short line each). How to resolve each kind of point:

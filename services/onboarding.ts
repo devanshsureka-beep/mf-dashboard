@@ -209,6 +209,28 @@ export async function onboardFromDocuments(
   const draft = buildPlanFromReport(args.report, holdings, args.cas.valuationDate, { additional: kind === "ADDITIONAL" });
   if (draft.problems.length) throw new AppError(problemsMessage(draft.problems));
 
+  const plan = await planFromDraft(tx, actor, { clientId: client.id, reportDocId, report: args.report, draft, holdings });
+
+  return {
+    clientId: client.id,
+    clientCode: client.client_code,
+    planId: plan.planId,
+    snapshotId,
+    itemsNeedingReview: plan.itemsNeedingReview,
+    warnings: [...warnings, ...plan.warnings],
+  };
+}
+
+/**
+ * The draft (already tied to the holdings) -> securities for every line -> a
+ * DRAFT plan. Funds to buy are found by name or created name-only.
+ */
+async function planFromDraft(
+  tx: Tx,
+  actor: Actor,
+  args: { clientId: string; reportDocId: string; report: AdvisoryReportParse; draft: ReportPlanDraft; holdings: (PlanHolding & { security_id: string | null })[]; planName?: string },
+): Promise<{ planId: string; itemsNeedingReview: number; warnings: string[] }> {
+  const { draft, holdings, reportDocId } = args;
   // Funds to buy are usually new to the client: find them, or create a
   // name-only entry that picks up its ISIN from the first CAS that holds it.
   const securityIds: Record<string, string> = {};
@@ -234,11 +256,11 @@ export async function onboardFromDocuments(
   }
 
   const payload = advisoryReportResultSchema.parse({
-    client_id: client.id,
+    client_id: args.clientId,
     document_id: reportDocId,
     status: "PARSED",
     plan: {
-      plan_name: draft.plan_name,
+      plan_name: args.planName ?? draft.plan_name,
       plan_date: draft.plan_date,
       starting_portfolio_value: draft.starting_portfolio_value,
       notes: draft.notes,
@@ -260,13 +282,108 @@ export async function onboardFromDocuments(
   });
   const plan = await ingestAdvisoryReport(tx, payload, actor.id, { extractionSource: args.report.template === "AI_ASSISTED" ? "AI_EXTRACTION" : "IMPORT", securityIds });
   if (!plan.planId) throw new AppError("The plan could not be created from the report.");
+  return { planId: plan.planId, itemsNeedingReview: plan.itemsNeedingReview, warnings: plan.warnings };
+}
 
-  return {
-    clientId: client.id,
-    clientCode: client.client_code,
-    planId: plan.planId,
-    snapshotId,
-    itemsNeedingReview: plan.itemsNeedingReview,
-    warnings: [...warnings, ...plan.warnings],
-  };
+// -----------------------------------------------------------------------------
+// A new investor: no mutual funds yet, so no CAS. The report alone gives the
+// plan (buys and SIPs, all with fresh money); the first CAS later shows the buys.
+// -----------------------------------------------------------------------------
+export interface NewInvestorDetails {
+  fullName: string;
+  pan: string;
+  phone?: string | null;
+  email?: string | null;
+}
+
+const PAN_RE = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
+
+/** Everything that must hold before a new investor is saved. Pure. */
+export function previewNewInvestor(report: AdvisoryReportParse, who: NewInvestorDetails): { problems: string[]; draft: ReportPlanDraft | null } {
+  const problems: string[] = [];
+  if (!who.fullName.trim()) problems.push("Enter the client's name.");
+  if (!PAN_RE.test(who.pan.trim().toUpperCase())) problems.push("Enter a valid PAN (e.g. ABCDE1234F): the client's first CAS is matched to them by PAN.");
+  if (report.clientName && who.fullName.trim() && !sameInvestor(who.fullName, report.clientName)) {
+    problems.push(`The report is for "${report.clientName}", not "${who.fullName.trim()}".`);
+  }
+  if (report.sells.length) {
+    problems.push(`The report sells ${report.sells.length} fund(s), so the client already holds mutual funds: onboard them with their CAS instead.`);
+    return { problems, draft: null };
+  }
+  // No holdings: the plan is new money only (fresh money = what it buys).
+  const draft = buildPlanFromReport({ ...report, review: [] }, [], null, { additional: true });
+  problems.push(...draft.problems.filter((p) => !/additional-investment report has no buy/.test(p)));
+  if (!draft.items.some((i) => i.action === "BUY") && !draft.sip_items.some((s) => s.action === "START")) {
+    problems.push("The report has no fund to buy and no SIP to start.");
+  }
+  const sipStops = draft.sip_items.filter((s) => s.action !== "START");
+  if (sipStops.length) problems.push(`The report stops or changes ${sipStops.length} SIP(s), which a new investor does not have: onboard with their CAS instead.`);
+  return { problems, draft };
+}
+
+/** Step 1: create the client (refused when the PAN is already a client or the report does not hold up). */
+export async function createNewInvestor(
+  tx: Tx,
+  actor: Actor,
+  args: { who: NewInvestorDetails; advisorId?: string | null; report: AdvisoryReportParse },
+): Promise<{ id: string; client_code: string }> {
+  const { problems } = previewNewInvestor(args.report, args.who);
+  if (problems.length) throw new AppError(newInvestorMessage(problems));
+  const pan = args.who.pan.trim().toUpperCase();
+  const existing = await findClientByPan(tx, pan);
+  if (existing) throw new AppError(`${existing.full_name} (${existing.client_code}) already has this PAN: upload the report on their page instead.`);
+  const c = await createClient(tx, actor, {
+    full_name: args.who.fullName.trim(),
+    email: args.who.email?.trim().toLowerCase() || null,
+    phone: args.who.phone || null,
+    pan,
+    risk_profile: (RISK_PROFILES as string[]).includes(args.report.riskProfile ?? "") ? args.report.riskProfile : null,
+    goal: args.report.goal,
+    status: "ACTIVE",
+    advisor_id: args.advisorId || actor.id,
+  });
+  // The starting point: nothing held (dated the day before, so a buy on the onboarding
+  // day still counts as a trade after it). The first CAS is compared with this
+  // empty baseline, so its purchases complete the buy calls (and "since
+  // onboarding" starts from the fresh money, not from the first CAS).
+  await tx`
+    insert into public.portfolio_snapshots
+      (client_id, cas_document_id, snapshot_date, total_invested_value, total_current_value, source, extraction_method,
+       review_status, reviewed_at, reviewed_by, review_note, is_baseline, holdings_count, created_by)
+    values (${c.id}, null, app.today_ist() - 1, 0, 0, 'MANUAL', 'MANUAL',
+            'CONFIRMED', now(), ${actor.id}, 'New investor: no mutual funds at onboarding', true, 0, ${actor.id})`;
+  return c;
+}
+
+export function newInvestorMessage(problems: string[]): string {
+  return problemsMessage(problems).replace("The report and the CAS do not fully reconcile", "The report cannot be onboarded as it is");
+}
+
+/** Step 2 (after the report file is stored): the report document and the DRAFT plan (buys and SIP starts, fresh money). */
+export async function newInvestorPlan(
+  tx: Tx,
+  actor: Actor,
+  args: { clientId: string; who: NewInvestorDetails; report: AdvisoryReportParse; reportFile: StoredFile },
+): Promise<{ planId: string; itemsNeedingReview: number; warnings: string[] }> {
+  const { problems, draft } = previewNewInvestor(args.report, args.who);
+  if (problems.length || !draft) throw new AppError(newInvestorMessage(problems));
+  const reportDocId = await registerDocument(tx, actor.id, {
+    clientId: args.clientId,
+    type: "ADVISORY_REPORT",
+    filePath: args.reportFile.path,
+    fileName: args.reportFile.fileName,
+    mimeType: args.reportFile.mimeType,
+    sizeBytes: args.reportFile.size,
+    sha256: args.reportFile.sha256,
+    description: `Advisory report (new investor)${args.report.preparedDate ? ` prepared ${args.report.preparedDate}` : ""}`,
+    parseStatus: "PARSED",
+  });
+  const notes = [
+    "New investor: no mutual funds before Univest. Everything is bought with fresh money; the first CAS shows the buys.",
+    draft.notes.split("\n").filter((l) => !/^Additional investment/.test(l)).join("\n"),
+  ].filter(Boolean).join("\n");
+  return planFromDraft(tx, actor, {
+    clientId: args.clientId, reportDocId, report: args.report, draft: { ...draft, plan_kind: "FULL", notes }, holdings: [],
+    planName: `First investment plan${args.report.preparedDate ? ` · ${args.report.preparedDate}` : ""}`,
+  });
 }
