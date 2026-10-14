@@ -88,4 +88,32 @@ describe("Report + a newer CAS: differences become questions, prefilled from the
     // A fund the report calls by another name: its trades still get a question.
     expect(plan.items.find((i) => i.isin === "INF109K01480")).toMatchObject({ action: "RETAIN", diff: { kind: "TRADED", suggest: "SELL", done_amount: 1100000 } });
   });
+
+  it("a sell naming another folio, a multi-folio exit already done and a SIP stop on an exited fund do not block", () => {
+    const ans: ReportAiAnswer = {
+      ...answer,
+      sells: [
+        { fund: "HDFC Balanced Advantage Fund (Regular)", folio: "19970693", folio_count: 1, plan_type: "REGULAR", partial: false, value: 64670, percent: null },
+        { fund: "Aditya Birla SL Digital India Fund (Regular)", folio: null, folio_count: 2, plan_type: "REGULAR", partial: false, value: 51495, percent: null },
+      ],
+      sell_total: null, buys: [], buy_total: null,
+      holds: [{ fund: "HDFC Balanced Advantage Fund (Regular)", folio: "12605858", folio_count: 1, plan_type: "REGULAR", value: 285895, deferred: false, note: "Held as-is" }],
+      sips: [{ fund: "PPFAS Parag Parikh Flexi Cap Fund (Direct)", plan_type: "DIRECT", change: "STOP", current: 5000, next: 0 }],
+    };
+    const h: PlanHolding[] = [
+      { scheme_name: "HDFC Balanced Advantage Fund - Regular Plan - Growth", isin: "INF179K01830", folio_number: "12605858/10", current_value: 277000, plan_type: "REGULAR" },
+    ];
+    const t: SinceTrade[] = [
+      { scheme_name: "HDFC Balanced Advantage Fund - Regular Plan - Growth", isin: "INF179K01830", date: "2026-09-22", type: "REDEMPTION", amount: -64706 },
+      { scheme_name: "Aditya Birla Sun Life Digital India Fund - Growth-Regular Plan", isin: "INF209K01AV3", date: "2026-09-22", type: "REDEMPTION", amount: -51352 },
+    ];
+    const plan = buildPlanFromReport(answerToReport(ans, null), h, "2026-10-12", { since: { trades: t } });
+    expect(plan.problems).toEqual([]);
+    // The sold folio is its own Sell (done); the folio the report keeps stays a Keep.
+    expect(plan.items.find((i) => i.action === "SELL" && /Balanced/.test(i.scheme_name))).toMatchObject({ folio_number: "19970693", diff: { kind: "SELL_GONE", done_amount: 64706 } });
+    expect(plan.items.find((i) => i.folio_number === "12605858/10")).toMatchObject({ action: "RETAIN" });
+    expect(plan.items.find((i) => i.isin === "INF209K01AV3")).toMatchObject({ action: "SELL", diff: { kind: "SELL_GONE", done_amount: 51352 } });
+    expect(plan.sip_items).toEqual([]);
+    expect(plan.drift.join(" ")).toMatch(/SIP stop for PPFAS.*already exited/);
+  });
 });

@@ -296,6 +296,25 @@ export function buildPlanFromReport(
       // "Trim 33%": that share of the CAS holding (computed here, the report itself is not changed).
       const sold = s.partial && !s.value && s.percent ? Math.round(total * s.percent) / 100 : s.value;
       if (!wholeFund && group.length !== s.folioCount) {
+        if (tolerant) {
+          // Report vs a newer CAS: some or all of the folios are already sold. Folios still held stay
+          // a sell; the rest is one line for the fund, asked about.
+          for (const g of group) {
+            taken.add(g);
+            const it: PlanItemDraft = { action: s.action === "SWITCH" ? "SWITCH" : "SELL", scheme_name: g.scheme_name, isin: g.isin, folio_number: g.folio_number,
+              target_amount: g.current_value, current_amount: g.current_value, reason: `${s.actionText} (${s.folioCount} folios in the report)`, priority: (priority += 10) };
+            items.push(it);
+            differs.set(it, { kind: "SELL_CHANGED", report: null });
+          }
+          if (!group.length) {
+            const gone = goneHolding(s.fund, planType);
+            const it: PlanItemDraft = { action: s.action === "SWITCH" ? "SWITCH" : "SELL", scheme_name: gone?.scheme_name ?? s.fund, isin: gone?.isin ?? null, folio_number: null,
+              target_amount: s.value, current_amount: 0, reason: `${s.actionText} (${s.folioCount} folios)`, priority: (priority += 10), plan_type: planType };
+            items.push(it);
+            differs.set(it, { kind: "SELL_GONE", report: s.value });
+          }
+          continue;
+        }
         problems.push(`Sell row "${s.fund}" covers ${s.folioCount} folios, but the CAS has ${group.length} matching folio(s).`);
         continue;
       }
@@ -326,6 +345,8 @@ export function buildPlanFromReport(
     if (h && tolerant) {
       const gone = goneHolding(s.fund, planType);
       if (gone && nameSimilarity(s.fund, gone.scheme_name) > nameSimilarity(s.fund, h.scheme_name)) h = null;
+      // The report names the folio: another folio of the same fund is not this one (it may be kept).
+      else if (s.folio && h.folio_number && !normFolio(h.folio_number).startsWith(normFolio(s.folio)) && !normFolio(s.folio).startsWith(normFolio(h.folio_number))) h = null;
     }
     if (!h) {
       if (tolerant) {
@@ -666,6 +687,11 @@ export function buildPlanFromReport(
       drift.push(`New SIP in ${s.fund}: the report does not say Direct or Regular, so Direct is assumed.`);
     }
     if (s.change !== "START" && !h) {
+      if (tolerant) {
+        // Report vs a newer CAS: the fund is already exited, so its SIP has nothing left to stop.
+        drift.push(`SIP ${s.change === "STOP" ? "stop" : "change"} for ${s.fund}: the new CAS no longer holds the fund (already exited).`);
+        continue;
+      }
       problems.push(`SIP ${s.change === "STOP" ? "stop" : "change"} for "${s.fund}" does not match any fund in the CAS.`);
       continue;
     }

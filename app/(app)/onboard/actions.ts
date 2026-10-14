@@ -52,7 +52,14 @@ export async function onboardAction(_p: ActionResult | null, fd: FormData): Prom
     // The CAS may be newer than the report (the client already acted on part of it): differences are asked on the plan.
     const newerCas = str(fd, "cas_kind") === "NEWER";
     const decided = decideReportKind(cas, report, { choice, hasActivePlan: await hasActivePlanForPan(actor, cas.investor.pan), newerCas });
-    if (decided.problems.length) throw new AppError(problemsMessage(decided.problems));
+    if (decided.problems.length) {
+      // A CAS dated after the report: the client has probably acted on it already.
+      const reportDate = report.valuationDate ?? report.casPeriod?.to ?? report.preparedDate;
+      const hint = !newerCas && reportDate && cas.valuationDate && cas.valuationDate > reportDate
+        ? [`This CAS (${cas.valuationDate}) is newer than the report (${reportDate}). If the client already acted on part of the report, choose "Which CAS is this? → A newer CAS": each difference then becomes a question on the plan instead of blocking.`]
+        : [];
+      throw new AppError(problemsMessage([...hint, ...decided.problems]));
+    }
 
     const out = await saveOnboarding(actor, { cas, casFile, passwordProtected, report, reportFile, advisorId, phone: mobile, kind: decided.kind, newerCas });
     target = `/clients/${out.clientId}/plans/${out.planId}?onboarded=${out.created ? "new" : "existing"}`;
