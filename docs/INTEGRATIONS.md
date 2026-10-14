@@ -231,6 +231,8 @@ Advisory reports come in many layouts. The built-in readers (`lib/parsers/*`) ru
 
 **Funds the report never mentions:** Claude lists them (exact CAS names) in `cas_funds_not_in_report`. They are kept as RETAIN with "Not mentioned in the advisory report… Advisor to confirm" and listed in the plan notes, as long as together they are at most 25% of the portfolio (`NOT_IN_REPORT_LIMIT`); above that the client stays in Needs review. Claude-read plans are stored with source AI_EXTRACTION, and a report that prints no client name must have the client's name in its file name.
 
+**Picture-only CAS PDFs** (scanned, or re-saved with "Microsoft Print to PDF") have no text for the built-in parser. When the reader above is set up, the same relay sends the PDF to Claude to transcribe (`lib/integrations/cas-ai.ts`, schema `CAS_AI_SCHEMA`, transactions of the last 6 months). The built-in cross-checks (units × NAV = value, balances, summary total) run on the answer, and the snapshot is always created as PENDING_REVIEW for a person to confirm. A locked picture-only PDF cannot be sent; the desk is asked for the original.
+
 **Settings:** `REPORT_AI_URL` (the webhook's production URL) and `REPORT_AI_KEY` (also stored in the n8n Header Auth credential, header name `X-Desk-Key`). Without them the page still works and lists unreconciled reports for review.
 
 **Passwords:** bulk onboarding also tries parts of each CAS file name as the password (`fileNamePasswords` in `lib/cas/password.ts`). Passwords are only used in memory; stored copies are renamed (`CAS <name> <date>.pdf`, `Advisory report <name>.pdf`), so a password in a file name never reaches storage or the database.

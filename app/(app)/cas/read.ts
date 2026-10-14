@@ -6,7 +6,7 @@
  * only in this request's memory.
  */
 import { casPasswordTemplate, passwordCandidates } from "@/lib/cas/password";
-import { readCasPdf } from "@/lib/cas/reader";
+import { readCasAnyPdf } from "@/lib/integrations/cas-ai";
 import { AppError } from "@/lib/errors";
 import { maskPan } from "@/lib/format";
 import { actionTx } from "@/lib/server";
@@ -29,7 +29,7 @@ export async function readClientCas(args: {
     phones,
     fileNameParts: true,
   });
-  const { parsed, passwordProtected } = await readCasPdf(args.bytes, candidates);
+  const { parsed, passwordProtected } = await readCasAnyPdf(args.bytes, candidates);
   const pan = parsed.investor.pan?.toUpperCase() ?? null;
   if (args.clientPan && pan && pan !== args.clientPan.toUpperCase()) {
     throw new AppError(`This CAS is for PAN ${maskPan(pan)} (${parsed.investor.name ?? "another investor"}), not this client.`);

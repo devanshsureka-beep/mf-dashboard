@@ -1,9 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { readCasAnyPdf } from "@/lib/integrations/cas-ai";
 import { str } from "@/lib/actions";
 import { casPasswordTemplate, fileNamePasswords, passwordCandidates } from "@/lib/cas/password";
-import { identifyPdf, readCasPdf, readReportDetailed } from "@/lib/cas/reader";
+import { identifyPdf, readReportDetailed } from "@/lib/cas/reader";
 import { AppError, logServerError, toUserMessage } from "@/lib/errors";
 import { reportAiConfigured } from "@/lib/integrations/report-ai";
 import { requireActorForAction } from "@/lib/auth/session";
@@ -116,7 +117,7 @@ export async function onboardBulkPairAction(fd: FormData): Promise<BulkOnboardRo
     if (casUpload.mimeType !== "application/pdf" || reportUpload.mimeType !== "application/pdf") return fail("FAILED", "Both files must be PDFs.");
 
     const casCandidates = await candidatesFor(run, casUpload.fileName);
-    const { parsed: cas, passwordProtected } = await readCasPdf(casUpload.bytes, casCandidates);
+    const { parsed: cas, passwordProtected } = await readCasAnyPdf(casUpload.bytes, casCandidates);
     if (!cas.investor.pan) return fail("FAILED", "The CAS shows no PAN, so the client cannot be identified.");
 
     // Same report already onboarded for this client: nothing to do.

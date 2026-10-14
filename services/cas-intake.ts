@@ -81,10 +81,10 @@ export async function ingestParsedCas(
     filePath: args.file.path,
     source: args.parsed.source,
     passwordProtected: args.passwordProtected,
-    notes: "Read by the built-in CAS parser",
+    notes: args.parsed.readByAi ? "Read by Claude (picture-only PDF): check before it counts" : "Read by the built-in CAS parser",
   });
   if (args.existingCasDocumentId) {
-    await tx`update public.cas_documents set notes = 'Read by the built-in CAS parser', parse_error = null where id = ${args.existingCasDocumentId}`;
+    await tx`update public.cas_documents set notes = ${args.parsed.readByAi ? "Read by Claude (picture-only PDF): check before it counts" : "Read by the built-in CAS parser"}, parse_error = null where id = ${args.existingCasDocumentId}`;
   }
 
   const contract = casParseResultSchema.safeParse(toCasParseResult(args.parsed, reg.casDocumentId));
@@ -111,7 +111,8 @@ export async function ingestParsedCas(
       email = coalesce(email, ${args.parsed.investor.email?.toLowerCase() ?? null})
     where id = ${args.clientId} and (phone is null or email is null)`;
 
-  if (ingest.status !== "PARSED" || args.autoConfirm === false) {
+  // Claude's transcription never counts until a person has checked it.
+  if (ingest.status !== "PARSED" || args.autoConfirm === false || args.parsed.readByAi) {
     return { ...base, snapshotStatus: "PENDING_REVIEW", isBaseline: false, runId: null, summary: null };
   }
 

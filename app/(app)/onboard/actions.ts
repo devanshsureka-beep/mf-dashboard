@@ -1,10 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { readCasAnyPdf } from "@/lib/integrations/cas-ai";
 import { redirect } from "next/navigation";
 import { num, runAction, str, type ActionResult } from "@/lib/actions";
 import { casPasswordTemplate, passwordCandidates } from "@/lib/cas/password";
-import { readCasPdf, readReportDetailed, readReportPdf } from "@/lib/cas/reader";
+import { readReportDetailed, readReportPdf } from "@/lib/cas/reader";
 import { fileNamePasswords } from "@/lib/cas/password";
 import { objectPath, uploadAsUser, fileFromForm } from "@/lib/storage";
 import { reportAiConfigured } from "@/lib/integrations/report-ai";
@@ -41,7 +42,7 @@ export async function onboardAction(_p: ActionResult | null, fd: FormData): Prom
       fileName: casFile.fileName,
       phones,
     });
-    const { parsed: cas, passwordProtected } = await readCasPdf(casFile.bytes, candidates);
+    const { parsed: cas, passwordProtected } = await readCasAnyPdf(casFile.bytes, candidates);
 
     const read = await readReportPdf(reportFile.bytes, candidates);
     const fresh = num(fd, "fresh_money");

@@ -46,6 +46,8 @@ export interface CasParseOutput {
   summaryTotal: { cost: number | null; market: number | null };
   schemes: CasScheme[];
   warnings: string[];
+  /** Transcribed by Claude from a picture-only PDF: the snapshot always waits for a check. */
+  readByAi?: boolean;
 }
 
 export class CasParseError extends Error {
@@ -199,6 +201,28 @@ export function findIsin(header: string[]): string | null {
     return null;
   }
   return null;
+}
+
+/** Deterministic cross-checks: balances chain to the closing units, units × NAV = value, schemes add up to the summary. */
+export function crossCheckCas(schemes: CasScheme[], summaryMarket: number | null): string[] {
+  const warnings: string[] = [];
+  for (const s of schemes) {
+    const last = [...s.transactions].reverse().find((t) => t.balanceUnits !== null);
+    if (last && s.closingUnits !== null && Math.abs(last.balanceUnits! - s.closingUnits) > 0.002) {
+      warnings.push(`${s.schemeName} (${s.folio}): last transaction balance ${last.balanceUnits} ≠ closing units ${s.closingUnits}.`);
+    }
+    if (s.closingUnits && s.nav && s.marketValue !== null) {
+      const implied = s.closingUnits * s.nav;
+      if (Math.abs(implied - s.marketValue) > Math.max(1, s.marketValue * 0.005)) {
+        warnings.push(`${s.schemeName} (${s.folio}): units × NAV ≠ market value.`);
+      }
+    }
+  }
+  const market = round2(schemes.reduce((t, s) => t + (s.marketValue ?? 0), 0));
+  if (summaryMarket !== null && Math.abs(market - summaryMarket) > 2) {
+    warnings.push(`Scheme values add up to ₹${market.toLocaleString("en-IN")} but the portfolio summary says ₹${round2(summaryMarket).toLocaleString("en-IN")}.`);
+  }
+  return warnings;
 }
 
 export function parseCasLines(rawLines: string[]): CasParseOutput {
@@ -362,23 +386,7 @@ export function parseCasLines(rawLines: string[]): CasParseOutput {
 
   if (schemes.length === 0) throw new CasParseError("No folios could be read from this CAS.");
 
-  // --- Validation (deterministic cross-checks) ---
-  for (const s of schemes) {
-    const last = [...s.transactions].reverse().find((t) => t.balanceUnits !== null);
-    if (last && s.closingUnits !== null && Math.abs(last.balanceUnits! - s.closingUnits) > 0.002) {
-      warnings.push(`${s.schemeName} (${s.folio}): last transaction balance ${last.balanceUnits} ≠ closing units ${s.closingUnits}.`);
-    }
-    if (s.closingUnits && s.nav && s.marketValue !== null) {
-      const implied = s.closingUnits * s.nav;
-      if (Math.abs(implied - s.marketValue) > Math.max(1, s.marketValue * 0.005)) {
-        warnings.push(`${s.schemeName} (${s.folio}): units × NAV ≠ market value.`);
-      }
-    }
-  }
-  const market = round2(schemes.reduce((t, s) => t + (s.marketValue ?? 0), 0));
-  if (summaryMarket !== null && Math.abs(market - summaryMarket) > 2) {
-    warnings.push(`Scheme values add up to ₹${market.toLocaleString("en-IN")} but the portfolio summary says ₹${round2(summaryMarket).toLocaleString("en-IN")}.`);
-  }
+  warnings.push(...crossCheckCas(schemes, summaryMarket));
   const pans = schemes.map((s) => s.pan).filter((p): p is string => Boolean(p));
   const pan = mostCommon(pans);
   const otherPans = [...new Set(pans.filter((p) => p !== pan))];

@@ -14,6 +14,8 @@ import { getClientSummary } from "@/services/clients";
 import { getHoldings, getSnapshot } from "@/services/portfolio";
 import { confirmSnapshotAction, rejectSnapshotAction } from "../../cas/actions";
 
+export const maxDuration = 300; // a picture-only CAS is read by Claude (up to 4 min)
+
 export const metadata = { title: "Snapshot review" };
 
 export default async function SnapshotPage(props: PageProps<"/snapshots/[snapshotId]">) {

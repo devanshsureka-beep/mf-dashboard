@@ -5,7 +5,7 @@ import { requireActor } from "@/lib/auth/session";
 import { Checker } from "./checker";
 
 // Reading two PDFs can take a few seconds on a cold start.
-export const maxDuration = 120;
+export const maxDuration = 300; // a picture-only CAS is read by Claude (up to 4 min)
 
 export const metadata = { title: "Document check" };
 

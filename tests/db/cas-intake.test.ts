@@ -310,6 +310,17 @@ describeDb("onboarding from CAS + advisory report", () => {
     });
   });
 
+  it("a CAS read by Claude (picture-only PDF) is never auto-confirmed, even when every check passes", async () => {
+    await scenario(async (ctx) => {
+      const client = await ctx.as("advisor", (t) => ensureClientFromDocuments(t, ctx.users.advisor, { cas, report }));
+      const ai: CasParseOutput = { ...cas, warnings: [], readByAi: true };
+      const out = await ctx.as("ops", (t) => ingestParsedCas(t, ctx.users.ops, { clientId: client.id, file: file("printed.pdf"), parsed: ai, passwordProtected: false }));
+      expect(out.snapshotStatus).toBe("PENDING_REVIEW");
+      const doc = await ctx.tx<{ notes: string }[]>`select notes from public.cas_documents where id = ${out.casDocumentId}`;
+      expect(doc[0].notes).toMatch(/Read by Claude/);
+    });
+  });
+
   it("reads a CAS that was stored earlier but never read, into that same CAS record", async () => {
     await scenario(async (ctx) => {
       const client = await ctx.as("advisor", (t) => ensureClientFromDocuments(t, ctx.users.advisor, { cas, report }));

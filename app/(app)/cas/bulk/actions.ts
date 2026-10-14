@@ -1,9 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { readCasAnyPdf } from "@/lib/integrations/cas-ai";
 import { str } from "@/lib/actions";
 import { casPasswordTemplate, passwordCandidates } from "@/lib/cas/password";
-import { readCasPdf } from "@/lib/cas/reader";
 import { AppError, logServerError, toUserMessage } from "@/lib/errors";
 import { actionTx } from "@/lib/server";
 import { maskPan } from "@/lib/format";
@@ -44,7 +44,7 @@ export async function processCasFileAction(fd: FormData): Promise<BulkCasRow> {
       fileName: file.fileName,
       phones,
     });
-    const { parsed, passwordProtected } = await readCasPdf(file.bytes, candidates);
+    const { parsed, passwordProtected } = await readCasAnyPdf(file.bytes, candidates);
 
     const client = await actionTx((tx) => findClientByPan(tx, parsed.investor.pan));
     if (!client) {

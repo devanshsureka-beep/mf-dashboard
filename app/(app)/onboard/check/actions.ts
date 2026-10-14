@@ -1,8 +1,9 @@
 "use server";
 
 import { str } from "@/lib/actions";
+import { readCasAnyPdf } from "@/lib/integrations/cas-ai";
 import { casPasswordTemplate, passwordCandidates } from "@/lib/cas/password";
-import { readCasPdf, readReportPdf } from "@/lib/cas/reader";
+import { readReportPdf } from "@/lib/cas/reader";
 import { documentChecks, type DocumentCheck } from "@/lib/domain/document-checks";
 import type { PlanItemDraft, SipItemDraft } from "@/lib/domain/report-plan";
 import { AppError, logServerError, toUserMessage } from "@/lib/errors";
@@ -41,7 +42,7 @@ export async function checkDocumentsAction(fd: FormData): Promise<CheckResult> {
       fileName: casFile.fileName,
       phones,
     });
-    const { parsed: cas } = await readCasPdf(casFile.bytes, candidates);
+    const { parsed: cas } = await readCasAnyPdf(casFile.bytes, candidates);
     const report = await readReportPdf(reportFile.bytes, candidates);
     const preview = previewOnboarding(cas, report);
     const existing = await actionTx((tx) => findClientByPan(tx, cas.investor.pan));

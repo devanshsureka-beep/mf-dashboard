@@ -284,8 +284,12 @@ export function answerToReport(a: ReportAiAnswer, base: AdvisoryReportParse | nu
 // ---------------------------------------------------------------------------
 type MessageBody = { stop_reason?: string; content?: { type: string; text?: string }[]; error?: { message?: string } };
 
-/** Ask Claude (through n8n) to read the report. Throws AppError with a readable reason. */
-export async function askClaudeForReport(input: ReportAiInput, timeoutMs = 280_000): Promise<{ report: AdvisoryReportParse; corrections: string[] }> {
+/**
+ * Send one Messages API request through the n8n relay and return the JSON it
+ * answered with. Throws AppError with a readable reason. `what` names the
+ * document in messages ("report", "CAS").
+ */
+export async function callClaudeRelay(request: unknown, timeoutMs: number, what: string): Promise<unknown> {
   const url = process.env.REPORT_AI_URL?.trim();
   const key = process.env.REPORT_AI_KEY?.trim();
   if (!url || !key) throw new AppError("Claude reading is not set up (REPORT_AI_URL / REPORT_AI_KEY).");
@@ -294,7 +298,7 @@ export async function askClaudeForReport(input: ReportAiInput, timeoutMs = 280_0
     res = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json", "x-desk-key": key },
-      body: JSON.stringify({ request: buildReportAiRequest(input) }),
+      body: JSON.stringify({ request }),
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch {
@@ -308,15 +312,19 @@ export async function askClaudeForReport(input: ReportAiInput, timeoutMs = 280_0
   if (!wrapped || wrapped.status !== 200 || !msg) {
     throw new AppError(`Claude did not answer (HTTP ${wrapped?.status ?? "?"}${msg?.error?.message ? `: ${msg.error.message}` : ""}).`);
   }
-  if (msg.stop_reason === "refusal") throw new AppError("Claude declined to read this report.");
-  if (msg.stop_reason === "max_tokens") throw new AppError("Claude's answer was cut off (report too long).");
+  if (msg.stop_reason === "refusal") throw new AppError(`Claude declined to read this ${what}.`);
+  if (msg.stop_reason === "max_tokens") throw new AppError(`Claude's answer was cut off (${what} too long).`);
   const text = msg.content?.find((b) => b.type === "text")?.text;
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(text ?? "");
+    return JSON.parse(text ?? "");
   } catch {
     throw new AppError("Claude's answer was not valid JSON.");
   }
+}
+
+/** Ask Claude (through n8n) to read the report. Throws AppError with a readable reason. */
+export async function askClaudeForReport(input: ReportAiInput, timeoutMs = 280_000): Promise<{ report: AdvisoryReportParse; corrections: string[] }> {
+  const parsed = await callClaudeRelay(buildReportAiRequest(input), timeoutMs, "report");
   const answer = reportAiAnswerSchema.safeParse(parsed);
   if (!answer.success) {
     const first = answer.error.issues[0];
