@@ -40,7 +40,7 @@ export async function getSipStatus(tx: Tx, clientId: string): Promise<SipStatusV
            t.scheme_name, t.folio_number, t.amount, t.description
     from public.portfolio_transactions t
     left join public.security_master sm on sm.id = t.security_id
-    where t.client_id = ${clientId}
+    where t.client_id = ${clientId} and coalesce(t.units, 0) <> 0
       -- Plain purchases too: many SIPs only show up as a repeating monthly "Purchase".
       and (t.transaction_type in ('SIP', 'PURCHASE') or t.description ~* '(sip|systematic)')`;
   const funds = sipStatus(txns, latest, previous);

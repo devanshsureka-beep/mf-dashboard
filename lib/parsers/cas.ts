@@ -99,21 +99,32 @@ const NOISE = [
 ];
 
 /**
- * SIP instalments as RTAs word them: "SIP Purchase", "Sys. Investment (3/120)",
- * "Systematic Purchase - Instalment 3/12", "Purchase Systematic-BSE",
- * "Purchase Ongoing Systematic", "Purchase Instalment No". Same rule as
- * public.txn_effective_type() in the database.
+ * SIP instalments in every wording the RTAs use (CAMS, KFintech, exchanges,
+ * platforms): "SIP", "S.I.P.", "SIP Purchase", "SIPPurchase", "Purchase-SIP",
+ * "ISIP" / "XSIP" / "Micro SIP" / "NFO SIP", "Sys. Investment (3/120)",
+ * "Sys Inv", "Syst. Purchase", "Systematic Investment / Purchase / Instalment /
+ * Deposit", "Purchase Systematic-BSE", "Purchase Ongoing Systematic",
+ * "Purchase Instalment No", "Instalment No 4", "Auto Debit Purchase",
+ * "ECS Purchase". Switches, STP and SWP are told apart before this is asked.
+ * Same rule as public.txn_effective_type() in the database (tests keep them equal).
  */
-export const SIP_TEXT = /\bsip\b|sip[\s-]*purchase|purchase[\s-]*sip|sys\.?\s*invest|systematic\s*(investment|purchase|instal)|purchase[\s-]*(ongoing\s*)?systematic|purchase[\s-]*instal/i;
-/** A SIP stopped: "SIP Cancelled", "SIPCancelled", "SIPTerminated", "Systematic Cancellation", "SIP ceased as per investor". */
-export const SIP_CANCEL_TEXT = /^(?!.*(revers|purchase|instal|reject)).*?(\bsip\b.{0,30}?\b(cancel|ceas|terminat|stopp?ed|closed)|sip(systematic\s*)?(cancel|ceas|terminat)|systematic.{0,30}?\b(cancel|ceas|terminat)|ceased as per investor)/i;
+export const SIP_TEXT = /\bs\.?i\.?p\b|\bsip(purchase|instal)|\b(x|i|micro|nfo\s*)sip\b|\bsys(tematic|t)?\.?\s*(invest|inv\b|purchase|purch|instal|deposit)|purchase[^a-z0-9]*(ongoing\s*)?(sys|sip)|(purchase|investment)[^a-z0-9]*instal|instal+ment\s*(no|#)|auto[\s-]*debit\s*purchase|ecs\s*purchase/i;
+/**
+ * A SIP stopped: "SIP Cancelled", "SIPCancelled", "SIPTerminated", "SIP
+ * Discontinued", "SIP Deactivated", "Sys. Investment Ceased", "Systematic
+ * Cancellation", "SIP ceased as per investor", "SIP registration revoked".
+ */
+export const SIP_CANCEL_TEXT = /^(?!.*(revers|purchase|instal|reject|\(\d+\/\d+\))).*?((\bs\.?i\.?p\b|\b(x|i)sip\b).{0,30}?\b(cancel|ceas|terminat|stopp?ed|closed|discontinu|deactivat|revok)|sip(systematic\s*)?(cancel|ceas|terminat|discontinu)|\bsys(tematic|t)?\.?.{0,30}?\b(cancel|ceas|terminat|discontinu|deactivat|revok)|ceased as per investor)/i;
+
+/** Money moved out by a switch / STP: "Switch Out", "Switch-Over Out", "Lateral Shift Out", "STP Out", "Sys. Transfer Out", "Systematic Transfer Plan Out". */
+const SWITCH_OUT_TEXT = /switch[\s-]*(over\s*)?out|lateral (shift )?out|stp[\s-]*out|transfer[\s-]*(plan[\s-]*)?out|\bsys(tematic|t)?\.?\s*transfer.{0,20}?\bout\b/;
 
 export function classifyTransaction(desc: string, units: number | null = null): { type: CasTxn["type"]; sipCancelled: boolean } {
   const d = desc.toLowerCase();
   const sipCancelled = SIP_CANCEL_TEXT.test(d);
   const tax = /stamp duty/.test(d) ? "STAMP_DUTY" : /\bstt\b/.test(d) ? "STT" : /\btds\b/.test(d) ? "TDS" : null;
-  // Reversals, cancellations and rejections are never a new trade, whatever they mention.
-  if (/cancel|revers(al|ed)|rejection|rejected/.test(d)) return { type: "OTHER", sipCancelled };
+  // Reversals, cancellations, rejections, invalid entries and refunds are never a new trade, whatever they mention.
+  if (/cancel|revers(al|ed)|rejection|rejected|invalid|refund/.test(d)) return { type: "OTHER", sipCancelled };
   if (tax) {
     // A tax line moves no units. A row with units is the trade itself, its
     // description only mentions the tax (e.g. "Redemption - STT Paid").
@@ -122,11 +133,11 @@ export function classifyTransaction(desc: string, units: number | null = null): 
     if (rest.type !== "OTHER") return rest;
     return { type: units < 0 ? "REDEMPTION" : "PURCHASE", sipCancelled };
   }
-  if (/switch[\s-]*(over\s*)?out|lateral (shift )?out|stp[\s-]*out|transfer[\s-]*out/.test(d)) return { type: "SWITCH_OUT", sipCancelled };
-  if (/switch[\s-]*(over\s*)?in|lateral (shift )?in|stp[\s-]*in|transfer[\s-]*in|systematic transfer/.test(d)) return { type: "SWITCH_IN", sipCancelled };
+  if (SWITCH_OUT_TEXT.test(d)) return { type: "SWITCH_OUT", sipCancelled };
+  if (/switch[\s-]*(over\s*)?in|lateral (shift )?in|stp[\s-]*in|transfer[\s-]*in|\bsys(tematic|t)?\.?\s*transfer/.test(d)) return { type: "SWITCH_IN", sipCancelled };
   if (/merger|amalgamation/.test(d)) return { type: "MERGER", sipCancelled };
-  if (/redemption|redeem|repurchase|\bswp\b|systematic withdrawal|units extinguished/.test(d)) return { type: "REDEMPTION", sipCancelled };
-  if (/(dividend|idcw).*(reinvest)/.test(d)) return { type: "DIVIDEND_REINVESTMENT", sipCancelled };
+  if (/redemption|redeem|repurchase|\bswp\b|\bsys(tematic|t)?\.?\s*withdraw|units extinguished/.test(d)) return { type: "REDEMPTION", sipCancelled };
+  if (/(dividend|idcw|\bdiv\b).*(reinv)/.test(d)) return { type: "DIVIDEND_REINVESTMENT", sipCancelled };
   if (/dividend|idcw/.test(d)) return { type: "DIVIDEND_PAYOUT", sipCancelled };
   if (/bonus/.test(d)) return { type: "BONUS", sipCancelled };
   if (SIP_TEXT.test(d)) return { type: "SIP", sipCancelled };
@@ -144,6 +155,8 @@ export function effectiveTxnType(type: string, description: string | null, units
   if (!description || !u) return type;
   // A SIP instalment an older reader stored as a plain purchase.
   if (type === "PURCHASE") return classifyTransaction(description, u).type === "SIP" ? "SIP" : type;
+  // "Systematic Transfer Plan Out" an older reader stored as a switch in.
+  if (type === "SWITCH_IN") return u < 0 && SWITCH_OUT_TEXT.test(description.toLowerCase()) ? "SWITCH_OUT" : type;
   if (!["STT", "TDS", "STAMP_DUTY", "OTHER"].includes(type)) return type;
   return classifyTransaction(description, u).type;
 }

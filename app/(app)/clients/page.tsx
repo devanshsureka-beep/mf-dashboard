@@ -16,6 +16,8 @@ import { ActionForm, SubmitButton } from "@/components/app/action-form";
 import { SelectAll } from "@/components/app/select-all";
 import { deleteClientsAction, reassignClientsAction, restoreClientsAction } from "./actions";
 import { ClientList, type ListRow, type ListTag } from "./client-list";
+import { LiveSearch } from "./live-search";
+import { Suspense } from "react";
 
 export const metadata = { title: "Premium clients" };
 
@@ -94,7 +96,7 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
       </nav>
 
       <form className="mb-3 flex flex-wrap items-center gap-2" method="get">
-        <Input name="q" placeholder="Name, client ID, phone, email…" defaultValue={f.q} className="h-9 w-72" aria-label="Search" />
+        <Suspense fallback={<Input name="q" defaultValue={f.q} className="h-9 w-72" aria-label="Search" />}><LiveSearch defaultValue={f.q} /></Suspense>
         {actor.role !== "ADVISOR" ? (
           <Select name="advisor" defaultValue={f.advisorId ?? ""} className="h-9 w-44" aria-label="Advisor">
             <option value="">All advisors</option>

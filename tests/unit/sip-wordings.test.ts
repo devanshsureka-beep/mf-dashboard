@@ -1,3 +1,4 @@
+import { SIP_WORDINGS, NOT_SIP_WORDINGS, SIP_STOP_WORDINGS, NOT_SIP_STOP_WORDINGS } from "../fixtures/txn-wordings";
 import { describe, expect, it } from "vitest";
 import { classifyTransaction, effectiveTxnType } from "@/lib/parsers/cas";
 import { sipPointAsOf, type SipTxn } from "@/lib/domain/sip-status";
@@ -45,4 +46,20 @@ describe("SIP instalments, however the RTA words them", () => {
       expect(sipPointAsOf(txns, "2026-09-30").state).toBe("STOPPED");
       expect(sipPointAsOf(txns, "2026-09-10")).toMatchObject({ state: "ACTIVE", amount: 5000 });
     });
+});
+
+describe("Every RTA wording (CAMS, KFintech, exchanges)", () => {
+  it.each(SIP_WORDINGS)("%s is a SIP instalment", (d) => {
+    expect(classifyTransaction(d, 10).type).toBe("SIP");
+    expect(effectiveTxnType("PURCHASE", d, 10)).toBe("SIP");
+  });
+  it.each(NOT_SIP_WORDINGS)("%s is %s", (d, units, type) => {
+    expect(classifyTransaction(d, units).type).toBe(type);
+  });
+  it("an STP out an older reader stored as a switch in counts as a switch out", () => {
+    expect(effectiveTxnType("SWITCH_IN", "Systematic Transfer Plan Out (To LC (GP) F-No:2)(To", -10)).toBe("SWITCH_OUT");
+    expect(effectiveTxnType("SWITCH_IN", "Systematic Transfer Plan In (From LF)", 10)).toBe("SWITCH_IN");
+  });
+  it.each(SIP_STOP_WORDINGS)("%s stops the SIP", (d) => expect(classifyTransaction(d, 0).sipCancelled).toBe(true));
+  it.each(NOT_SIP_STOP_WORDINGS)("%s does not stop the SIP", (d) => expect(classifyTransaction(d, 0).sipCancelled).toBe(false));
 });

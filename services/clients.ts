@@ -205,3 +205,26 @@ export async function listDeskClients(tx: Tx, f: DeskFilters = {}): Promise<Desk
   };
   return out.sort(by[f.sort ?? "name"]);
 }
+
+export interface ClientHit { client_id: string; full_name: string; client_code: string; phone: string | null; status: string; advisor_name: string | null }
+
+/**
+ * Clients as the desk types: every word in the name ("rah bha" finds Rahul
+ * Bhatia), or the client ID, PAN, email or phone digits. Names starting with
+ * what was typed come first. RLS decides which clients the user sees.
+ */
+export async function searchClients(tx: Tx, query: string, limit = 8): Promise<ClientHit[]> {
+  const q = query.trim().slice(0, 80);
+  if (!q) return [];
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean).slice(0, 5);
+  const digits = q.replace(/\D/g, "");
+  const like = `%${q}%`;
+  return tx<ClientHit[]>`
+    select client_id, full_name, client_code, phone, status, advisor_name
+    from public.v_client_summary s
+    where (select bool_and(s.full_name ilike '%' || w || '%') from unnest(${words}::text[]) w)
+       or s.client_code ilike ${like} or s.pan ilike ${like} or s.email ilike ${like}
+       or (length(${digits}) >= 4 and regexp_replace(coalesce(s.phone, ''), '\\D', '', 'g') like '%' || ${digits} || '%')
+    order by (s.full_name ilike ${`${q}%`}) desc, (s.full_name ~* ${`\\m${q.replace(/[^\w\s]/g, "")}`}) desc, s.full_name
+    limit ${limit}`;
+}

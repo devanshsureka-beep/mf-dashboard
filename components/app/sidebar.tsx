@@ -3,10 +3,11 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { LayoutDashboard, Users, PhoneCall, Inbox, ScrollText, ShieldCheck, LogOut, UserPlus, Menu, X, Search } from "lucide-react";
+import { LayoutDashboard, Users, PhoneCall, Inbox, ScrollText, ShieldCheck, LogOut, UserPlus, Menu, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PAGES, ROLE_LABELS } from "@/lib/brand";
 import { BrandMark } from "@/components/app/brand-mark";
+import { ClientSearch } from "@/components/app/client-search";
 import type { AppRole } from "@/types/domain";
 
 type NavItem = {
@@ -57,16 +58,7 @@ export function Sidebar({ name, role, signOut, counts }: { name: string; role: A
 
   const nav = (
     <nav className="flex-1 space-y-4 overflow-y-auto px-3 py-3">
-      <form action="/clients" method="get" role="search" className="relative">
-        <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-sidebar-muted" aria-hidden />
-        <input
-          name="q"
-          type="search"
-          placeholder="Find client, ID, phone…"
-          aria-label="Find a client"
-          className="h-9 w-full rounded-md border border-white/10 bg-white/5 pl-8 pr-2 text-sm text-white placeholder:text-sidebar-muted focus:border-brand-300 focus:outline-none"
-        />
-      </form>
+      <ClientSearch />
       {SECTIONS.map((s) => {
         const items = s.items.filter((n) => !n.roles || n.roles.includes(role));
         if (!items.length) return null;

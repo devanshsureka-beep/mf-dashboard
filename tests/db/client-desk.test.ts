@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { issueAdvice } from "@/services/advice";
 import { recordExecution } from "@/services/executions";
 import { getFundRows, getTranches } from "@/services/client-desk";
+import { createClient, searchClients } from "@/services/clients";
 import { clientWithActivePlan, progress, scenario, sql, TEST_DB } from "./harness";
 
 const describeDb = TEST_DB ? describe : describe.skip;
@@ -39,6 +40,22 @@ describeDb("Client page: funds and tranches", () => {
       expect(tranches).toHaveLength(1);
       expect(tranches[0]).toMatchObject({ number: 1, open: true, calls: 1, advisedSell: 300000, executedSell: 250000, pending: 50000 });
       expect(ledger[0]).toMatchObject({ tranche: 1, advisedOn: "2026-09-10", executed: 250000, executedOn: "2026-09-12" });
+    });
+  });
+});
+
+describeDb("Finding a client while typing", () => {
+  it("matches every word of the name, the client ID or phone digits, names starting with the text first", async () => {
+    await scenario(async (ctx) => {
+      const a = await ctx.as("advisor", (t) => createClient(t, ctx.users.advisor, { full_name: "Zarina Qadri Test", phone: "98765 43210", status: "ACTIVE" }));
+      await ctx.as("advisor", (t) => createClient(t, ctx.users.advisor, { full_name: "Test Zarina Other", status: "ACTIVE" }));
+      const names = async (q: string) => (await ctx.as("advisor", (t) => searchClients(t, q))).map((h) => h.full_name);
+      expect(await names("zar qad")).toEqual(["Zarina Qadri Test"]);
+      expect((await names("zarina"))[0]).toBe("Zarina Qadri Test");
+      expect(await names("43210")).toContain("Zarina Qadri Test");
+      expect(await names(a.client_code)).toEqual(["Zarina Qadri Test"]);
+      expect(await names("")).toEqual([]);
+      expect(await ctx.as("otherAdvisor", (t) => searchClients(t, "zarina"))).toEqual([]);
     });
   });
 });
