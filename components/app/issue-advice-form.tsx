@@ -35,6 +35,11 @@ interface OffRow { key: number; fund: PickedFund | null; action: "BUY" | "SELL";
 
 type Action = (prev: ActionResult | null, fd: FormData) => Promise<ActionResult>;
 
+/** A typed number, tolerant of Indian grouping and a ₹ sign ("₹1,00,000"); 0 when empty or not a number. */
+const num = (v: string) => {
+  const n = Number(v.replace(/[₹,\s]/g, ""));
+  return Number.isFinite(n) && n > 0 ? n : 0;
+};
 const secOf = (v: string | null | undefined) => (v && v.startsWith("sec:") ? v.slice(4) : v && /^[0-9a-f-]{36}$/i.test(v) ? v : null);
 
 function ModeSwitch({ mode, onChange, full, units = true, fullTitle }: { mode: Mode; onChange: (m: Mode) => void; full: boolean; units?: boolean; fullTitle: string }) {
@@ -84,7 +89,9 @@ export function IssueAdviceForm({
   const visible = planItems.filter((p) => side === "ALL" || p.side === side);
 
   const held = (p: AdvisablePlanItem) => (p.security_id ? unitsOf.get(p.security_id) ?? 0 : 0);
-  const canFull = (p: AdvisablePlanItem) => (p.side === "SELL" ? held(p) > 0 : p.yet_to_advise_amount > 0.5);
+  /** Units a Full sell advises: all the CAS holds, else the plan's own full-exit units. */
+  const fullUnits = (p: AdvisablePlanItem) => held(p) || Number(p.full_exit_units ?? 0);
+  const canFull = (p: AdvisablePlanItem) => (p.side === "SELL" ? fullUnits(p) > 0 : p.yet_to_advise_amount > 0.5);
   const initialRow = (p: AdvisablePlanItem): PlanRow => ({
     include: p.id === preselect,
     // A full exit is advised as "all units": the CAS redemption then matches exactly, whatever the NAV did.
@@ -117,30 +124,30 @@ export function IssueAdviceForm({
 
   /** A plan line as the call it records. */
   const planCall = (p: AdvisablePlanItem, r: PlanRow) => {
-    const nav = Number(r.price) || (p.security_id ? navOf.get(p.security_id) ?? 0 : 0);
+    const nav = num(r.price) || (p.security_id ? navOf.get(p.security_id) ?? 0 : 0);
     if (r.mode === "FULL" && p.side === "SELL") {
-      const units = held(p);
+      const units = fullUnits(p);
       return { basis: "UNITS" as const, units, amount: units * nav || p.yet_to_advise_amount, nav };
     }
     if (r.mode === "FULL") return { basis: "AMOUNT" as const, units: null, amount: p.yet_to_advise_amount, nav };
     if (r.mode === "UNITS") {
-      const units = Number(r.units) || 0;
-      return { basis: "UNITS" as const, units: units || null, amount: Number(r.amount) || units * nav, nav };
+      const units = num(r.units) || 0;
+      return { basis: "UNITS" as const, units: units || null, amount: num(r.amount) || units * nav, nav };
     }
-    return { basis: "AMOUNT" as const, units: null, amount: Number(r.amount) || 0, nav };
+    return { basis: "AMOUNT" as const, units: null, amount: num(r.amount) || 0, nav };
   };
   const offCall = (o: OffRow) => {
     const sec = secOf(o.fund?.value);
-    const nav = Number(o.price) || 0;
+    const nav = num(o.price) || 0;
     if (o.mode === "FULL" && o.action === "SELL" && sec) {
       const units = unitsOf.get(sec) ?? 0;
       return { basis: "UNITS" as const, units, amount: units * nav, nav };
     }
     if (o.mode === "UNITS") {
-      const units = Number(o.units) || 0;
-      return { basis: "UNITS" as const, units: units || null, amount: Number(o.amount) || units * nav, nav };
+      const units = num(o.units) || 0;
+      return { basis: "UNITS" as const, units: units || null, amount: num(o.amount) || units * nav, nav };
     }
-    return { basis: "AMOUNT" as const, units: null, amount: Number(o.amount) || 0, nav };
+    return { basis: "AMOUNT" as const, units: null, amount: num(o.amount) || 0, nav };
   };
 
   const chosen = visible.filter((p) => rows[p.id]?.include);
@@ -162,7 +169,10 @@ export function IssueAdviceForm({
       };
     }),
   ];
-  const overAdvised = chosen.filter((p) => planCall(p, rows[p.id]).amount > p.yet_to_advise_amount + 1);
+  const isPlannedExit = (p: AdvisablePlanItem) => p.side === "SELL" && Boolean(p.full_exit_units) && rows[p.id].mode === "FULL";
+  const overAdvised = chosen.filter((p) => !isPlannedExit(p) && planCall(p, rows[p.id]).amount > p.yet_to_advise_amount + 1);
+  // Selected lines with nothing to record yet (e.g. after "Select all"): caught here, not as a server error.
+  const missing = items.filter((i) => !(i.advised_amount > 0)).length;
   const total = (s: string) => items.filter((i) => (s === "BUY" ? i.action === "BUY" : i.action !== "BUY")).reduce((t, i) => t + (i.advised_amount || 0), 0);
   const fullExits = chosen.filter((p) => p.side === "SELL" && rows[p.id].mode === "FULL").length + off.filter((o) => o.action === "SELL" && o.mode === "FULL").length;
   const sells = visible.filter((p) => p.side === "SELL");
@@ -223,11 +233,11 @@ export function IssueAdviceForm({
               <div className="text-right text-[13.5px] font-semibold num">{formatINRCompact(p.yet_to_advise_amount)}</div>
               <div className="flex items-center gap-2">
                 <ModeSwitch mode={r.mode} full={canFull(p)} units={p.side === "SELL"}
-                  fullTitle={p.side === "SELL" ? (units > 0 ? `Full redemption: all ${formatUnits(units)} units` : "No units in the latest CAS") : "Full buy: all left to advise"}
+                  fullTitle={p.side === "SELL" ? (fullUnits(p) > 0 ? `Full redemption: all ${formatUnits(fullUnits(p))} units` : "No units in the latest CAS") : "Full buy: all left to advise"}
                   onChange={(m) => setRow(p.id, { mode: m, include: true })} />
                 {r.mode === "FULL" ? (
                   <span className="flex h-8 min-w-0 flex-1 items-center truncate rounded-md bg-slate-100 px-2.5 text-xs text-slate-700">
-                    {p.side === "SELL" ? `${formatUnits(units)} units (all)` : `${formatINR(p.yet_to_advise_amount)} (all left)`}
+                    {p.side === "SELL" ? `${formatUnits(fullUnits(p))} units (all)` : `${formatINR(p.yet_to_advise_amount)} (all left)`}
                   </span>
                 ) : r.mode === "UNITS" ? (
                   <>
@@ -239,8 +249,8 @@ export function IssueAdviceForm({
                 )}
               </div>
               <div className={cn("text-right text-[13.5px] font-semibold num", tone === "sell" ? "text-red-700" : "text-blue-700")}>
-                {r.include && c.amount > 0 ? `${c.basis === "UNITS" ? "≈ " : ""}${formatINRCompact(c.amount)}` : "—"}
-                {r.include && c.amount > p.yet_to_advise_amount + 1 ? <div className="text-[10px] font-normal text-red-700">more than left</div> : null}
+                {r.include && c.amount > 0 ? `${c.basis === "UNITS" ? "≈ " : ""}${formatINRCompact(c.amount)}` : r.include ? <span className="text-[11px] font-normal text-amber-700">{r.mode === "UNITS" && c.units ? "add NAV" : "add amount"}</span> : "—"}
+                {r.include && !isPlannedExit(p) && c.amount > p.yet_to_advise_amount + 1 ? <div className="text-[10px] font-normal text-red-700">more than left</div> : null}
               </div>
             </li>
           );
@@ -370,15 +380,17 @@ export function IssueAdviceForm({
               <input type="checkbox" checked={confirmOver} onChange={(e) => setConfirmOver(e.target.checked)} /> {overAdvised.length} line(s) advise more than the plan has left: I mean it
             </label>
           ) : null}
-          <button type="submit" disabled={pending || (items.length === 0 && sipStops.length === 0) || (overAdvised.length > 0 && !confirmOver)}
+          {missing ? <span className="text-xs text-amber-200">{missing} selected line{missing === 1 ? " has" : "s have"} no amount yet</span> : null}
+          <button type="submit" disabled={pending || (items.length === 0 && sipStops.length === 0) || missing > 0 || (overAdvised.length > 0 && !confirmOver)}
             className="h-10 rounded-lg bg-white px-5 text-sm font-bold text-ink disabled:opacity-50">
-            {pending ? "Recording…" : `Record ${items.length || ""} call${items.length === 1 ? "" : "s"}${sipStops.length ? " + SIP stops" : ""} as given`}
+            {pending ? "Recording…" : items.length ? `Record ${items.length} call${items.length === 1 ? "" : "s"}${sipStops.length ? " + SIP stops" : ""} as given` : sipStops.length ? "Record the SIP stops as given" : "Record calls as given"}
           </button>
         </div>
       </div>
 
       {portfolioOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" role="dialog" aria-modal="true" aria-labelledby="fpr-title">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" role="dialog" aria-modal="true" aria-labelledby="fpr-title"
+          onKeyDown={(e) => { if (e.key === "Escape") setPortfolioOpen(false); }}>
           <div className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
             <div className="border-b border-border px-6 py-4">
               <div className="text-[11px] font-bold uppercase tracking-wider text-red-700">Full portfolio redemption</div>
