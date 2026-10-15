@@ -6,7 +6,7 @@ import { EmptyState, PageHeader } from "@/components/app/page-header";
 import { Money } from "@/components/app/money";
 import { ActionBadge } from "@/components/app/status-badge";
 import { formatDate, formatDayMonth, formatINRCompact, formatUnits, humanize, todayIST } from "@/lib/format";
-import { cn } from "@/lib/utils";
+import { cn, isoDateOrNull, uuidOrNull } from "@/lib/utils";
 import { HubTabs } from "@/components/app/hub-tabs";
 import { PAGES } from "@/lib/brand";
 import { pageData } from "@/lib/server";
@@ -47,15 +47,15 @@ export default async function TranchesPage(props: PageProps<"/advice">) {
   const one = (k: string) => (typeof sp[k] === "string" && sp[k] ? (sp[k] as string) : null);
   const period: Period = (one("period") as Period) in PERIODS ? (one("period") as Period) : one("client") ? "all" : "30";
   const today = todayIST();
-  const from = one("from") ?? (period === "today" ? today
+  const from = isoDateOrNull(one("from")) ?? (period === "today" ? today
     : period === "month" ? `${today.slice(0, 8)}01`
     : period === "all" ? null
     : new Date(new Date(`${today}T00:00:00Z`).getTime() - Number(period) * 86_400_000).toISOString().slice(0, 10));
-  const f = { q: one("q"), state: one("state"), advisor: one("advisor"), client: one("client"), side: one("side") };
+  const f = { q: one("q"), state: one("state"), advisor: uuidOrNull(one("advisor")), client: uuidOrNull(one("client")), side: one("side") };
 
   const { rows, advisors, actor } = await pageData(async (tx) => ({
     rows: await listAdviceLedger(tx, {
-      from, to: one("to"), advisorId: f.advisor, clientId: f.client,
+      from, to: isoDateOrNull(one("to")), advisorId: f.advisor, clientId: f.client,
       side: f.side === "BUY" || f.side === "SELL" ? f.side : null, limit: 2000,
     }),
     advisors: await listAdvisors(tx),

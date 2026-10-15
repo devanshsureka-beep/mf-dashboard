@@ -11,7 +11,7 @@ import { getAdvisablePlanItems } from "@/services/plans";
 import { getHoldings } from "@/services/portfolio";
 import { getSipStatus, type SipStatusView } from "@/services/sip-status";
 import { issueAdviceAction, searchFundsAction } from "../actions";
-import type { HoldingRow } from "@/types/domain";
+import { CHANNELS, type HoldingRow } from "@/types/domain";
 
 export const metadata = { title: "Issue call" };
 
@@ -29,9 +29,23 @@ export default async function NewAdvicePage(props: PageProps<"/advice/new">) {
     ? [...new Set(sp.queue.split(",").map((x) => x.toLowerCase()))].filter((x) => UUID.test(x) && x !== clientId?.toLowerCase()).slice(0, 300)
     : [];
   const inRound = typeof sp.queue === "string" || typeof sp.done === "string";
-  const done = Number(sp.done) || 0;
+  const done = Math.max(0, Math.floor(Number(sp.done) || 0));
+  const skipped = Math.max(0, Math.floor(Number(sp.skipped) || 0));
   const at = typeof sp.at === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(sp.at) ? sp.at : undefined;
-  const ch = typeof sp.ch === "string" ? sp.ch : undefined;
+  const ch = typeof sp.ch === "string" && (CHANNELS as readonly string[]).includes(sp.ch) ? sp.ch : undefined;
+  /** This page again for another client of the round (or another side), keeping the round's settings. */
+  const roundHref = (client: string, rest: string[], patch: Record<string, string> = {}) => {
+    const q = new URLSearchParams({ client });
+    if (inRound) {
+      q.set("done", String(done));
+      if (skipped) q.set("skipped", String(skipped));
+      if (rest.length) q.set("queue", rest.join(","));
+      if (at) q.set("at", at);
+      if (ch) q.set("ch", ch);
+    }
+    for (const [k, v] of Object.entries(patch)) q.set(k, v);
+    return `/advice/new?${q.toString()}`;
+  };
 
   if (!clientId) {
     const { clients } = await pageData(async (tx) => ({ clients: await listClientSummaries(tx) }), ADVISORY_ROLES);
@@ -70,24 +84,19 @@ export default async function NewAdvicePage(props: PageProps<"/advice/new">) {
   }, ADVISORY_ROLES);
 
   const nameOf = (id: string) => roundNames.find((r) => r.client_id === id)?.full_name ?? "next client";
-  const skip = () => {
-    if (!queueIds.length) return `/advice/find?round=${done}`;
-    const q = new URLSearchParams({ client: queueIds[0], done: String(done) });
-    if (queueIds.length > 1) q.set("queue", queueIds.slice(1).join(","));
-    if (at) q.set("at", at);
-    if (ch) q.set("ch", ch);
-    return `/advice/new?${q.toString()}`;
-  };
+  const skip = () => (queueIds.length
+    ? roundHref(queueIds[0], queueIds.slice(1), { skipped: String(skipped + 1) })
+    : `/advice/find?round=${done}`);
   const queue: QueueStep | undefined = inRound
-    ? { next: queueIds, done, nextName: queueIds.length ? nameOf(queueIds[0]) : null, skipHref: skip(), at, channel: ch }
+    ? { next: queueIds, done, skipped, nextName: queueIds.length ? nameOf(queueIds[0]) : null, skipHref: skip(), at, channel: ch }
     : undefined;
 
   return (
     <>
       {queue ? (
         <ol aria-label="Clients in this round" className="mb-4 flex flex-wrap gap-2 text-[13px]">
-          {done ? <li className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-800">✓ {done} done</li> : null}
-          <li className="rounded-lg border-2 border-brand bg-white px-3 py-1.5"><b>{c.full_name}</b> <span className="text-brand">· now ({done + 1} of {done + 1 + queueIds.length})</span></li>
+          {done || skipped ? <li className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-800">✓ {done} done{skipped ? ` · ${skipped} skipped` : ""}</li> : null}
+          <li className="rounded-lg border-2 border-brand bg-white px-3 py-1.5"><b>{c.full_name}</b> <span className="text-brand">· now ({done + skipped + 1} of {done + skipped + 1 + queueIds.length})</span></li>
           {queueIds.slice(0, 5).map((id, i) => <li key={id} className="rounded-lg border border-border bg-white px-3 py-2 text-slate-700">{i === 0 ? "Next: " : ""}{nameOf(id)}</li>)}
           {queueIds.length > 5 ? <li className="px-2 py-2 text-muted">+{queueIds.length - 5} more</li> : null}
         </ol>
@@ -98,7 +107,7 @@ export default async function NewAdvicePage(props: PageProps<"/advice/new">) {
         actions={
           <div className="flex gap-1 text-xs">
             {(["SELL", "BUY", "ALL"] as const).map((s) => (
-              <Link key={s} href={`/advice/new?client=${clientId}&side=${s}${inRound ? `&done=${done}${queueIds.length ? `&queue=${queueIds.join(",")}` : ""}${at ? `&at=${at}` : ""}${ch ? `&ch=${ch}` : ""}` : ""}`} className={`rounded-md px-2 py-1 ${s === side ? "bg-brand text-white" : "bg-white ring-1 ring-border"}`}>{s}</Link>
+              <Link key={s} href={roundHref(clientId, queueIds, { side: s })} className={`rounded-md px-2 py-1 ${s === side ? "bg-brand text-white" : "bg-white ring-1 ring-border"}`}>{s}</Link>
             ))}
           </div>
         }

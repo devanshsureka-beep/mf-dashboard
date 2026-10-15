@@ -4,7 +4,7 @@ import { PageHeader } from "@/components/app/page-header";
 import { HubTabs } from "@/components/app/hub-tabs";
 import { LinkButton } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/form";
-import { cn } from "@/lib/utils";
+import { cn, uuidOrNull } from "@/lib/utils";
 import { PAGES } from "@/lib/brand";
 import { formatDate, formatINRCompact, humanize } from "@/lib/format";
 import { ADVISORY_ROLES, pageData } from "@/lib/server";
@@ -28,12 +28,12 @@ const CAPTION: Record<ReadyList, string> = {
 export default async function FindClientsPage(props: PageProps<"/advice/find">) {
   const sp = await props.searchParams;
   const one = (k: string) => (typeof sp[k] === "string" && sp[k] ? (sp[k] as string) : null);
-  const fundId = /^[0-9a-f-]{36}$/i.test(one("fund") ?? "") ? one("fund") : null;
+  const fundId = uuidOrNull(one("fund"));
   const list = (LISTS.includes(one("list") as ReadyList) ? one("list") : "cash") as ReadyList;
   const risk = RISK_PROFILES.includes(one("risk") as RiskProfile) ? (one("risk") as RiskProfile) : null;
   const cashLakh = Number(one("cash_min"));
   const f: DeskFilter = {
-    list, risk, advisorId: one("advisor"),
+    list, risk, advisorId: uuidOrNull(one("advisor")),
     cashMin: cashLakh > 0 ? cashLakh * 100000 : null,
     left: (["buy", "sell", "none"] as const).find((x) => x === one("left")) ?? null,
     last: (["7", "30", "never"] as const).find((x) => x === one("last")) ?? null,
@@ -49,11 +49,12 @@ export default async function FindClientsPage(props: PageProps<"/advice/find">) 
   // Operations do not advise: their part of this section is Waiting.
   if (!ADVISORY_ROLES.includes(actor.role)) redirect("/executions/pending");
 
-  const counts = readyCounts(rows);
+  // The tiles count with the same filters as the table (only the list itself differs).
+  const counts = readyCounts(filterDeskRows(rows, { ...f, list: "all" }));
   const shown = fundId ? [] : filterDeskRows(rows, f);
   const keep = (patch: Record<string, string | null>) => {
     const q = new URLSearchParams();
-    for (const [k, v] of Object.entries(sp)) if (typeof v === "string" && v) q.set(k, v);
+    for (const [k, v] of Object.entries(sp)) if (typeof v === "string" && v && k !== "round") q.set(k, v);
     for (const [k, v] of Object.entries(patch)) if (v == null) q.delete(k); else q.set(k, v);
     const s = q.toString();
     return `/advice/find${s ? `?${s}` : ""}`;

@@ -17,7 +17,7 @@ import { CHANNELS, type Channel } from "@/types/domain";
 const itemSchema = z.object({
   plan_item_id: z.uuid().nullable().optional(),
   // A known fund (uuid / "sec:<uuid>") or an AMFI scheme picked by ISIN ("isin:<ISIN>").
-  security_id: z.string().regex(/^(sec:)?[0-9a-f-]{36}$|^isin:[A-Z]{2}[A-Z0-9]{9}[0-9]$/i, "Choose a fund for every call"),
+  security_id: z.string().regex(/^(sec:)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$|^isin:[A-Z]{2}[A-Z0-9]{9}[0-9]$/i, "Choose a fund for every call"),
   action: z.enum(["BUY", "SELL"]),
   quantity_basis: z.enum(["AMOUNT", "UNITS"]),
   advised_amount: z.coerce.number().positive("Every call needs a rupee amount (estimate for unit calls)"),
@@ -104,6 +104,8 @@ function queueNext(fd: FormData, advised: number, current: string): string {
   const done = (Number(str(fd, "queue_done")) || 0) + advised;
   if (!next.length) return `/advice/find?round=${done}`;
   const q = new URLSearchParams({ client: next[0], done: String(done) });
+  const skipped = Math.max(0, Math.floor(Number(str(fd, "queue_skipped")) || 0));
+  if (skipped) q.set("skipped", String(skipped));
   if (next.length > 1) q.set("queue", next.slice(1).join(","));
   const at = str(fd, "communicated_at");
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(at)) q.set("at", at);

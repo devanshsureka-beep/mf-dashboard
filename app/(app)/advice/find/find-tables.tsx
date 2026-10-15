@@ -6,13 +6,9 @@ import { cn } from "@/lib/utils";
 import { formatDayMonth, formatINRCompact, formatUnits, humanize } from "@/lib/format";
 import type { DeskRow, FundAudienceRow, FundAdvised } from "@/services/advise-desk";
 
-const DAY = 86_400_000;
-const ago = (iso: string | null) => {
-  if (!iso) return null;
-  const d = Math.floor((Date.now() - new Date(iso).getTime()) / DAY);
-  return d <= 0 ? "today" : d === 1 ? "yesterday" : `${d} days ago`;
-};
-const old = (iso: string | null, days = 30) => !iso || Date.now() - new Date(iso).getTime() > days * DAY;
+/** IST days ago, as worked out on the server (no clock read in the browser). */
+const ago = (days: number | null) => (days == null ? null : days <= 0 ? "today" : days === 1 ? "yesterday" : `${days} days ago`);
+const old = (days: number | null, limit = 30) => days == null || days > limit;
 const L = (v: number) => (v >= 0.5 ? formatINRCompact(v) : "—");
 const PAGE = 25;
 
@@ -103,7 +99,7 @@ export function DeskTable({ rows, caption }: { rows: DeskRow[]; caption: string 
                         {r.buy_left < 0.5 && r.sell_left < 0.5 ? <span className="text-muted">{r.has_plan ? "nothing left" : "no plan"}</span> : null}
                       </td>
                       <td className="px-2 py-2.5">
-                        {r.last_tranche_at ? <><div>{formatDayMonth(r.last_tranche_at)} · {r.last_tranche_calls} call{r.last_tranche_calls === 1 ? "" : "s"}</div><div className={cn("text-[11.5px] font-semibold", old(r.last_tranche_at) ? "text-red-700" : "text-muted")}>{ago(r.last_tranche_at)}</div></>
+                        {r.last_tranche_at ? <><div>{formatDayMonth(r.last_tranche_at)} · {r.last_tranche_calls} call{r.last_tranche_calls === 1 ? "" : "s"}</div><div className={cn("text-[11.5px] font-semibold", old(r.last_tranche_days) ? "text-red-700" : "text-muted")}>{ago(r.last_tranche_days)}</div></>
                           : <span className="text-[12px] font-semibold text-red-700">No tranche yet</span>}
                       </td>
                       <td className={cn("px-2 py-2.5 text-[12.5px]", busy ? "font-semibold text-amber-700" : "text-muted")}>{busy ? `${r.open_calls} call${r.open_calls === 1 ? "" : "s"} · ${formatINRCompact(r.pending_total)}` : "—"}</td>
@@ -163,7 +159,9 @@ function planPill(r: FundAudienceRow) {
 }
 
 function advisedNote(r: FundAudienceRow) {
-  if (r.open) return `told ${formatDayMonth(r.open.since)} · ${ago(r.open.since)}${r.open.executed >= 0.5 ? ` · ${formatINRCompact(r.open.executed)} of ${formatINRCompact(r.open.advised)} done` : ""}`;
+  const told = r.open ? `${formatINRCompact(r.open.advised)} told ${formatDayMonth(r.open.since)} · ${ago(r.open.since_days)}${r.open.executed >= 0.5 ? ` · ${formatINRCompact(r.open.executed)} done` : ""}` : "";
+  if (r.open && r.advised === "NOT_ADVISED") return `${formatINRCompact(r.plan?.left ?? 0)} still to advise · ${told}`;
+  if (r.open) return told;
   if (r.advised === "DONE" && r.done_on) return `done ${formatDayMonth(r.done_on)}`;
   if (r.advised === "NOT_ADVISED") return r.row.last_tranche_at ? "nothing told yet" : "first call for this client";
   return "";
@@ -184,7 +182,7 @@ export function FundTable({ rows, securityId }: { rows: FundAudienceRow[]; secur
   const sides = new Set(picked.map((r) => r.plan?.side).filter((s) => s === "BUY" || s === "SELL"));
   const side = sides.size === 1 ? [...sides][0] : null;
   const withPlan = picked.filter((r) => r.row.has_plan).map((r) => r.row.client_id);
-  const tabs: [Tab, string][] = [["all", `Everyone · ${rows.length}`], ["holders", `Hold it · ${holders.length}`], ["buyers", `Plan buys it, don't hold · ${buyers.length}`]];
+  const tabs: [Tab, string][] = [["all", `Everyone · ${rows.length}`], ["holders", `Hold it · ${holders.length}`], ["buyers", `Don't hold it · ${buyers.length}`]];
 
   return (
     <>
@@ -206,7 +204,7 @@ export function FundTable({ rows, securityId }: { rows: FundAudienceRow[]; secur
       </div>
 
       <section className="mt-3 overflow-hidden rounded-xl border border-border bg-white">
-        {shown.length === 0 ? <p className="px-4 py-6 text-sm text-muted">{tab === "buyers" ? "No plan buys this fund for a client who does not hold it." : "Nobody here."}</p> : (
+        {shown.length === 0 ? <p className="px-4 py-6 text-sm text-muted">{tab === "buyers" ? "Every client listed holds this fund." : "Nobody here."}</p> : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[1080px] text-[13px]">
               <thead className="bg-slate-50 text-left text-[11px] font-semibold uppercase tracking-wide text-muted">
@@ -243,12 +241,12 @@ export function FundTable({ rows, securityId }: { rows: FundAudienceRow[]; secur
                       <td className="px-2 py-2.5"><span className={cn("inline-block rounded-full px-2.5 py-1 text-[12px] font-semibold", pp.cls)}>{pp.text}</span></td>
                       <td className="px-2 py-2.5">
                         {r.advised === "NOT_IN_PLAN" ? <span className="text-muted">—</span>
-                          : <span className={cn("inline-block rounded-full px-2.5 py-1 text-[12px] font-semibold", ADVISED[r.advised].cls)}>{ADVISED[r.advised].label}</span>}
+                          : <span className={cn("inline-block rounded-full px-2.5 py-1 text-[12px] font-semibold", r.open && r.advised === "NOT_ADVISED" ? "bg-amber-50 text-amber-900 ring-1 ring-amber-200" : ADVISED[r.advised].cls)}>{r.open && r.advised === "NOT_ADVISED" ? "Part advised" : ADVISED[r.advised].label}</span>}
                         {advisedNote(r) ? <div className="mt-0.5 text-[11.5px] text-muted">{advisedNote(r)}</div> : null}
                       </td>
                       <td className={cn("px-2 py-2.5 text-right font-semibold num", r.row.in_bank >= 0.5 ? "text-emerald-700" : "text-muted")}>{L(r.row.in_bank)}</td>
                       <td className="px-2 py-2.5 text-[12.5px]">
-                        {r.row.last_tranche_at ? <><div>{formatDayMonth(r.row.last_tranche_at)}</div><div className={cn("text-[11.5px]", old(r.row.last_tranche_at) ? "font-semibold text-red-700" : "text-muted")}>{ago(r.row.last_tranche_at)}</div></> : <span className="font-semibold text-red-700">none yet</span>}
+                        {r.row.last_tranche_at ? <><div>{formatDayMonth(r.row.last_tranche_at)}</div><div className={cn("text-[11.5px]", old(r.row.last_tranche_days) ? "font-semibold text-red-700" : "text-muted")}>{ago(r.row.last_tranche_days)}</div></> : <span className="font-semibold text-red-700">none yet</span>}
                       </td>
                     </tr>
                   );

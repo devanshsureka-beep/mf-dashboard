@@ -25,9 +25,9 @@ export default async function BulkCallPage(props: PageProps<"/advice/bulk">) {
     minValue: one("min_value"), maxValue: one("max_value"),
     advisor: one("advisor"), risk: one("risk"), plan: one("plan"), q: one("q"),
     holds: one("holds")?.trim() || undefined,
-    holdsSec: /^[0-9a-f-]{36}$/i.test(one("holds_sec") ?? "") ? one("holds_sec") : undefined,
+    holdsSec: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(one("holds_sec") ?? "") ? one("holds_sec") : undefined,
     // From Find clients: the fund, side and amount rule are set, the clients come as ?ids=.
-    fund: /^[0-9a-f-]{36}$/i.test(one("fund") ?? "") ? one("fund") : undefined,
+    fund: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(one("fund") ?? "") ? one("fund") : undefined,
   };
   const side = one("side") === "SELL" ? "SELL" : one("side") === "BUY" ? "BUY" : undefined;
   const mode = BULK_MODES.some((m) => m.value === one("mode")) ? (one("mode") as BulkMode) : undefined;
@@ -54,7 +54,7 @@ export default async function BulkCallPage(props: PageProps<"/advice/bulk">) {
   // "Holds fund" filters the clients; a fund set from Find clients only sets the call.
   const byHolding = Boolean(f.holds || f.holdsSec) && holdings;
   // Clients ticked on the Clients list arrive as ?ids=…: show them whatever the filters say.
-  const picked = (one("ids") ?? "").split(",").filter((x) => /^[0-9a-f-]{36}$/i.test(x));
+  const picked = (one("ids") ?? "").split(",").filter((x) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(x));
   // Clients picked on the Clients list skip the other filters, but "Holds fund" still applies.
   const matching = picked.length ? clients.filter((c) => picked.includes(c.client_id) && (!byHolding || holdings!.has(c.client_id))) : clients
     .filter((c) => minValue == null || (c.live_portfolio_value ?? 0) >= minValue)

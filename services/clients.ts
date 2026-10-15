@@ -161,7 +161,7 @@ export async function listDeskClients(tx: Tx, f: DeskFilters = {}): Promise<Desk
     where (${q}::text is null or s.client_code ilike ${q} or s.email ilike ${q} or s.pan ilike ${q} or s.phone ilike ${q}
            -- Same as the live search: every word in the name, or the phone digits.
            or (select bool_and(s.full_name ilike '%' || w || '%') from unnest(${words}::text[]) w)
-           or (length(${digits}) >= 4 and regexp_replace(coalesce(s.phone, ''), '\D', '', 'g') like '%' || ${digits} || '%'))
+           or (length(${digits}) >= 4 and regexp_replace(coalesce(s.phone, ''), '[^0-9]', '', 'g') like '%' || ${digits} || '%'))
       and (${f.advisorId ?? null}::uuid is null or s.advisor_id = ${f.advisorId ?? null})
       and (${f.status ?? null}::text is null or s.status = ${f.status ?? null})
       and (${f.risk ?? null}::text is null or s.risk_profile = ${f.risk ?? null})

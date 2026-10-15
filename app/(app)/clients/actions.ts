@@ -89,11 +89,11 @@ export async function restoreClientsAction(_p: ActionResult | null, fd: FormData
 /** Admin: give the ticked clients a new primary advisor (old assignments are closed, never deleted). */
 export async function reassignClientsAction(_p: ActionResult | null, fd: FormData): Promise<ActionResult> {
   return runAction("reassignClients", async () => {
-    const ids = [...new Set(fd.getAll("ids").map(String))].filter((x) => /^[0-9a-f-]{36}$/i.test(x));
+    const ids = [...new Set(fd.getAll("ids").map(String))].filter((x) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(x));
     const advisorId = String(fd.get("advisor_id") ?? "");
     const reason = String(fd.get("reason") ?? "").trim();
     if (!ids.length) throw new AppError("Tick at least one client.");
-    if (!/^[0-9a-f-]{36}$/i.test(advisorId)) throw new AppError("Choose an advisor.");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(advisorId)) throw new AppError("Choose an advisor.");
     if (!reason) throw new AppError("A reason is required.");
     const n = await actionTx(async (tx, actor) => {
       const ok = await tx`select 1 from public.profiles where id = ${advisorId} and is_active and role in ('ADVISOR', 'ADMIN')`;

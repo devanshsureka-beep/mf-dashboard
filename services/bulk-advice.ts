@@ -31,6 +31,8 @@ export interface BulkLine {
   amount: number | null;
   skip: string | null;
   plan_item_id: string | null;
+  /** The fund record the call is saved on. */
+  security_id: string | null;
   plan_yet_to_advise: number | null;
 }
 
@@ -51,12 +53,13 @@ export async function planBulkCall(tx: Tx, spec: BulkSpec, securityId: string | 
   const holdings = securityId
     ? await tx<{ client_id: string; value: number }[]>`
         select client_id, sum(live_value) as value from public.v_holding_live
-        where security_id = any(${family}::uuid[]) and client_id = any(${spec.clientIds}::uuid[]) group by client_id`
+        where security_id = any(${family}::uuid[]) and client_id = any(${spec.clientIds}::uuid[]) and units > 0.0005
+        group by client_id`
     : [];
   const side = spec.action === "SELL" ? "SELL" : "BUY";
   const items = securityId
-    ? await tx<{ client_id: string; plan_item_id: string; yet_to_advise_amount: number }[]>`
-        select distinct on (v.client_id) v.client_id, v.plan_item_id, v.yet_to_advise_amount
+    ? await tx<{ client_id: string; plan_item_id: string; security_id: string; yet_to_advise_amount: number }[]>`
+        select distinct on (v.client_id) v.client_id, v.plan_item_id, v.security_id, v.yet_to_advise_amount
         from public.v_plan_item_progress v
         where v.plan_status = 'ACTIVE' and v.item_status <> 'CANCELLED' and v.side = ${side}
           and v.security_id = any(${family}::uuid[]) and v.client_id = any(${spec.clientIds}::uuid[])
@@ -75,6 +78,8 @@ export async function planBulkCall(tx: Tx, spec: BulkSpec, securityId: string | 
       amount: "amount" in res ? res.amount : null,
       skip: "skip" in res ? res.skip : null,
       plan_item_id: item?.plan_item_id ?? null,
+      // A call on a plan line sits on that line's own record of the fund (as on the Issue call page).
+      security_id: item?.security_id ?? securityId,
       plan_yet_to_advise: item?.yet_to_advise_amount ?? null,
     };
   });
@@ -108,7 +113,7 @@ export async function issueBulkCall(
       notes: spec.notes,
       items: [{
         plan_item_id: l.plan_item_id,
-        security_id: securityId,
+        security_id: l.security_id ?? securityId,
         action: spec.action,
         quantity_basis: "AMOUNT",
         advised_amount: l.amount,

@@ -40,8 +40,8 @@ describeDb("Find clients: the desk and a fund's audience", () => {
       }));
       fx = await ctx.as("advisor", (t) => fundAudience(t, ctx.sec.X));
       row = fx!.rows.find((r) => r.row.client_id === p.clientId)!;
-      // An open call wins over what the plan still has left.
-      expect(row).toMatchObject({ advised: "WAITING", open: { advised: 400000, calls: 1 } });
+      // ₹4L of the ₹10L told: the ₹6L left is still to advise, and the call shows as waiting beside it.
+      expect(row).toMatchObject({ advised: "NOT_ADVISED", plan: { left: 600000 }, open: { advised: 400000, calls: 1, since_days: expect.any(Number) } });
       rows = await ctx.as("advisor", (t) => listDeskRows(t));
       me = rows.find((r) => r.client_id === p.clientId)!;
       expect(me.last_tranche_calls).toBe(1);

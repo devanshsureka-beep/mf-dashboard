@@ -64,6 +64,7 @@ export interface QueueStep {
   /** The clients still to come, in order. */
   next: string[];
   done: number;
+  skipped: number;
   nextName: string | null;
   skipHref: string;
   /** Time and channel set on the first client, kept for the rest of the round. */
@@ -104,8 +105,8 @@ export function IssueAdviceForm({
   const visible = planItems.filter((p) => side === "ALL" || p.side === side);
 
   const held = (p: AdvisablePlanItem) => (p.security_id ? unitsOf.get(p.security_id) ?? 0 : 0);
-  /** Units a Full sell advises: all the CAS holds, else the plan's own full-exit units. */
-  const fullUnits = (p: AdvisablePlanItem) => held(p) || Number(p.full_exit_units ?? 0);
+  /** Units a Full sell advises: the plan's full exit (its own folio when it names one), else all the CAS holds. */
+  const fullUnits = (p: AdvisablePlanItem) => Number(p.full_exit_units ?? 0) || held(p);
   const canFull = (p: AdvisablePlanItem) => (p.side === "SELL" ? fullUnits(p) > 0 : p.yet_to_advise_amount > 0.5);
   const initialRow = (p: AdvisablePlanItem): PlanRow => ({
     include: p.id === preselect,
@@ -147,7 +148,8 @@ export function IssueAdviceForm({
     if (r.mode === "FULL") return { basis: "AMOUNT" as const, units: null, amount: p.yet_to_advise_amount, nav };
     if (r.mode === "UNITS") {
       const units = num(r.units) || 0;
-      return { basis: "UNITS" as const, units: units || null, amount: num(r.amount) || units * nav, nav };
+      // Plan lines in Units have no ₹ box: the estimate is units × NAV (a ₹ typed before switching does not count).
+      return { basis: "UNITS" as const, units: units || null, amount: units * nav, nav };
     }
     return { basis: "AMOUNT" as const, units: null, amount: num(r.amount) || 0, nav };
   };
@@ -278,7 +280,7 @@ export function IssueAdviceForm({
     <form action={formAction} className="space-y-4 pb-24">
       <input type="hidden" name="items" value={JSON.stringify(items)} />
       <input type="hidden" name="sip_stops" value={JSON.stringify(sipStops)} />
-      {queue ? <><input type="hidden" name="queue_next" value={queue.next.join(",")} /><input type="hidden" name="queue_done" value={queue.done} /></> : null}
+      {queue ? <><input type="hidden" name="queue_next" value={queue.next.join(",")} /><input type="hidden" name="queue_done" value={queue.done} /><input type="hidden" name="queue_skipped" value={queue.skipped} /></> : null}
       <div className="flex flex-wrap items-end gap-3">
         <Field label="Told at (IST) *" className="w-56">
           <Input type="datetime-local" name="communicated_at" defaultValue={queue?.at || toISTDateTimeLocal()} required />

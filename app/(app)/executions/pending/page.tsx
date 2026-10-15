@@ -8,7 +8,7 @@ import { EmptyState, PageHeader } from "@/components/app/page-header";
 import { ActionForm, SubmitButton } from "@/components/app/action-form";
 import { formatDayMonth, formatINRCompact, formatUnits } from "@/lib/format";
 import { askCasHref } from "@/lib/ask-cas";
-import { cn } from "@/lib/utils";
+import { cn, uuidOrNull } from "@/lib/utils";
 import { PAGES } from "@/lib/brand";
 import { HubTabs } from "@/components/app/hub-tabs";
 import { pageData } from "@/lib/server";
@@ -27,7 +27,7 @@ type Group = { client_id: string; client_name: string; client_code: string; phon
 export default async function PendingExecutionsPage(props: PageProps<"/executions/pending">) {
   const sp = await props.searchParams;
   const one = (k: string) => (typeof sp[k] === "string" && sp[k] ? (sp[k] as string) : null);
-  const f = { q: one("q"), advisor: one("advisor"), status: one("status"), side: one("side"), age: one("age"), open: one("open") };
+  const f = { q: one("q"), advisor: uuidOrNull(one("advisor")), status: one("status"), side: one("side"), age: one("age"), open: one("open") };
   const { all, advisors, actor } = await pageData(async (tx) => ({
     all: await listWaiting(tx, { advisorId: f.advisor }),
     advisors: await listAdvisors(tx),

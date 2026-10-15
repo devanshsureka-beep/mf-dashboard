@@ -77,7 +77,7 @@ export interface BulkUnadvisedResult { ok: number; failed: { id: string; error: 
 
 /** Review many unadvised trades at once. Each trade is saved on its own, so one failure does not undo the rest. */
 export async function bulkUnadvisedAction(runId: string, input: BulkUnadvisedInput): Promise<BulkUnadvisedResult> {
-  const ids = [...new Set((input.ids ?? []).filter((x) => typeof x === "string" && /^[0-9a-f-]{36}$/i.test(x)))].slice(0, 500);
+  const ids = [...new Set((input.ids ?? []).filter((x) => typeof x === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(x)))].slice(0, 500);
   const out: BulkUnadvisedResult = { ok: 0, failed: [] };
   if (!ids.length) return { ok: 0, failed: [{ id: "", error: "Select at least one trade." }] };
   const note = input.note?.trim() || null;

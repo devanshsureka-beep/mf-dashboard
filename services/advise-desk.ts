@@ -39,7 +39,9 @@ export interface DeskRow {
   has_plan: boolean;
   pending_total: number;
   open_calls: number;
+  /** ISO timestamp of the last tranche, and how many IST days ago it was. */
   last_tranche_at: string | null;
+  last_tranche_days: number | null;
   last_tranche_code: string | null;
   last_tranche_calls: number;
   /** The plan lines still to advise, biggest first (at most three). */
@@ -49,16 +51,15 @@ export interface DeskRow {
 
 export interface ReadyCounts { cash: { clients: number; amount: number }; buys: { clients: number; amount: number }; sells: { clients: number; amount: number }; quiet: { clients: number; never: number }; all: number }
 
-const DAY = 86_400_000;
-export const daysSince = (iso: string | null, now = Date.now()) => (iso ? Math.floor((now - new Date(iso).getTime()) / DAY) : null);
 
 /** Every active client the user can see, with what the desk needs to pick who to call. */
 export async function listDeskRows(tx: Tx, f: Pick<DeskFilter, "advisorId" | "risk"> = {}): Promise<DeskRow[]> {
   const clients = await listDeskClients(tx, { status: "ACTIVE", advisorId: f.advisorId ?? undefined, risk: f.risk ?? undefined });
   if (!clients.length) return [];
   const ids = clients.map((c) => c.client_id);
-  const tranches = await tx<{ client_id: string; at: string; code: string; calls: number }[]>`
-    select distinct on (b.client_id) b.client_id, b.communicated_at::text as at, b.batch_code as code,
+  const tranches = await tx<{ client_id: string; at: string; days: number; code: string; calls: number }[]>`
+    select distinct on (b.client_id) b.client_id, to_char(b.communicated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as at,
+           (app.today_ist() - (b.communicated_at at time zone 'Asia/Kolkata')::date)::int as days, b.batch_code as code,
            (select count(*)::int from public.advice_items i where i.advice_batch_id = b.id) as calls
     from public.advice_batches b
     where b.client_id = any(${ids}::uuid[]) and b.status = 'ACTIVE'
@@ -80,20 +81,20 @@ export async function listDeskRows(tx: Tx, f: Pick<DeskFilter, "advisorId" | "ri
       value: Number(c.live_portfolio_value ?? 0), in_bank: Number(c.in_bank ?? 0),
       sell_left: Number(c.yet_to_advise_sell ?? 0), buy_left: Number(c.yet_to_advise_buy ?? 0),
       has_plan: Boolean(c.active_plan_id), pending_total: Number(c.pending_total ?? 0), open_calls: Number(c.open_calls ?? 0),
-      last_tranche_at: t?.at ?? null, last_tranche_code: t?.code ?? null, last_tranche_calls: t?.calls ?? 0,
+      last_tranche_at: t?.at ?? null, last_tranche_days: t?.days ?? null, last_tranche_code: t?.code ?? null, last_tranche_calls: t?.calls ?? 0,
       next: n.slice(0, 3), next_more: Math.max(0, n.length - 3),
     };
   });
 }
 
-const isQuiet = (r: DeskRow, now: number) => r.has_plan && (r.last_tranche_at == null || (daysSince(r.last_tranche_at, now) ?? 0) > 30);
+const isQuiet = (r: DeskRow) => r.has_plan && (r.last_tranche_days == null || r.last_tranche_days > 30);
 
-export function readyCounts(rows: DeskRow[], now = Date.now()): ReadyCounts {
+export function readyCounts(rows: DeskRow[]): ReadyCounts {
   const pick = (fn: (r: DeskRow) => number) => {
     const hit = rows.filter((r) => fn(r) >= 0.5);
     return { clients: hit.length, amount: hit.reduce((t, r) => t + fn(r), 0) };
   };
-  const quiet = rows.filter((r) => isQuiet(r, now));
+  const quiet = rows.filter(isQuiet);
   return {
     cash: pick((r) => r.in_bank), buys: pick((r) => r.buy_left), sells: pick((r) => r.sell_left),
     quiet: { clients: quiet.length, never: quiet.filter((r) => !r.last_tranche_at).length }, all: rows.length,
@@ -101,15 +102,15 @@ export function readyCounts(rows: DeskRow[], now = Date.now()): ReadyCounts {
 }
 
 /** The rows a ready list and the filters leave, in the order that list reads best. */
-export function filterDeskRows(rows: DeskRow[], f: DeskFilter, now = Date.now()): DeskRow[] {
+export function filterDeskRows(rows: DeskRow[], f: DeskFilter): DeskRow[] {
   const list = f.list ?? "cash";
-  let out = rows.filter((r) => (list === "cash" ? r.in_bank >= 0.5 : list === "buys" ? r.buy_left >= 0.5 : list === "sells" ? r.sell_left >= 0.5 : list === "quiet" ? isQuiet(r, now) : true));
+  let out = rows.filter((r) => (list === "cash" ? r.in_bank >= 0.5 : list === "buys" ? r.buy_left >= 0.5 : list === "sells" ? r.sell_left >= 0.5 : list === "quiet" ? isQuiet(r) : true));
   if (f.cashMin != null) out = out.filter((r) => r.in_bank >= f.cashMin!);
   if (f.left === "buy") out = out.filter((r) => r.buy_left >= 0.5);
   if (f.left === "sell") out = out.filter((r) => r.sell_left >= 0.5);
   if (f.left === "none") out = out.filter((r) => r.buy_left < 0.5 && r.sell_left < 0.5);
   if (f.last === "never") out = out.filter((r) => !r.last_tranche_at);
-  if (f.last === "7" || f.last === "30") out = out.filter((r) => !r.last_tranche_at || (daysSince(r.last_tranche_at, now) ?? 0) > Number(f.last));
+  if (f.last === "7" || f.last === "30") out = out.filter((r) => r.last_tranche_days == null || r.last_tranche_days > Number(f.last));
   if (f.hideWaiting) out = out.filter((r) => r.pending_total < 0.5);
   const by: Record<ReadyList, (a: DeskRow, b: DeskRow) => number> = {
     cash: (a, b) => b.in_bank - a.in_bank,
@@ -132,13 +133,16 @@ export interface FundMatch { security_id: string; scheme_name: string; isin: str
  * "option", "fund", "growth" and punctuation are dropped count as one fund.
  * Direct and Regular stay apart (the words are in the names).
  */
-const FUND_KEY = (col: string) => `regexp_replace(lower(${col}), '\\m(plan|option|fund|growth)\\M|[^a-z0-9]', '', 'g')`;
+const FUND_KEY = (col: string) => `regexp_replace(lower(${col}), '\\m(plan|option|fund|growth)\\M|non[^a-z]*demat|[^a-z0-9]', '', 'g')`;
 
 /** Every security record of the fund `securityId` belongs to. */
 export async function fundFamily(tx: Tx, securityId: string): Promise<string[]> {
   const rows = await tx<{ id: string }[]>`
     select f.id from public.security_master f, public.security_master s
-    where s.id = ${securityId} and ${tx.unsafe(FUND_KEY("f.scheme_name"))} = ${tx.unsafe(FUND_KEY("s.scheme_name"))}`;
+    where s.id = ${securityId} and ${tx.unsafe(FUND_KEY("f.scheme_name"))} = ${tx.unsafe(FUND_KEY("s.scheme_name"))}
+      -- Two different ISINs (or Growth vs IDCW) are two securities, whatever the names say.
+      and (f.isin is null or s.isin is null or f.isin = s.isin)
+      and (f.option_type is null or s.option_type is null or f.option_type = s.option_type)`;
   return rows.length ? rows.map((r) => r.id) : [securityId];
 }
 
@@ -153,26 +157,33 @@ export async function fundsMatching(tx: Tx, q: string, limit = 12): Promise<Fund
       select distinct ${tx.unsafe(FUND_KEY("sm.scheme_name"))} as key from public.security_master sm
       where (${isin}::text is not null and sm.isin = ${isin})
          or (${isin}::text is null and sm.scheme_name ilike all(${like}::text[]))
-    ), fam as (
+    ), rec as (
       select hit.key, sm.id, sm.scheme_name, sm.isin from hit
       join public.security_master sm on ${tx.unsafe(FUND_KEY("sm.scheme_name"))} = hit.key
+    ), fam as (
+      -- One group per ISIN; a record without one joins the ISIN of its name when there is exactly one.
+      select r.*, r.key || ':' || coalesce(r.isin,
+               (select case when count(distinct x.isin) = 1 then max(x.isin) end from rec x where x.key = r.key and x.isin is not null), '') as grp
+      from rec r
     ), held as (
-      select fam.key, count(distinct h.client_id)::int as holders, coalesce(sum(h.live_value), 0)::float8 as held_value
+      select fam.grp, count(distinct h.client_id)::int as holders, coalesce(sum(h.live_value), 0)::float8 as held_value
       from fam join public.v_holding_live h on h.security_id = fam.id and h.units > 0.0005
-      join public.clients c on c.id = h.client_id and c.deleted_at is null group by fam.key
+      join public.clients c on c.id = h.client_id and c.deleted_at is null and c.status = 'ACTIVE' group by fam.grp
     ), planned as (
-      select fam.key, count(distinct v.client_id)::int as in_plans
+      select fam.grp, count(distinct v.client_id)::int as in_plans
       from fam join public.v_plan_item_progress v on v.security_id = fam.id and v.plan_status = 'ACTIVE' and v.item_status <> 'CANCELLED'
-      group by fam.key
+      join public.clients c on c.id = v.client_id and c.deleted_at is null and c.status = 'ACTIVE'
+      group by fam.grp
+    ), one as (
+      select distinct on (fam.grp)
+             fam.id as security_id, fam.scheme_name, fam.isin,
+             coalesce(held.holders, 0) as holders, coalesce(held.held_value, 0) as held_value, coalesce(planned.in_plans, 0) as in_plans
+      from fam left join held on held.grp = fam.grp left join planned on planned.grp = fam.grp
+      where coalesce(held.holders, 0) > 0 or coalesce(planned.in_plans, 0) > 0
+      -- The record shown: the one with an ISIN that clients hold most.
+      order by fam.grp, (fam.isin is null), (select count(*) from public.v_holding_live h where h.security_id = fam.id) desc
     )
-    select distinct on (fam.key)
-           fam.id as security_id, fam.scheme_name, fam.isin,
-           coalesce(held.holders, 0) as holders, coalesce(held.held_value, 0) as held_value, coalesce(planned.in_plans, 0) as in_plans
-    from fam left join held on held.key = fam.key left join planned on planned.key = fam.key
-    where coalesce(held.holders, 0) > 0 or coalesce(planned.in_plans, 0) > 0
-    -- The record shown: the one with an ISIN that clients hold most.
-    order by fam.key, (fam.isin is null), (select count(*) from public.v_holding_live h where h.security_id = fam.id) desc
-    limit ${limit}`.then((rows) => rows.sort((a, b) => b.holders - a.holders || b.in_plans - a.in_plans || a.scheme_name.localeCompare(b.scheme_name)));
+    select * from one order by holders desc, in_plans desc, scheme_name limit ${limit}`;
 }
 
 export type FundAdvised = "WAITING" | "PART_DONE" | "NOT_ADVISED" | "DONE" | "NO_CALL" | "NOT_IN_PLAN";
@@ -183,7 +194,7 @@ export interface FundAudienceRow {
   /** The client's active-plan line for this fund (the one with most left to advise). */
   plan: { plan_item_id: string; action: string; side: "BUY" | "SELL" | "NONE"; target: number; left: number; executed: number; full_exit: boolean } | null;
   advised: FundAdvised;
-  open: { since: string; advised: number; executed: number; calls: number } | null;
+  open: { since: string; since_days: number; advised: number; executed: number; calls: number } | null;
   done_on: string | null;
 }
 
@@ -215,8 +226,9 @@ export async function fundAudience(tx: Tx, securityId: string, f: Pick<DeskFilte
     from public.v_plan_item_progress v
     where v.security_id = any(${ids}::uuid[]) and v.plan_status = 'ACTIVE' and v.item_status <> 'CANCELLED'
     order by v.client_id, (v.side <> 'NONE') desc, v.yet_to_advise_amount desc`;
-  const open = await tx<{ client_id: string; since: string; advised: number; executed: number; calls: number }[]>`
-    select client_id, min(communicated_at)::text as since, sum(advised_amount)::float8 as advised,
+  const open = await tx<{ client_id: string; since: string; since_days: number; advised: number; executed: number; calls: number }[]>`
+    select client_id, to_char(min(communicated_at) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as since,
+           (app.today_ist() - (min(communicated_at) at time zone 'Asia/Kolkata')::date)::int as since_days, sum(advised_amount)::float8 as advised,
            sum(executed_amount)::float8 as executed, count(*)::int as calls
     from public.v_advice_items where security_id = any(${ids}::uuid[]) and is_open group by client_id`;
   const done = await tx<{ client_id: string; done_on: string }[]>`
@@ -237,8 +249,9 @@ export async function fundAudience(tx: Tx, securityId: string, f: Pick<DeskFilte
       // Selling (about) all of what the client holds.
       full_exit: i.side === "SELL" && h != null && h.value > 0 && i.target >= h.value * 0.95,
     } : null;
-    const advised: FundAdvised = o ? (o.executed >= 0.5 ? "PART_DONE" : "WAITING")
-      : plan && plan.side !== "NONE" && plan.left >= 0.5 ? "NOT_ADVISED"
+    // Plan money still to advise comes first, even when part of the line was told already.
+    const advised: FundAdvised = plan && plan.side !== "NONE" && plan.left >= 0.5 ? "NOT_ADVISED"
+      : o ? (o.executed >= 0.5 ? "PART_DONE" : "WAITING")
       : plan && plan.side !== "NONE" ? "DONE"
       : plan ? "NO_CALL" : "NOT_IN_PLAN";
     return { row: r, holding: h ? { value: h.value, units: h.units, folios: h.folios, plan_types: h.plan_types } : null, plan, advised, open: o, done_on: D.get(r.client_id) ?? null };
