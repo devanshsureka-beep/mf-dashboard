@@ -430,8 +430,9 @@ export function buildPlanFromReport(
       }
       group.forEach((h) => reviewed.add(h));
       if (!valueOk(r.value, total(group), group[0].scheme_name)) {
-        if (tolerant) for (const h of group) if (!taken.has(h)) flagged.set(h, { kind: "KEEP_CHANGED", report: r.value });
-        else problems.push(`${group[0].scheme_name}: the report values it at ${inr(r.value)}, the CAS at ${inr(Math.round(total(group) * 100) / 100)}.`);
+        if (tolerant) {
+          for (const h of group) if (!taken.has(h)) flagged.set(h, { kind: "KEEP_CHANGED", report: r.value });
+        } else problems.push(`${group[0].scheme_name}: the report values it at ${inr(r.value)}, the CAS at ${inr(Math.round(total(group) * 100) / 100)}.`);
       }
       if (r.verdict === "HOLD") {
         if (group.some((h) => taken.has(h))) problems.push(`${group[0].scheme_name}: the review says ${r.deferred ? r.verdictText : "HOLD"} but it is in the sell list.`);

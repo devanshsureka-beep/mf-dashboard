@@ -16,7 +16,7 @@ import { listRuns } from "@/services/reconciliation";
 import { BulkUploader } from "../cas/bulk/bulk-uploader";
 
 // Reading PDFs and saving a whole CAS can take a while on a cold start.
-export const maxDuration = 120;
+export const maxDuration = 300; // the bulk uploader here may send a picture-only CAS to Claude (up to 4 min)
 
 export const metadata = { title: PAGES.casInbox };
 

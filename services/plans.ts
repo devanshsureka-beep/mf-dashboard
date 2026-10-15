@@ -620,10 +620,15 @@ export async function recordDoneBeforeOnboarding(tx: Tx, actor: Actor, itemId: s
     select client_id, security_id, scheme_name, action, report_diff from public.advisory_plan_items where id = ${itemId}`)[0];
   const done = it?.report_diff?.done_answer;
   if (!it || !done || it.report_diff?.done_call_id || (it.action !== "SELL" && it.action !== "BUY")) return null;
+  // The CAS this plan was built from (the newer CAS that shows the trade); else the client's first CAS.
   const proof = (await tx<{ document_id: string | null; snapshot_date: string }[]>`
     select d.document_id, s.snapshot_date::text as snapshot_date from public.portfolio_snapshots s
     left join public.cas_documents d on d.id = s.cas_document_id
-    where s.client_id = ${it.client_id} and s.is_baseline`)[0];
+    where s.client_id = ${it.client_id}
+      and (s.id = (select p.baseline_snapshot_id from public.advisory_plans p join public.advisory_plan_items i on i.plan_id = p.id where i.id = ${itemId})
+           or s.is_baseline)
+    order by (s.id = (select p.baseline_snapshot_id from public.advisory_plans p join public.advisory_plan_items i on i.plan_id = p.id where i.id = ${itemId})) desc nulls last
+    limit 1`)[0];
   const b = await issueAdvice(tx, actor, {
     clientId: it.client_id,
     communicatedAt: new Date(`${done.date}T09:00:00+05:30`),

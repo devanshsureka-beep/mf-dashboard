@@ -38,6 +38,10 @@ export async function removeTeamMember(tx: Tx, actor: Actor, userId: string, rea
 
 export async function restoreTeamMember(tx: Tx, actor: Actor, userId: string, args: { role: AppRole; fullName?: string | null }): Promise<void> {
   if (actor.role !== "ADMIN") throw new AppError("Only an admin can add team members.", "FORBIDDEN");
+  if (actor.id === userId) throw new AppError("You cannot add yourself back.");
+  const [p] = await tx<{ is_active: boolean }[]>`select is_active from public.profiles where id = ${userId}`;
+  if (!p) throw new AppError("User not found.", "NOT_FOUND");
+  if (p.is_active) throw new AppError("This person is already on the team. Change their role in the Staff list.");
   await setAuditReason(tx, "Added back to the team by admin");
   const rows = await tx`
     update public.profiles set role = ${args.role}, is_active = true, removed_at = null, removed_by = null,

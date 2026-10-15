@@ -93,4 +93,25 @@ describeDb("Report + a newer CAS: a difference answered as already done", () => 
       expect(bank.cash_at_onboarding).toBe(200000);
     });
   });
+
+  it("a Buy done before onboarding with money the desk never saw does not lower the start value", async () => {
+    await scenario(async (ctx) => {
+      const p = await clientWithActivePlan(ctx);
+      const y = (await ctx.tx<{ scheme_name: string }[]>`select scheme_name from public.security_master where id = ${ctx.sec.Y}`)[0];
+      const payload = advisoryReportResultSchema.parse({
+        client_id: p.clientId, status: "PARSED", plan: { plan_name: "Buy done earlier" },
+        items: [{
+          action: "BUY", scheme_name: y.scheme_name, target_amount: 100000, current_amount: 0, reason: "Buy",
+          question: "Already bought?", report_diff: { kind: "BUY_HELD", report_amount: 100000, cas_value: 100000, sold_since: 0, bought_since: 100000, suggest: "BUY", done_amount: 100000, done_date: "2026-08-20" },
+        }],
+      });
+      const draft = await ctx.as("advisor", (t) => ingestAdvisoryReport(t, payload, ctx.users.advisor.id, { extractionSource: "IMPORT", securityIds: { [y.scheme_name.toLowerCase()]: ctx.sec.Y } }));
+      const [q] = await ctx.as("advisor", (t) => listReportQuestions(t, draft.planId!));
+      await ctx.as("advisor", (t) => answerReportQuestion(t, ctx.users.advisor, q.id, { action: "BUY", amount: 100000, explanation: "bought before onboarding", done: { amount: 100000, date: "2026-08-20" } }));
+      await ctx.as("advisor", (t) => approvePlan(t, ctx.users.advisor, draft.planId!, "buy done earlier"));
+      const bank = (await ctx.as("advisor", (t) => t<{ in_bank: number; cash_at_onboarding: number }[]>`
+        select in_bank::float8, cash_at_onboarding::float8 from public.v_client_bank where client_id = ${p.clientId}`))[0];
+      expect(bank).toEqual({ in_bank: 0, cash_at_onboarding: 0 });
+    });
+  });
 });

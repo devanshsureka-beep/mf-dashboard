@@ -3,7 +3,7 @@ import { answerToCas, buildCasAiRequest, type CasAiAnswer } from "@/lib/integrat
 
 // A made-up statement, as Claude would transcribe it.
 const answer = (over: Partial<CasAiAnswer["schemes"][number]> = {}): CasAiAnswer => ({
-  investor_name: "Sample Investor", email: "Sample@Example.com", mobile: "+91 98200 11001", pan: "ABCDE1234F",
+  issuer: "KFINTECH", investor_name: "Sample Investor", email: "Sample@Example.com", mobile: "+91 98200 11001", pan: "ABCDE1234F",
   period_from: "1986-01-01", period_to: "2026-10-13", summary_cost_total: 200000, summary_market_total: 250000,
   schemes: [
     {
@@ -26,6 +26,7 @@ describe("A CAS read by Claude from a picture-only PDF", () => {
   it("becomes the usual CAS shape, marked as read by Claude and always flagged for a check", () => {
     const cas = answerToCas(answer());
     expect(cas.readByAi).toBe(true);
+    expect(cas.source).toBe("KFINTECH");
     expect(cas.investor).toEqual({ name: "Sample Investor", email: "sample@example.com", mobile: "9820011001", pan: "ABCDE1234F" });
     expect(cas.valuationDate).toBe("2026-10-13");
     expect(cas.schemes[0]).toMatchObject({ folio: "1234/56", planType: "REGULAR", isin: "INF179K01BE2", closingUnits: 1000, marketValue: 150000 });

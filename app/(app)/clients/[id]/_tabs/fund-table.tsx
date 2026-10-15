@@ -68,7 +68,7 @@ export function FundTable({ rows, totals, clientId, canAdvise, casDate, inBank }
   const shown = filter === "exited" ? rows.filter(gone) : live.filter((r) => filter === "all" || (filter === "keep" ? tone(r) === "keep" || tone(r) === "other" : tone(r) === filter));
 
   // Three parts: funds a call was given on, Sell/Buy lines nothing was advised on yet, and the rest (Keep).
-  const moves = (r: FundRow) => tone(r) === "sell" || tone(r) === "buy";
+  const moves = (r: FundRow) => r.plan != null && tone(r) !== "keep";
   const acted = (r: FundRow) => (r.plan?.advised ?? 0) >= 0.5;
   const stage = (r: FundRow) => (r.plan!.pending >= 0.5 ? 0 : !r.plan!.done && r.plan!.remaining >= 0.5 ? 1 : 2);
   const actedRows = shown.filter(acted).sort((a, b) => stage(a) - stage(b) || (b.plan!.pending + b.plan!.remaining) - (a.plan!.pending + a.plan!.remaining));

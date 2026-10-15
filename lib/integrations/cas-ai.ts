@@ -20,6 +20,7 @@ const N = (description: string) => ({ type: "number", description });
 
 // Structured output: every field required; "" and 0 mean "not printed".
 export const CAS_AI_SCHEMA = obj({
+  issuer: { type: "string", enum: ["CAMS", "KFINTECH"], description: "Who issued the statement (the CAMSCASWS code or CAMS layout = CAMS; otherwise KFINTECH)" },
   investor_name: T("Investor name at the top"),
   email: T("Email at the top, or \"\""),
   mobile: T("Mobile number at the top (digits), or \"\""),
@@ -65,6 +66,7 @@ Include every folio of every fund house, including folios with a zero closing ba
 const str = z.string();
 const num = z.number();
 const answerSchema = z.object({
+  issuer: z.enum(["CAMS", "KFINTECH"]),
   investor_name: str, email: str, mobile: str, pan: str, period_from: str, period_to: str,
   summary_cost_total: num, summary_market_total: num,
   schemes: z.array(z.object({
@@ -124,7 +126,7 @@ export function answerToCas(a: CasAiAnswer): CasParseOutput {
   if (!pan) warnings.push("The PAN could not be read.");
   return {
     format: "KFIN_CAMS_CONSOLIDATED",
-    source: "CAMS",
+    source: a.issuer,
     investor: { name: textOrNull(a.investor_name), email: textOrNull(a.email)?.toLowerCase() ?? null, mobile: a.mobile.replace(/\D/g, "").slice(-10) || null, pan },
     period: { from: isoOrNull(a.period_from), to: isoOrNull(a.period_to) },
     valuationDate: navDates.length ? navDates[navDates.length - 1] : isoOrNull(a.period_to),

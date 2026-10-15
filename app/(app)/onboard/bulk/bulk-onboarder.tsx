@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { transportError } from "@/lib/safe-action";
 import { stageLargeFiles } from "@/lib/stage-files";
 import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -61,8 +62,8 @@ export function BulkOnboarder({ advisors, defaultAdvisorId }: { advisors: { id: 
       try {
         await stageLargeFiles(fd);
         got[i] = await identifyBulkFileAction(fd);
-      } catch {
-        got[i] = { fileName: files[i].name, kind: "UNREADABLE", name: null, panMasked: null, casDate: null, readerOk: false, existingClient: null, message: "Upload failed (network or file too large)." };
+      } catch (e) {
+        got[i] = { fileName: files[i].name, kind: "UNREADABLE", name: null, panMasked: null, casDate: null, readerOk: false, existingClient: null, message: transportError(e) };
       }
       setInfos([...got]);
     });
@@ -90,8 +91,8 @@ export function BulkOnboarder({ advisors, defaultAdvisorId }: { advisors: { id: 
       try {
         await stageLargeFiles(fd);
         res = await onboardBulkPairAction(fd);
-      } catch {
-        res = { outcome: "FAILED", message: "The request failed (network, timeout or file too large). Retry this client.", problems: [], usedClaude: false, corrections: [] };
+      } catch (e) {
+        res = { outcome: "FAILED", message: `${transportError(e)} Retry this client.`, problems: [], usedClaude: false, corrections: [] };
       }
       setResults((r) => ({ ...r, [p.cas]: res }));
     }

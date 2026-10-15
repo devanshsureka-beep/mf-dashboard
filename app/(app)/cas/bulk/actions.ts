@@ -44,7 +44,7 @@ export async function processCasFileAction(fd: FormData): Promise<BulkCasRow> {
       fileName: file.fileName,
       phones,
     });
-    const { parsed, passwordProtected } = await readCasAnyPdf(file.bytes, candidates);
+    const { parsed, passwordProtected } = await readCasAnyPdf(file.bytes, candidates, { timeoutMs: 220_000 }); // leaves time to save within 300 s
 
     const client = await actionTx((tx) => findClientByPan(tx, parsed.investor.pan));
     if (!client) {

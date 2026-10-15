@@ -28,6 +28,9 @@ describeDb("Removing and adding back team members", () => {
       // A removed member cannot be switched back on by the database either (removed ⇒ inactive).
       expect(await ctx.expectError("admin", (t) => t`update public.profiles set is_active = true where id = ${ops.id}`)).toMatch(/profiles_removed_inactive/);
 
+      // Add back only works on someone off the team, and not on yourself.
+      expect(await ctx.expectError("admin", (t) => restoreTeamMember(t, admin, advisor.id, { role: "ADMIN" }))).toMatch(/already on the team/);
+      expect(await ctx.expectError("admin", (t) => restoreTeamMember(t, admin, admin.id, { role: "ADMIN" }))).toMatch(/cannot add yourself/);
       // Adding back (by email, as the Add user form does).
       const found = await ctx.as("admin", (t) => findProfileByEmail(t, ops.email.toUpperCase()));
       expect(found).toEqual({ id: ops.id, removed: true, active: false });

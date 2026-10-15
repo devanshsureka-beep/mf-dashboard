@@ -44,6 +44,14 @@ describe("Report + a newer CAS: differences become questions, prefilled from the
     expect(plan.problems.length).toBeGreaterThan(0);
   });
 
+  it("without the newer-CAS option, a kept fund the report values differently from the CAS blocks", () => {
+    const ans: ReportAiAnswer = { ...answer, sells: [], sell_total: null, buys: [], buy_total: null,
+      holds: [{ fund: "Parag Parikh Flexi Cap", folio: null, folio_count: 1, plan_type: "DIRECT", value: 300000, deferred: false, note: "Keep" }] };
+    const h = holdings.filter((x) => x.isin === "INF879O01027");
+    const plan = buildPlanFromReport(answerToReport(ans, null), h, "2026-10-10");
+    expect(plan.problems.join(" ")).toMatch(/report values it at ₹3,00,000, the CAS at ₹2,02,000/);
+  });
+
   it("asks about each difference, with what was already done", () => {
     const plan = buildPlanFromReport(answerToReport(answer, null), holdings, "2026-10-10", { since: { trades } });
     expect(plan.problems).toEqual([]);

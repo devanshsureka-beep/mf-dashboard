@@ -42,7 +42,8 @@ export function IssueAdviceForm({
   preselect?: string | null;
   advisors?: { id: string; full_name: string }[];
 }) {
-  const safe = useMemo(() => safeAction(action), [action]);
+  // A new wrapper per render is fine: React always calls the latest action passed in.
+  const safe = safeAction(action);
   const [state, formAction, pending] = useActionState(safe, null);
   const navOf = useMemo(() => new Map(holdings.map((h) => [h.security_id, h.nav])), [holdings]);
   const unitsOf = useMemo(() => new Map(holdings.map((h) => [h.security_id, h.units])), [holdings]);

@@ -46,8 +46,11 @@ export async function createUserAction(_p: ActionResult | null, fd: FormData): P
     const existing = await actionTx((tx) => findProfileByEmail(tx, parsed.data.email), { roles: ["ADMIN"] });
     if (existing) {
       if (existing.active) throw new AppError(`${parsed.data.email} is already on the team. Change their role in the Staff list.`);
-      await setSignIn(existing.id, true, { password: parsed.data.password, role: parsed.data.role, fullName: parsed.data.full_name });
-      await actionTx((tx, actor) => restoreTeamMember(tx, actor, existing.id, { role: parsed.data.role, fullName: parsed.data.full_name }), { roles: ["ADMIN"] });
+      // Database and sign-in change together: if Auth refuses, the restore rolls back.
+      await actionTx(async (tx, actor) => {
+        await restoreTeamMember(tx, actor, existing.id, { role: parsed.data.role, fullName: parsed.data.full_name });
+        await setSignIn(existing.id, true, { password: parsed.data.password, role: parsed.data.role, fullName: parsed.data.full_name });
+      }, { roles: ["ADMIN"] });
       revalidatePath("/admin/users");
       return `${parsed.data.email} already had an account: added back as ${parsed.data.role} with the new temporary password.`;
     }
@@ -111,8 +114,12 @@ export async function unassignAction(assignmentId: string, _p: ActionResult | nu
 export async function removeUserAction(userId: string, _p: ActionResult | null, fd: FormData): Promise<ActionResult> {
   return runAction("removeUser", async () => {
     const reason = str(fd, "reason");
-    const who = await actionTx((tx, actor) => removeTeamMember(tx, actor, userId, reason), { roles: ["ADMIN"] });
-    await setSignIn(userId, false);
+    // Database and sign-in change together: if blocking sign-in fails, nothing is marked removed (retry works).
+    const who = await actionTx(async (tx, actor) => {
+      const w = await removeTeamMember(tx, actor, userId, reason);
+      await setSignIn(userId, false);
+      return w;
+    }, { roles: ["ADMIN"] });
     revalidatePath("/admin/users");
     return `${who.fullName || who.email} removed from the team. Their past work stays in the history.`;
   });
@@ -125,9 +132,10 @@ export async function restoreUserAction(userId: string, _p: ActionResult | null,
     if (!ROLES.includes(role)) throw new AppError("Invalid role.");
     const password = str(fd, "password");
     if (password.length < 12) throw new AppError("Temporary password must be at least 12 characters");
-    await actionTx(async () => null, { roles: ["ADMIN"] });
-    await setSignIn(userId, true, { password, role });
-    await actionTx((tx, actor) => restoreTeamMember(tx, actor, userId, { role }), { roles: ["ADMIN"] });
+    await actionTx(async (tx, actor) => {
+      await restoreTeamMember(tx, actor, userId, { role });
+      await setSignIn(userId, true, { password, role });
+    }, { roles: ["ADMIN"] });
     revalidatePath("/admin/users");
     return "Added back to the team. Share the temporary password securely.";
   });

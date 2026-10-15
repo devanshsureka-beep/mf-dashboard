@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useRef } from "react";
+import { useActionState, useEffect, useRef } from "react";
 import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
 import type { ActionResult } from "@/lib/actions";
@@ -43,7 +43,8 @@ export function ActionForm({ action, children, className, resetOnSuccess = false
   className?: string;
   resetOnSuccess?: boolean;
 }) {
-  const safe = useMemo(() => safeAction(action), [action]);
+  // A new wrapper per render is fine: React always calls the latest action passed in.
+  const safe = safeAction(action);
   const [state, formAction] = useActionState(safe, null);
   const ref = useRef<HTMLFormElement>(null);
   useEffect(() => {

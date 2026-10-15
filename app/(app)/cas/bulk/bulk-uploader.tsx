@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { transportError } from "@/lib/safe-action";
 import { stageLargeFiles } from "@/lib/stage-files";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -50,8 +51,8 @@ export function BulkUploader() {
       try {
         await stageLargeFiles(fd);
         res = await processCasFileAction(fd);
-      } catch {
-        res = { ok: false, fileName: list[i].name, outcome: "ERROR", message: "Upload failed (network or file too large)." };
+      } catch (e) {
+        res = { ok: false, fileName: list[i].name, outcome: "ERROR", message: transportError(e) };
       }
       setRows((r) => r.map((x, j) => (j === i ? res : x)));
     }

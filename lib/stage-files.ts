@@ -19,7 +19,8 @@ export async function stageLargeFiles(fd: FormData): Promise<void> {
   const files = [...fd.entries()].filter((e): e is [string, File] => e[1] instanceof File && e[1].size > 0);
   if (files.reduce((s, [, f]) => s + f.size, 0) <= DIRECT_LIMIT) return;
   for (const [name, f] of files) {
-    if (fd.getAll(name).length > 1) continue;
+    // Several files under one field cannot be staged one by one; say so instead of hitting the 4.5 MB wall.
+    if (fd.getAll(name).length > 1) throw new StageError("These files are too large to send together (over 3.5 MB). Upload them one at a time.");
     const s = await stageUploadAction(f.size);
     if (!s.ok) throw new StageError(s.error);
     const r = await fetch(s.url, { method: "PUT", body: f, headers: { "content-type": f.type || "application/octet-stream" } });

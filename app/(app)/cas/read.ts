@@ -29,7 +29,7 @@ export async function readClientCas(args: {
     phones,
     fileNameParts: true,
   });
-  const { parsed, passwordProtected } = await readCasAnyPdf(args.bytes, candidates);
+  const { parsed, passwordProtected } = await readCasAnyPdf(args.bytes, candidates, { timeoutMs: 220_000 }); // leaves time to save within 300 s
   const pan = parsed.investor.pan?.toUpperCase() ?? null;
   if (args.clientPan && pan && pan !== args.clientPan.toUpperCase()) {
     throw new AppError(`This CAS is for PAN ${maskPan(pan)} (${parsed.investor.name ?? "another investor"}), not this client.`);
