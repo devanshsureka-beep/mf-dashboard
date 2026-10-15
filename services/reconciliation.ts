@@ -11,6 +11,9 @@ import {
 import { matchTransactions, istDate, type MatchCall, type MatchTxn, type SwitchTarget, type TxnProposal } from "@/lib/domain/txn-matching";
 import type { Channel, ReconciliationMatchRow, ReconciliationRunRow } from "@/types/domain";
 import { effectiveTxnType } from "@/lib/parsers/cas";
+import { fundKey, instalments, type SipTxn } from "@/lib/domain/sip-status";
+import { closeAdvice } from "./advice";
+import { voidExecution } from "./executions";
 import { issueAdvice } from "./advice";
 
 export const TXN_ENGINE_VERSION = "v2-transactions";
@@ -238,6 +241,30 @@ async function loadSnapshotTxns(tx: Tx, snapshotId: string, afterDate: string, n
   return { txns, folioOf: new Map(txnRows.map((t) => [t.id, t.folio_number])) };
 }
 
+/**
+ * Many SIPs (placed through brokers and platforms) show in the CAS only as a
+ * plain "Purchase" repeating every month. A purchase in such a run (the same
+ * rule as the SIP tab: 3+ of the same amount about a month apart, over the
+ * client's whole history) is a SIP instalment, not a trade to decide: unless a
+ * Buy call on that fund is open, which it may be executing.
+ */
+async function markRecurringPurchases(tx: Tx, clientId: string, txns: MatchTxn[], calls: MatchCall[]): Promise<MatchTxn[]> {
+  const buys = txns.filter((t) => t.type === "PURCHASE" && (t.amount ?? 0) > 0);
+  if (!buys.length) return txns;
+  const openBuy = new Set(calls.filter((c) => c.action === "BUY" && c.status !== "EXECUTED").flatMap((c) => [c.securityId, c.isin].filter(Boolean) as string[]));
+  const history = await tx<(SipTxn & { id: string })[]>`
+    select t.id, t.transaction_date::text as date, public.txn_effective_type(t.transaction_type, t.description, t.units) as type,
+           coalesce(t.isin, sm.isin) as isin, t.scheme_name, t.folio_number, t.amount::float8 as amount, t.description
+    from public.portfolio_transactions t left join public.security_master sm on sm.id = t.security_id
+    where t.client_id = ${clientId} and t.transaction_type in ('PURCHASE', 'SIP') and coalesce(t.units, 0) <> 0`;
+  const byFund = new Map<string, (SipTxn & { id: string })[]>();
+  for (const h of history) byFund.set(fundKey(h), [...(byFund.get(fundKey(h)) ?? []), h]);
+  const inRun = new Set<string>();
+  for (const series of byFund.values()) for (const i of instalments(series)) inRun.add((i as SipTxn & { id: string }).id);
+  return txns.map((t) => (t.type === "PURCHASE" && inRun.has(t.id) && !openBuy.has(t.securityId ?? "") && !openBuy.has(t.isin ?? "")
+    ? { ...t, type: "SIP" } : t));
+}
+
 const needsPerson = (p: TxnProposal) => (p.kind === "ADVICE_MATCH" && !p.autoConfirm) || p.kind === "UNADVISED";
 
 /** Writes the proposals into a run; clear matches are confirmed right away. */
@@ -280,7 +307,9 @@ async function runTransactionReconciliation(
   },
 ): Promise<{ runId: string; existing: boolean }> {
   const { calls, switchTargets } = await loadMatchCalls(tx, args.clientId);
-  const { txns, folioOf } = await loadSnapshotTxns(tx, args.current.id, args.previous.snapshot_date);
+  const loaded = await loadSnapshotTxns(tx, args.current.id, args.previous.snapshot_date);
+  const folioOf = loaded.folioOf;
+  const txns = await markRecurringPurchases(tx, args.clientId, loaded.txns, calls);
 
   const proposals = matchTransactions(calls, txns, switchTargets);
   const sipItemsCompleted = await completeSipItemsFromTransactions(tx, args.clientId, proposals);
@@ -333,7 +362,10 @@ export async function recheckRun(tx: Tx, actor: Actor | null, runId: string): Pr
       and classification in ('UNADVISED', 'SIP_INSTALMENT') and status in ('UNEXPLAINED', 'SUGGESTED')`;
 
   const { calls, switchTargets } = await loadMatchCalls(tx, run.client_id);
-  const { txns, folioOf } = await loadSnapshotTxns(tx, run.current_snapshot_id, run.previous_date, runId);
+  await settleSipInstalments(tx, actor, { runId });
+  const loaded = await loadSnapshotTxns(tx, run.current_snapshot_id, run.previous_date, runId);
+  const folioOf = loaded.folioOf;
+  const txns = await markRecurringPurchases(tx, run.client_id, loaded.txns, calls);
   const proposals = matchTransactions(calls, txns, switchTargets).filter((p) => p.kind !== "SIP_CANCELLED");
   if (!proposals.length) {
     if (closed.count) await closeRunIfDone(tx, runId);
@@ -598,6 +630,9 @@ export async function recordAdvisedOffline(
     where m.id = ${matchId} for update of m`)[0];
   if (!m) throw new AppError("Match not found.", "NOT_FOUND");
   if (m.run_status === "CANCELLED") throw new AppError("This reconciliation run was cancelled.");
+  const sipWorded = m.cas_transaction_id ? (await tx<{ t: string }[]>`
+    select public.txn_effective_type(transaction_type, description, units) as t from public.portfolio_transactions where id = ${m.cas_transaction_id}`)[0]?.t === "SIP" : false;
+  if (sipWorded) throw new AppError("This is a SIP instalment (the CAS words it as SIP / systematic), not a lump-sum trade: it is not recorded as a call.");
   if (m.classification !== "UNADVISED" || !["UNEXPLAINED", "SUGGESTED"].includes(m.status)) {
     throw new AppError("Only an unadvised CAS trade can be recorded as advised.");
   }
@@ -657,4 +692,85 @@ export async function recordAdvisedOffline(
   // issueAdvice put the call on the fund's Buy / Sell line (adding or converting one when needed).
   const planItemId = (await tx<{ plan_item_id: string | null }[]>`select plan_item_id from public.advice_items where id = ${adviceItemId}`)[0]?.plan_item_id ?? null;
   return { adviceItemId, executionId: res.executionId, planItemId };
+}
+
+// -----------------------------------------------------------------------------
+// SIP instalments read as trades by an older reader
+// -----------------------------------------------------------------------------
+export const SIP_NOT_A_TRADE = "SIP instalment: the CAS words it as a systematic / SIP purchase, so it is not a trade to decide";
+const OFFLINE_CALL_NOTE = "Recorded after the trade";
+
+/** The CAS row is a SIP instalment (by its wording, or a monthly run of plain purchases)? */
+export async function isSipInstalmentRow(tx: Tx, matchId: string): Promise<boolean> {
+  const m = (await tx<{ client_id: string; t: MatchTxn | null }[]>`
+    select m.client_id, case when t.id is null then null else json_build_object(
+      'id', t.id, 'securityId', t.security_id, 'isin', t.isin, 'schemeName', t.scheme_name, 'date', t.transaction_date::text,
+      'type', public.txn_effective_type(t.transaction_type, t.description, t.units), 'description', t.description,
+      'amount', t.amount::float8, 'units', t.units::float8, 'nav', t.nav::float8, 'folio', t.folio_number) end as t
+    from public.reconciliation_matches m left join public.portfolio_transactions t on t.id = m.cas_transaction_id
+    where m.id = ${matchId}`)[0];
+  if (!m?.t) return false;
+  if (m.t.type === "SIP") return true;
+  const { calls } = await loadMatchCalls(tx, m.client_id);
+  return (await markRecurringPurchases(tx, m.client_id, [m.t], calls))[0].type === "SIP";
+}
+
+/**
+ * Rows of SIP instalments that an older reader left as unadvised trades become
+ * SIP instalments again. Where someone recorded one as "We advised it", the
+ * call and its execution made from it are cancelled (with the reason in the
+ * audit log): a SIP instalment is not a lump-sum buy call. Calls given in the
+ * dashboard are never touched.
+ */
+export async function settleSipInstalments(
+  tx: Tx, actor: Actor | null, scope: { runId?: string; clientId?: string } = {},
+): Promise<{ reclassified: number; callsCancelled: number }> {
+  const rows = await tx<{ id: string; run_id: string; status: string; reviewed: boolean; resolution_note: string | null; cas_transaction_id: string }[]>`
+    select m.id, m.run_id, m.status, m.reviewed_at is not null as reviewed, m.resolution_note, m.cas_transaction_id
+    from public.reconciliation_matches m
+    join public.reconciliation_runs r on r.id = m.run_id and r.status <> 'CANCELLED'
+    join public.portfolio_transactions t on t.id = m.cas_transaction_id
+    where m.classification = 'UNADVISED'
+      and public.txn_effective_type(t.transaction_type, t.description, t.units) = 'SIP'
+      and (${scope.runId ?? null}::uuid is null or m.run_id = ${scope.runId ?? null})
+      and (${scope.clientId ?? null}::uuid is null or m.client_id = ${scope.clientId ?? null})
+      and ((m.status in ('UNEXPLAINED', 'SUGGESTED') and m.reviewed_at is null)
+           or (m.status = 'REJECTED' and m.resolution_note like ${`${RECORDED_AS_ADVISED}%`}))`;
+  let reclassified = 0;
+  let callsCancelled = 0;
+  for (const r of rows) {
+    if (r.status === "REJECTED") {
+      // The call recorded from this instalment ("We advised it"), and the match that confirmed it.
+      const made = await tx<{ match_id: string; advice_item_id: string }[]>`
+        select am.id as match_id, am.advice_item_id
+        from public.reconciliation_matches am
+        join public.advice_items ai on ai.id = am.advice_item_id
+        join public.advice_batches b on b.id = ai.advice_batch_id
+        where am.run_id = ${r.run_id} and am.cas_transaction_id = ${r.cas_transaction_id} and am.classification = 'ADVICE_MATCH'
+          and am.status in ('CONFIRMED', 'PARTIAL') and b.notes like ${`${OFFLINE_CALL_NOTE}%`}`;
+      for (const a of made) {
+        const execs = await tx<{ id: string }[]>`
+          select id from public.executions where advice_item_id = ${a.advice_item_id} and status not in ('REJECTED', 'CANCELLED')`;
+        for (const e of execs) await voidExecution(tx, e.id, "CANCELLED", SIP_NOT_A_TRADE);
+        const open = (await tx<{ open: boolean }[]>`select is_open as open from public.v_advice_items where id = ${a.advice_item_id}`)[0]?.open;
+        if (open) await closeAdvice(tx, a.advice_item_id, "CANCELLED", SIP_NOT_A_TRADE);
+        // A resolved match stays resolved (database rule); its call and execution are cancelled above.
+        await setAuditReason(tx, SIP_NOT_A_TRADE);
+        await tx`
+          update public.reconciliation_matches set resolution_note = coalesce(resolution_note || E'\n', '') || ${"Undone: " + SIP_NOT_A_TRADE}
+          where id = ${a.match_id}`;
+        callsCancelled++;
+      }
+    }
+    await setAuditReason(tx, SIP_NOT_A_TRADE);
+    await tx`
+      update public.reconciliation_matches set classification = 'SIP_INSTALMENT',
+        status = case when status = 'SUGGESTED' then 'UNEXPLAINED' else status end,
+        reviewed_at = coalesce(reviewed_at, now()), reviewed_by = coalesce(reviewed_by, ${actor?.id ?? null}),
+        system_note = ${SIP_NOT_A_TRADE}, resolution_note = case when resolution_note is null then null else resolution_note || E'\n' || ${"Undone: " + SIP_NOT_A_TRADE} end
+      where id = ${r.id}`;
+    reclassified++;
+    await closeRunIfDone(tx, r.run_id);
+  }
+  return { reclassified, callsCancelled };
 }

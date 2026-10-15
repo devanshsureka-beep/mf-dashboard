@@ -56,7 +56,8 @@ const isExplicit = (t: SipTxn) => t.type === "SIP" || EXPLICIT.test(t.descriptio
 const daysBetween = (a: string, b: string) => Math.round((Date.parse(b) - Date.parse(a)) / 86_400_000);
 /** CAS shows instalments net of stamp duty (₹9,999.50 for ₹10,000): round to ₹50. */
 export const roundSip = (amount: number) => Math.round(amount / 50) * 50;
-const norm = (f: string | null) => (f ?? "").replace(/[^0-9a-z]/gi, "").toLowerCase();
+/** One folio however a CAS prints it: "31048558752", "31048558752/0", "9722760 / 08" (the part after "/" is a check digit). */
+const norm = (f: string | null) => (f ?? "").split("/")[0].replace(/[^0-9a-z]/gi, "").toLowerCase();
 export const fundKey = (t: { isin: string | null; scheme_name: string; folio_number: string | null }) =>
   `${t.isin ?? t.scheme_name.toLowerCase()}|${norm(t.folio_number)}`;
 

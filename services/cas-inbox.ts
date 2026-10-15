@@ -117,7 +117,8 @@ export async function getInboxRunDetails(tx: Tx, runIds: string[]): Promise<Reco
     where r.id = any(${runIds}::uuid[])`;
   const rows = await tx<{ id: string; run_id: string; scheme_name: string; classification: string; status: string; reviewed: boolean; action: string | null;
     change_type: string; amount: number; date: string | null; single_trade: boolean }[]>`
-    select m.id, m.run_id, m.scheme_name, m.classification, m.status, m.reviewed_at is not null as reviewed, a.action, m.change_type,
+    select m.id, m.run_id, m.scheme_name, m.classification,
+           case when a.status = 'CANCELLED' then 'REJECTED' else m.status end as status, m.reviewed_at is not null as reviewed, a.action, m.change_type,
            abs(coalesce(m.transaction_amount, m.approx_amount))::float8 as amount, m.transaction_date::text as date,
            (m.cas_transaction_id is not null and m.security_id is not null and m.transaction_date is not null and coalesce(m.transaction_amount, 0) > 0) as single_trade
     from public.reconciliation_matches m left join public.advice_items a on a.id = m.advice_item_id

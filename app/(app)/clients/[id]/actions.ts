@@ -1,5 +1,7 @@
 "use server";
 
+import { settleSipInstalments } from "@/services/reconciliation";
+
 import { revalidatePath } from "next/cache";
 import { optStr, reqStr, runAction, type ActionResult } from "@/lib/actions";
 import { AppError } from "@/lib/errors";
@@ -64,7 +66,7 @@ export async function recheckSipAction(clientId: string, _p: ActionResult | null
 /** ADMIN: re-check SIP lines for every client with an active plan. */
 export async function recheckAllSipsAction(_p: ActionResult | null): Promise<ActionResult> {
   return runAction("recheckAllSips", async () => {
-    const r = await actionTx(async (tx) => {
+    const r = await actionTx(async (tx, actor) => {
       const clients = await tx<{ client_id: string }[]>`
         select distinct s.client_id from public.sip_plan_items s
         join public.advisory_plans p on p.id = s.plan_id and p.status = 'ACTIVE'
@@ -72,9 +74,12 @@ export async function recheckAllSipsAction(_p: ActionResult | null): Promise<Act
       let lines = 0;
       // Each client on its own savepoint: one failing client does not undo the others.
       for (const c of clients) lines += await syncSipLinesQuietly(tx, c.client_id);
-      return { clients: clients.length, lines };
+      // SIP instalments an older reader left as trades (or that were recorded as calls) become instalments again.
+      const settled = await settleSipInstalments(tx, actor);
+      return { clients: clients.length, lines, settled };
     }, { roles: ["ADMIN"] });
     revalidatePath("/clients");
-    return `Checked ${r.clients} client(s) with open SIP lines: ${r.lines} line(s) updated from the CAS.`;
+    revalidatePath("/reconciliation");
+    return `Checked ${r.clients} client(s) with open SIP lines: ${r.lines} line(s) updated from the CAS. ${r.settled.reclassified} SIP instalment(s) no longer shown as trades${r.settled.callsCancelled ? `, ${r.settled.callsCancelled} call(s) recorded from them cancelled` : ""}.`;
   });
 }

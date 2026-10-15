@@ -28,6 +28,7 @@ function Point({ p }: { p: SipPoint | null }) {
 
 export function SipStatusCard({ sip }: { sip: SipStatusView }) {
   if (!sip.latestCasDate || (!sip.funds.length && !sip.plan.length)) return null;
+  const continuing = (f: { isin: string | null }) => sip.continuing.find((c) => f.isin && c.isin === f.isin);
   const running = sip.funds.filter((f) => f.now.state === "ACTIVE").reduce((s, f) => s + (f.now.amount ?? 0), 0);
   return (
     <Card>
@@ -56,7 +57,7 @@ export function SipStatusCard({ sip }: { sip: SipStatusView }) {
                   <TD><Point p={f.before} /></TD>
                   <TD><Point p={f.now} /></TD>
                   <TD><Badge tone={c.tone}>{c.label}</Badge></TD>
-                  <TD>{plan ? <PlanBadge p={plan} /> : <span className="text-xs text-muted">—</span>}</TD>
+                  <TD>{plan ? <PlanBadge p={plan} /> : continuing(f) ? <ContinueBadge running={f.now.state === "ACTIVE"} amount={continuing(f)!.amount} /> : <span className="text-xs text-muted">—</span>}</TD>
                 </TR>
               );
             })}
@@ -82,4 +83,9 @@ export function SipStatusCard({ sip }: { sip: SipStatusView }) {
 function PlanBadge({ p }: { p: SipStatusView["plan"][number] }) {
   const what = p.action === "STOP" ? "Stop" : p.action === "START" ? `Start ${formatINR(p.new_amount)}` : `Change to ${formatINR(p.new_amount)}`;
   return <Badge tone={p.met ? "success" : "pending"}>{what} · {p.met ? "done" : "pending"}</Badge>;
+}
+
+/** The report keeps this SIP going: is the CAS still showing it? */
+function ContinueBadge({ running, amount }: { running: boolean; amount: number | null }) {
+  return <Badge tone={running ? "success" : "danger"}>Continue{amount ? ` ${formatINR(amount)}` : ""} · {running ? "running" : "not running"}</Badge>;
 }

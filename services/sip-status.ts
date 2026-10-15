@@ -24,6 +24,8 @@ export interface SipStatusView {
   previousCasDate: string | null;
   funds: SipFundStatus[];
   plan: PlanSipCheck[];
+  /** Funds whose SIP the report says to continue (a Keep line: "SIP ₹15,000 continues"), by ISIN. */
+  continuing: { isin: string; scheme_name: string; amount: number | null }[];
 }
 
 export async function getSipStatus(tx: Tx, clientId: string): Promise<SipStatusView> {
@@ -33,7 +35,7 @@ export async function getSipStatus(tx: Tx, clientId: string): Promise<SipStatusV
     group by snapshot_date order by snapshot_date desc limit 2`;
   const latest = snaps[0]?.snapshot_date ?? null;
   const previous = snaps[1]?.snapshot_date ?? null;
-  if (!latest) return { latestCasDate: null, previousCasDate: null, funds: [], plan: [] };
+  if (!latest) return { latestCasDate: null, previousCasDate: null, funds: [], plan: [], continuing: [] };
 
   const txns = await tx<SipTxn[]>`
     select t.transaction_date::text as date, public.txn_effective_type(t.transaction_type, t.description, t.units) as type, coalesce(t.isin, sm.isin) as isin,
@@ -60,7 +62,19 @@ export async function getSipStatus(tx: Tx, clientId: string): Promise<SipStatusV
     const now = matches.find((m) => m.now.state === "ACTIVE")?.now ?? matches[0]?.now ?? null;
     return { ...p, met: planSipMet(p, now), now };
   });
-  return { latestCasDate: latest, previousCasDate: previous, funds, plan };
+  const keepNotes = await tx<{ isin: string; scheme_name: string; reason: string }[]>`
+    select sm.isin, i.scheme_name, i.reason
+    from public.advisory_plan_items i
+    join public.advisory_plans p on p.id = i.plan_id and p.status = 'ACTIVE'
+    join public.security_master sm on sm.id = i.security_id
+    where i.client_id = ${clientId} and i.status <> 'CANCELLED' and sm.isin is not null
+      and i.reason ~* '(sip|systematic)[^;]{0,40}(continu|running|as is)|continu[^;]{0,20}(sip|systematic)'`;
+  const continuing = keepNotes.map((k) => {
+    const m = /(?:sip|systematic)[^0-9₹]{0,20}(?:₹|rs\.?\s*)?([\d,]+(?:\.\d+)?)/i.exec(k.reason);
+    const amount = m ? Number(m[1].replace(/,/g, "")) : null;
+    return { isin: k.isin, scheme_name: k.scheme_name, amount: amount && amount >= 100 ? amount : null };
+  });
+  return { latestCasDate: latest, previousCasDate: previous, funds, plan, continuing };
 }
 
 /**
