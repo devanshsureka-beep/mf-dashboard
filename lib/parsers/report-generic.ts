@@ -93,6 +93,7 @@ export function parseAdvisoryReportGeneric(pages: PdfPage[]): AdvisoryReportPars
   const sells: ReportSellRow[] = [];
   const buys: ReportBuyRow[] = [];
   const sips: ReportSipRow[] = [];
+  const sipsUnchanged: NonNullable<AdvisoryReportParse["sipsUnchanged"]> = [];
   const holds: AdvisoryReportParse["holds"] = [];
   const reviewSells: { fund: string; folio: string | null; folioCount: number | null; planType: "DIRECT" | "REGULAR" | null; value: number; verdict: string; action: "SELL" | "SWITCH" }[] = [];
   const mentioned: AdvisoryReportParse["mentioned"] = [];
@@ -129,7 +130,11 @@ export function parseAdvisoryReportGeneric(pages: PdfPage[]): AdvisoryReportPars
         const starred = /\*/.test(r.cells[cur] ?? "");
         if (!starred) curVals.push(current);
         nextVals.push(next);
-        if (current === next) continue; // unchanged SIP
+        if (current === next) {
+          // Unchanged SIP: nothing to do, but the desk sees it continues.
+          if (current > 0) sipsUnchanged.push({ fund: labelled(f), planType: f.planType, amount: current });
+          continue;
+        }
         const change: ReportSipRow["change"] = current === 0 ? "START" : next === 0 ? "STOP" : "CHANGE";
         const note = Object.entries(r.cells).filter(([k]) => ![t.columns[0].label, cur, nxt].includes(k)).map(([, v]) => v).join(" · ");
         sips.push({ fund: labelled(f), planType: f.planType, current: current || null, next: next || null, change, changeText: note.slice(0, 200) || change, frequencyNote: null, excludedFromTotal: starred });
@@ -272,6 +277,7 @@ export function parseAdvisoryReportGeneric(pages: PdfPage[]): AdvisoryReportPars
     sips,
     sipTotals: { current: sipCurrent, next: sipNext },
     sipRouting: [],
+    sipsUnchanged,
     review: [],
     holds,
     mentioned,

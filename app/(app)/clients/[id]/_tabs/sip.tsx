@@ -3,7 +3,7 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { recheckSipAction } from "../actions";
 import { ActionForm, SubmitButton } from "@/components/app/action-form";
 import { Money } from "@/components/app/money";
-import { SipStatusCard } from "@/components/app/sip-status-card";
+import { SipStatusCard, UnchangedSips } from "@/components/app/sip-status-card";
 import { withUserTx, type Actor } from "@/lib/db/tx";
 import { formatDate, formatINRCompact, humanize } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -133,6 +133,7 @@ export async function SipTab({ client: c, actor }: { client: ClientSummary; acto
 
       <details className="rounded-xl border border-border bg-surface">
         <summary className="cursor-pointer select-none px-4 py-2.5 text-sm font-semibold">SIPs seen in CAS · every instalment{d.recent.length ? ` · ${d.recent.length}` : ""}</summary>
+        {d.seen.continuing.length ? <div className="border-t border-border p-3"><UnchangedSips sip={d.seen} /></div> : null}
         {d.seen.latestCasDate ? <div className="border-t border-border p-3"><SipStatusCard sip={d.seen} /></div> : null}
         {d.recent.length ? (
           <div className="max-h-96 overflow-y-auto border-t border-border">

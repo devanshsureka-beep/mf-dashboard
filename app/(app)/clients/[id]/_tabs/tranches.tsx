@@ -3,7 +3,9 @@ import { EmptyState } from "@/components/app/page-header";
 import { withUserTx, type Actor } from "@/lib/db/tx";
 import { formatDate, formatINRCompact, formatUnits, humanize } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { getTranches, type LedgerRow, type Tranche } from "@/services/client-desk";
+import { getTranches, type LedgerRow, type SipLedgerRow, type Tranche } from "@/services/client-desk";
+import { getSipStatus } from "@/services/sip-status";
+import { UnchangedSips } from "@/components/app/sip-status-card";
 import type { ClientSummary } from "@/types/domain";
 import { CasTab } from "./cas";
 import { PlanTab } from "./plan";
@@ -42,13 +44,22 @@ function TrancheCard({ t, c, clientId, canAdvise, sipLeft }: { t: Tranche; c: Cl
           <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-800">Closed by CAS {formatDate(t.to)}</span>
         )}
       </div>
-      <div className="mt-2.5 grid grid-cols-2 gap-2 md:grid-cols-4">
+      <div className="mt-2.5 text-[10.5px] font-semibold uppercase tracking-wide text-muted">Lump sum · Buy &amp; Sell</div>
+      <div className="mt-1 grid grid-cols-2 gap-2 md:grid-cols-4">
         <Box label={`Advised · ${t.calls} call(s)`} tone="text-blue-700">{sides(t.advisedSell, t.advisedBuy)}</Box>
         <Box label="Done (from CAS)" tone="text-emerald-700">{sides(t.executedSell, t.executedBuy)}</Box>
         <Box label="CAS after tranche">{t.to ? `${formatDate(t.to)} · ${L(t.casValue ?? 0)}` : "Awaited"}</Box>
         <Box label="Unadvised Trades" tone={t.unadvisedOpen ? "text-red-700" : undefined}>
           {t.to ? (t.unadvisedOpen ? `${t.unadvisedOpen} to review` : t.unadvisedTotal ? `${t.unadvisedTotal} reviewed` : "None") : "—"}
         </Box>
+      </div>
+      <div className="mt-2.5 text-[10.5px] font-semibold uppercase tracking-wide text-violet-700">SIP · kept apart from Buy &amp; Sell</div>
+      <div className="mt-1 grid grid-cols-2 gap-2 md:grid-cols-3">
+        <Box label={`SIP advised · ${t.sip.lines} line(s)`} tone="text-violet-700">
+          {t.sip.lines ? [t.sip.starts ? `${t.sip.starts} start` : null, t.sip.changes ? `${t.sip.changes} change` : null, t.sip.stops ? `${t.sip.stops} stop` : null].filter(Boolean).join(" · ") + (t.sip.monthly > 0.5 ? ` · ${L(t.sip.monthly)}/mo` : "") : "None"}
+        </Box>
+        <Box label="SIP done (from CAS)" tone="text-emerald-700">{t.sip.lines ? `${t.sip.done} of ${t.sip.lines}` : "—"}</Box>
+        <Box label="SIP instalments in this CAS">{t.to ? (t.sip.instalments ? `${L(t.sip.invested)} · ${t.sip.instalments} instalment(s)` : "None") : "Awaited"}</Box>
       </div>
       {t.open ? (
         <p className="mt-2.5 text-[12.5px] text-slate-700">
@@ -105,8 +116,49 @@ function Ledger({ rows }: { rows: LedgerRow[] }) {
   );
 }
 
+const SIP_STATUS: Record<string, string> = { PLANNED: "To advise", ADVISED: "Advised · waiting for the CAS", COMPLETED: "Done (from CAS)" };
+
+function SipLedger({ rows }: { rows: SipLedgerRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="No SIP lines in the plan" /></div>;
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[880px] text-[13px]">
+        <thead className="bg-slate-50 text-right text-[10.5px] font-semibold uppercase tracking-wide text-muted">
+          <tr>
+            <th className="px-4 py-2 text-left">Tranche</th><th className="px-2 py-2 text-left">Advised on</th><th className="px-2 py-2 text-left">SIP</th>
+            <th className="px-2 py-2">₹ / month</th><th className="px-2 py-2">Invested since</th><th className="py-2 pl-4 pr-4 text-left">Status</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border">
+          {rows.map((r) => (
+            <tr key={r.id} className="text-right align-top">
+              <td className="whitespace-nowrap px-4 py-2 text-left text-muted">Tranche {r.tranche}</td>
+              <td className="whitespace-nowrap px-2 py-2 text-left">{r.advisedOn ? formatDate(r.advisedOn) : "—"}</td>
+              <td className="px-2 py-2 text-left">
+                <span className={cn("mr-1.5 rounded-full px-2 py-px text-[11px] font-semibold", r.action === "STOP" ? "bg-red-50 text-red-800" : "bg-violet-50 text-violet-800")}>
+                  {r.action === "START" ? "Start SIP" : r.action === "STOP" ? "Stop SIP" : "Change SIP"}
+                </span>
+                <span className="font-medium">{r.fund}</span>
+              </td>
+              <td className="px-2 py-2 num">
+                {r.action === "STOP" ? <span className="text-muted line-through">{r.oldAmount ? L(r.oldAmount) : "—"}</span>
+                  : r.action === "CHANGE" ? <>{r.oldAmount ? `${L(r.oldAmount)} → ` : ""}<b>{L(r.newAmount ?? 0)}</b></>
+                  : <b className="text-violet-700">{L(r.newAmount ?? 0)}</b>}
+              </td>
+              <td className="px-2 py-2 num">
+                {r.action === "STOP" ? "—" : r.invested > 0.5 ? <><span className="font-semibold text-emerald-700">{L(r.invested)}</span><div className="text-[11px] text-muted">{r.instalments} instalment(s){r.lastInstalment ? ` · last ${formatDate(r.lastInstalment)}` : ""}</div></> : "—"}
+              </td>
+              <td className="py-2 pl-4 pr-4 text-left text-xs">{SIP_STATUS[r.status] ?? humanize(r.status)}{r.completedOn ? <span className="text-muted"> · {formatDate(r.completedOn)}</span> : null}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export async function TranchesTab({ client: c, actor, sipLeft, side }: { client: ClientSummary; actor: Actor; sipLeft: number; side: string | null }) {
-  const { tranches, ledger, baseline } = await withUserTx(actor, (tx) => getTranches(tx, c.client_id));
+  const { tranches, ledger, sipLedger, baseline, sipSeen } = await withUserTx(actor, async (tx) => ({ ...(await getTranches(tx, c.client_id)), sipSeen: await getSipStatus(tx, c.client_id) }));
   const canAdvise = actor.role !== "OPERATIONS";
   const rows = ledger.filter((r) => !side || (side === "PENDING" ? r.pending > 0.5 : side === "BUY" ? r.action === "BUY" : r.action !== "BUY"));
   const chip = (v: string | null, label: string) => (
@@ -115,7 +167,7 @@ export async function TranchesTab({ client: c, actor, sipLeft, side }: { client:
   );
   return (
     <div className="space-y-3">
-      <p className="rounded-lg bg-brand-50 px-3 py-2 text-xs text-brand-700">Each tranche: calls advised → the client acts → their next CAS shows what was done, and Done fills in by itself. Nothing to record by hand. Unclear matches go to the CAS inbox for one click to confirm.</p>
+      <p className="rounded-lg bg-brand-50 px-3 py-2 text-xs text-brand-700">Each tranche: calls advised → the client acts → their next CAS shows what was done, and Done fills in by itself. Nothing to record by hand. Lump-sum Buy &amp; Sell and SIPs are counted apart: a SIP instalment is never a Buy. Unclear matches go to the CAS inbox for one click to confirm.</p>
       {tranches.map((t) => <TrancheCard key={t.number} t={t} c={c} clientId={c.client_id} canAdvise={canAdvise} sipLeft={sipLeft} />)}
       <article className="rounded-xl border border-border bg-surface p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -135,12 +187,21 @@ export async function TranchesTab({ client: c, actor, sipLeft, side }: { client:
 
       <section id="ledger" className="scroll-mt-14 overflow-hidden rounded-xl border border-border bg-surface">
         <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
-          <h3 className="text-sm font-semibold">All calls · {ledger.length}</h3>
+          <h3 className="text-sm font-semibold">Lump-sum calls (Buy &amp; Sell) · {ledger.length}</h3>
           <div className="flex flex-wrap gap-1.5 text-xs">
             {chip(null, "All")}{chip("SELL", "Sell")}{chip("BUY", "Buy")}{chip("PENDING", "Waiting only")}
           </div>
         </div>
         <Ledger rows={rows} />
+      </section>
+
+      <section id="sip-lines" className="scroll-mt-14 overflow-hidden rounded-xl border border-violet-200 bg-surface">
+        <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
+          <h3 className="text-sm font-semibold">SIP lines · {sipLedger.length}</h3>
+          <span className="text-xs text-muted">Monthly SIPs, shown apart from lump-sum calls; done and invested come from each CAS.</span>
+        </div>
+        <SipLedger rows={sipLedger} />
+        {sipSeen.continuing.length ? <UnchangedSips sip={sipSeen} className="border-t border-border px-4 py-3" /> : null}
       </section>
 
       <details className="rounded-xl border border-border bg-surface">

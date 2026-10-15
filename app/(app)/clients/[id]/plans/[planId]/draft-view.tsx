@@ -90,6 +90,8 @@ export function DraftView({ c, plan, items, sips, questions, securities, heldIds
   const sipChanges = liveSips.filter((s) => s.action === "CHANGE").length;
   const sipMonthly = liveSips.reduce((t, s) => t + (s.action === "STOP" ? 0 : Number(s.new_amount ?? 0)), 0);
   const additional = plan.plan_kind === "ADDITIONAL" && Boolean(c.active_plan_id);
+  // SIPs the report keeps as they are (kept with the plan's import, never plan lines).
+  const unchanged = ((plan.extraction_payload as { unchanged_sips?: { scheme_name: string; amount: number }[] } | null)?.unchanged_sips ?? []);
   const replacing = Boolean(c.active_plan_id && c.active_plan_id !== planId && plan.plan_kind !== "ADDITIONAL");
   const editor = (i: PlanItemProgress) => canAdvise ? <ItemEditor i={i} clientId={clientId} planId={planId} isActive={false} securities={securities} heldIds={heldIds} label="Edit" alignRight /> : null;
 
@@ -179,7 +181,7 @@ export function DraftView({ c, plan, items, sips, questions, securities, heldIds
           </Group>
 
           <Group title="SIP" tone="text-violet-700"
-            count={[sipStarts ? `${sipStarts} start` : null, sipChanges ? `${sipChanges} change` : null, sipStops ? `${sipStops} stop` : null].filter(Boolean).join(", ") || "no SIP lines"}
+            count={[sipStarts ? `${sipStarts} start` : null, sipChanges ? `${sipChanges} change` : null, sipStops ? `${sipStops} stop` : null, unchanged.length ? `${unchanged.length} unchanged` : null].filter(Boolean).join(", ") || "no SIP lines"}
             total={<><Money value={sipMonthly} full /> / month</>}
             open={liveSips.some((s) => s.needs_review)} attention={liveSips.filter((s) => s.needs_review).length ? `${liveSips.filter((s) => s.needs_review).length} to check` : null}>
             {sips.length ? (
@@ -218,6 +220,14 @@ export function DraftView({ c, plan, items, sips, questions, securities, heldIds
                 ) : undefined}
               />
             ) : <p className="px-4 py-3 text-sm text-muted">No SIP to start, change or stop.</p>}
+            {unchanged.length ? (
+              <div className="border-t border-border px-4 py-2.5 text-[13px]">
+                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-violet-700">Unchanged · as in the report (no call needed)</div>
+                <ul className="space-y-0.5">
+                  {unchanged.map((u, i) => <li key={i}><span className="mr-1.5 rounded-full bg-violet-50 px-2 py-px text-[11px] font-semibold text-violet-800">Continue</span>{u.scheme_name} · <Money value={u.amount} full />/month</li>)}
+                </ul>
+              </div>
+            ) : null}
           </Group>
 
           <Group title="Keep" tone="text-slate-700" count={`${keeps.length} fund${keeps.length === 1 ? "" : "s"}`} total={<><Money value={sum(keeps, (i) => i.current_amount)} /> held</>}

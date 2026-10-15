@@ -89,3 +89,41 @@ function PlanBadge({ p }: { p: SipStatusView["plan"][number] }) {
 function ContinueBadge({ running, amount }: { running: boolean; amount: number | null }) {
   return <Badge tone={running ? "success" : "danger"}>Continue{amount ? ` ${formatINR(amount)}` : ""} · {running ? "running" : "not running"}</Badge>;
 }
+
+/** SIPs the report keeps as they are: does the latest CAS still show each one running? */
+export function UnchangedSips({ sip, className }: { sip: SipStatusView; className?: string }) {
+  if (!sip.continuing.length) return null;
+  const state = (c: SipStatusView["continuing"][number]) => {
+    const f = sip.funds.filter((x) => (c.isin ? x.isin === c.isin : x.scheme_name === c.scheme_name));
+    return f.find((x) => x.now.state === "ACTIVE")?.now ?? f[0]?.now ?? null;
+  };
+  const total = sip.continuing.reduce((t, c) => t + (c.amount ?? 0), 0);
+  return (
+    <section className={className}>
+      <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-2">
+        <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-violet-700">Unchanged SIPs · as in the report</div>
+        <span className="text-xs text-muted">{sip.continuing.length} SIP(s){total > 0.5 ? ` · ${formatINR(total)}/month` : ""} · continue as they are, no call needed</span>
+      </div>
+      <ul className="divide-y divide-border rounded-lg border border-border">
+        {sip.continuing.map((c, i) => {
+          const now = state(c);
+          const running = now?.state === "ACTIVE";
+          return (
+            <li key={`${c.isin ?? c.scheme_name}-${i}`} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-[13px]">
+              <span className="min-w-0 truncate">
+                <span className="mr-1.5 rounded-full bg-violet-50 px-2 py-px text-[11px] font-semibold text-violet-800">Continue</span>
+                <span className="font-medium">{c.scheme_name}</span>
+                {c.amount ? <span className="text-muted"> · {formatINR(c.amount)}/month</span> : null}
+              </span>
+              {sip.latestCasDate ? (
+                <Badge tone={running ? "success" : "danger"}>
+                  {running ? `Running · last ${now?.lastInstalment ? formatDate(now.lastInstalment) : "—"}` : now?.state === "STOPPED" ? `Not running · last ${now.lastInstalment ? formatDate(now.lastInstalment) : "—"}` : "Not in the CAS"}
+                </Badge>
+              ) : <span className="text-xs text-muted">no CAS yet</span>}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}

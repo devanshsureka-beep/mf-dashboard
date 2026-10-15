@@ -86,6 +86,8 @@ export interface AdvisoryReportParse {
   buys: ReportBuyRow[];
   buyTotal: number | null;
   sips: ReportSipRow[];
+  /** SIPs the report keeps as they are (same amount before and after): shown as "continue", not plan lines. */
+  sipsUnchanged?: { fund: string; planType: "DIRECT" | "REGULAR" | null; amount: number }[];
   sipTotals: { current: number | null; next: number | null };
   sipRouting: { fund: string; amount: number }[];
   review: ReportReviewRow[];
@@ -376,6 +378,7 @@ export function parseAdvisoryReportLines(rawLines: string[]): AdvisoryReportPars
   // Row: FUND | current (number, "—", or "20,000*") | new | change word/number [| routing fund | ₹amount]
   // Routing-panel-only lines: "Motilal Oswal Large & Midcap | ₹18,000".
   const sips: ReportSipRow[] = [];
+  const sipsUnchanged: NonNullable<AdvisoryReportParse["sipsUnchanged"]> = [];
   const sipRouting: { fund: string; amount: number }[] = [];
   let sipCurrent: number | null = null;
   let sipNext: number | null = null;
@@ -404,7 +407,11 @@ export function parseAdvisoryReportLines(rawLines: string[]): AdvisoryReportPars
       if (current === null && next) change = "START";
       else if (next === null && current) change = "STOP";
       else if (current !== null && next !== null) {
-        if (current === next) continue; // unchanged SIP: nothing to do
+        if (current === next) {
+          // Unchanged SIP: nothing to do, but the desk sees it continues.
+          if (current > 0) sipsUnchanged.push({ fund: fundName, planType: planTypeOf(c[0]), amount: current });
+          continue;
+        }
         change = "CHANGE";
       } else {
         problems.push(`SIP row "${c[0]}": amounts unreadable.`);
@@ -599,6 +606,7 @@ export function parseAdvisoryReportLines(rawLines: string[]): AdvisoryReportPars
     sips,
     sipTotals: { current: sipCurrent, next: sipNext },
     sipRouting,
+    sipsUnchanged,
     review,
     holds: [],
     mentioned: [],

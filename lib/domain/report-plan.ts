@@ -95,6 +95,8 @@ export interface ReportPlanDraft {
   drift: string[];
   /** @deprecated alias of `problems` */
   warnings: string[];
+  /** SIPs the report keeps unchanged (tied to the CAS fund when it can be). Shown as "continue", never plan lines. */
+  unchanged_sips?: { scheme_name: string; isin: string | null; amount: number }[];
   /** "Report as it is": CAS holdings the report does not cover, left out of the plan (outside the advised portfolio). */
   outside?: PlanHolding[];
 }
@@ -754,6 +756,13 @@ export function buildPlanFromReport(
     });
   }
 
+  // SIPs the report keeps as they are: tied to the CAS fund for the "continue · running?" check.
+  const unchanged_sips = (report.sipsUnchanged ?? []).map((u) => {
+    const pt = u.planType ?? detectPlanType(u.fund);
+    const h = matchFund(u.fund, live, pt);
+    return { scheme_name: h?.scheme_name ?? u.fund, isin: h?.isin ?? null, amount: u.amount };
+  });
+
   // Fresh money must pay for the buys not funded by sells.
   let freshMoney: number | null = null;
   if (additional) {
@@ -794,6 +803,7 @@ export function buildPlanFromReport(
       drift,
       warnings: [],
       outside,
+      unchanged_sips,
     };
   }
 
@@ -811,6 +821,7 @@ export function buildPlanFromReport(
     problems: staleCas ? [staleCas] : problems,
     drift,
     warnings: staleCas ? [staleCas] : problems,
+    unchanged_sips,
   };
 }
 

@@ -273,9 +273,42 @@ export interface Tranche {
   runId: string | null;
   unadvisedOpen: number;
   unadvisedTotal: number;
+  /** SIPs, kept apart from the lump-sum Buy / Sell numbers above. */
+  sip: TrancheSip;
 }
 
-export async function getTranches(tx: Tx, clientId: string): Promise<{ tranches: Tranche[]; ledger: LedgerRow[]; baseline: { date: string; value: number } | null }> {
+export interface TrancheSip {
+  /** SIP lines advised in this tranche (not yet advised ones sit in the open tranche). */
+  lines: number;
+  starts: number;
+  changes: number;
+  stops: number;
+  /** ₹/month the advised START / CHANGE lines run at. */
+  monthly: number;
+  /** Of those lines, how many a CAS already shows done. */
+  done: number;
+  /** SIP instalments the CAS that closed this tranche shows in its window. */
+  instalments: number;
+  invested: number;
+}
+
+/** One SIP line of the plan, in the tranche it was advised in. */
+export interface SipLedgerRow {
+  id: string;
+  tranche: number;
+  advisedOn: string | null;
+  action: "START" | "STOP" | "CHANGE";
+  fund: string;
+  oldAmount: number | null;
+  newAmount: number | null;
+  status: string;
+  completedOn: string | null;
+  invested: number;
+  instalments: number;
+  lastInstalment: string | null;
+}
+
+export async function getTranches(tx: Tx, clientId: string): Promise<{ tranches: Tranche[]; ledger: LedgerRow[]; sipLedger: SipLedgerRow[]; baseline: { date: string; value: number } | null }> {
   const snaps = await tx<{ id: string; date: string; value: number; is_baseline: boolean }[]>`
     select id, snapshot_date::text as date, total_current_value as value, is_baseline from public.portfolio_snapshots
     where client_id = ${clientId} and review_status = 'CONFIRMED' order by snapshot_date, created_at`;
@@ -301,6 +334,26 @@ export async function getTranches(tx: Tx, clientId: string): Promise<{ tranches:
     where r.client_id = ${clientId} and r.status <> 'CANCELLED'
     group by r.id, r.current_snapshot_id, r.created_at order by r.created_at`;
 
+  // SIP lines of every plan that was approved (drafts and cancelled lines are not advice).
+  const sipLines = await tx<(Omit<SipLedgerRow, "tranche"> & { approvedOn: string | null })[]>`
+    select s.id, s.action, s.scheme_name as fund, s.old_amount::float8 as "oldAmount", s.new_amount::float8 as "newAmount", s.status,
+           to_char(s.advised_at at time zone 'Asia/Kolkata', 'YYYY-MM-DD') as "advisedOn",
+           to_char(p.approved_at at time zone 'Asia/Kolkata', 'YYYY-MM-DD') as "approvedOn",
+           to_char(s.completed_at at time zone 'Asia/Kolkata', 'YYYY-MM-DD') as "completedOn",
+           coalesce(v.invested_amount, 0)::float8 as invested, coalesce(v.instalments, 0)::int as instalments,
+           v.last_instalment_date::text as "lastInstalment"
+    from public.sip_plan_items s
+    join public.advisory_plans p on p.id = s.plan_id and p.status not in ('DRAFT', 'CANCELLED')
+    left join public.v_sip_item_progress v on v.sip_item_id = s.id
+    where s.client_id = ${clientId} and s.status <> 'CANCELLED'
+    order by coalesce(s.advised_at, p.approved_at, s.created_at) desc, s.scheme_name`;
+  // SIP instalments the CAS files show (SIP-worded purchases count too).
+  const sipTxns = await tx<{ date: string; amount: number }[]>`
+    select t.transaction_date::text as date, abs(t.amount)::float8 as amount
+    from public.portfolio_transactions t
+    where t.client_id = ${clientId} and coalesce(t.units, 0) <> 0 and coalesce(t.amount, 0) <> 0
+      and public.txn_effective_type(t.transaction_type, t.description, t.units) = 'SIP'`;
+
   // Tranche n (n ≥ 1) runs from CAS n-1 up to (not including) the date of CAS n.
   const trancheOf = (d: string) => {
     let n = 1;
@@ -312,12 +365,29 @@ export async function getTranches(tx: Tx, clientId: string): Promise<{ tranches:
     executedUnits: i.executedUnits == null ? null : num(i.executedUnits), tranche: trancheOf(i.advisedOn),
   }));
   const lastClosed = Math.max(0, chain.length - 1);
-  const maxCalled = ledger.reduce((m, r) => Math.max(m, r.tranche), 0);
+  // A SIP line belongs to the tranche it was advised in; one not advised yet waits in the open tranche.
+  const sipLedger: SipLedgerRow[] = sipLines.map(({ approvedOn, ...l }) => ({
+    ...l, tranche: l.advisedOn ? trancheOf(l.advisedOn) : l.status === "PLANNED" ? lastClosed + 1 : trancheOf(approvedOn ?? chain[0]?.date ?? "0000-00-00"),
+  }));
+  const maxCalled = Math.max(ledger.reduce((m, r) => Math.max(m, r.tranche), 0), sipLedger.reduce((m, r) => Math.max(m, r.tranche), 0));
   const tranches: Tranche[] = [];
   for (let n = 1; n <= Math.max(lastClosed + 1, maxCalled); n++) {
     const rows = ledger.filter((r) => r.tranche === n && r.status !== "REVISED");
     const closing = chain[n];
     const run = closing ? runs.find((r) => r.current_snapshot_id === closing.id) : undefined;
+    const sl = sipLedger.filter((r) => r.tranche === n);
+    const from = chain[n - 1]?.date ?? null;
+    const inst = closing ? sipTxns.filter((t) => (!from || t.date > from) && t.date <= closing.date) : [];
+    const sip: TrancheSip = {
+      lines: sl.length,
+      starts: sl.filter((r) => r.action === "START").length,
+      changes: sl.filter((r) => r.action === "CHANGE").length,
+      stops: sl.filter((r) => r.action === "STOP").length,
+      monthly: sl.filter((r) => r.action !== "STOP").reduce((t, r) => t + (r.newAmount ?? 0), 0),
+      done: sl.filter((r) => r.status === "COMPLETED").length,
+      instalments: inst.length,
+      invested: Math.round(inst.reduce((t, x) => t + num(x.amount), 0) * 100) / 100,
+    };
     const sum = (side: string, k: "advised" | "executed") => rows.filter((r) => (r.action === "BUY" ? "BUY" : "SELL") === side).reduce((s, r) => s + r[k], 0);
     tranches.push({
       number: n, from: chain[n - 1]?.date ?? null, to: closing?.date ?? null, open: !closing,
@@ -325,8 +395,9 @@ export async function getTranches(tx: Tx, clientId: string): Promise<{ tranches:
       executedSell: sum("SELL", "executed"), executedBuy: sum("BUY", "executed"),
       pending: rows.reduce((s, r) => s + r.pending, 0),
       casValue: closing ? num(closing.value) : null, runId: run?.id ?? null, unadvisedOpen: run?.open ?? 0, unadvisedTotal: run?.total ?? 0,
+      sip,
     });
   }
   tranches.reverse();
-  return { tranches, ledger, baseline: chain[0] ? { date: chain[0].date, value: num(chain[0].value) } : null };
+  return { tranches, ledger, sipLedger, baseline: chain[0] ? { date: chain[0].date, value: num(chain[0].value) } : null };
 }

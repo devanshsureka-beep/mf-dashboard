@@ -325,6 +325,7 @@ async function planFromDraft(
       old_amount: s.old_amount, new_amount: s.new_amount, frequency: s.frequency, notes: s.notes,
     })),
     declared_totals: { exit_value: draft.declared_totals.exit_value, buy_value: draft.declared_totals.buy_value },
+    unchanged_sips: draft.unchanged_sips ?? [],
     warnings: draft.warnings,
   });
   const plan = await ingestAdvisoryReport(tx, payload, actor.id, { extractionSource: args.report.template === "AI_ASSISTED" ? "AI_EXTRACTION" : "IMPORT", securityIds });

@@ -54,3 +54,12 @@ describe("Onboard with the report as it is", () => {
     expect(plan.items.some((i) => i.question || i.diff)).toBe(false);
   });
 });
+
+describe("SIPs the report keeps unchanged", () => {
+  it("are tied to the CAS fund and kept apart from the plan's SIP lines", () => {
+    const report = { ...answerToReport(answer, null), sipsUnchanged: [{ fund: "Kotak Emerging Equity", planType: "DIRECT" as const, amount: 15000 }] };
+    const plan = buildPlanFromReport(report, holdings, "2026-10-01", { asReported: true });
+    expect(plan.unchanged_sips).toEqual([{ scheme_name: "Kotak Emerging Equity Fund - Direct Growth", isin: "INF174K01LS2", amount: 15000 }]);
+    expect(plan.sip_items).toEqual([]);
+  });
+});

@@ -147,6 +147,8 @@ export const advisoryReportResultSchema = z
     }),
     items: z.array(advisoryPlanItemSchema).max(300).default([]),
     sip_items: z.array(advisorySipItemSchema).max(100).default([]),
+    /** SIPs the report keeps unchanged ("continue"): kept with the plan for the SIP views, never plan lines. */
+    unchanged_sips: z.array(z.object({ scheme_name: z.string().max(300), isin: z.string().max(20).nullable(), amount: z.number().nonnegative() })).max(100).optional(),
     declared_totals: z
       .object({
         exit_value: money.optional().nullable(),
