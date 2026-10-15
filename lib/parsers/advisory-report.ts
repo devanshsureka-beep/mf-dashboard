@@ -221,8 +221,24 @@ export function mapRisk(text: string | null): string | null {
   return null;
 }
 
+/**
+ * A verdict as reports word it, in the form VERDICT_RE reads: "Full Exit",
+ * "Complete exit", "100% Exit", "Exit fully", "Exit (full)", "Sell all",
+ * "Stop SIP & Exit" → "EXIT"; any case.
+ */
+export function normaliseVerdict(text: string): string {
+  return text.toUpperCase().replace(/\s+/g, " ").trim()
+    .replace(/^(FULL(Y)?|COMPLETE(LY)?|TOTAL|ENTIRE|100\s*%)\s*[-:–]?\s*/, "")
+    .replace(/^STOP SIP\s*(&|AND|\+|,)\s*/, "")
+    .replace(/^(SELL|REDEEM|EXIT)\s+(ALL|EVERYTHING|ENTIRE( HOLDING)?)\b/, "EXIT")
+    .replace(/^(EXIT|REDEEM|SELL)\s*\((FULL|ALL|100\s*%)\)/, "$1")
+    .replace(/^(EXIT|REDEEM|SELL)\s+(FULLY|COMPLETELY|IN FULL|100\s*%)\b/, "$1");
+}
+const isVerdict = (text: string) => VERDICT_RE.test(normaliseVerdict(text));
+
 const VERDICT_RE = /^(EXIT|SELL|REDEEM|LIQUIDATE|HOLD|KEEP|RETAIN|CONTINUE|MAINTAIN|TRIM|REDUCE|BOOK PROFITS?|PARTIAL(?: EXIT| SELL)?|ADD|TOP[- ]?UP|BUY|ACCUMULATE|SWITCH|CONSOLIDATE)\b/;
-function mapVerdict(text: string): { verdict: ReviewVerdict | null; amount: number | null; deferred?: boolean } {
+function mapVerdict(raw: string): { verdict: ReviewVerdict | null; amount: number | null; deferred?: boolean } {
+  const text = normaliseVerdict(raw);
   const word = VERDICT_RE.exec(text)?.[1] ?? "";
   const amount = money(/₹\s?[\d,.]+\s*(L|Cr|k)?/i.exec(text)?.[0]);
   // "EXIT LATER" / "EXIT 2027" / "EXIT AFTER …": kept now, sold in a later tranche.
@@ -421,7 +437,7 @@ export function parseAdvisoryReportLines(rawLines: string[]): AdvisoryReportPars
       if (isPageEnd(lines[i]) || /^1Y\b/.test(lines[i]) || reviewHeaders.includes(i)) break;
       const c = cellsOf(lines[i]);
       if (c.length < 3 || !isRupeeCell(c[1])) continue;
-      const vText = VERDICT_RE.test(c[vCol] ?? "") ? c[vCol] : c.find((x, j) => j > 1 && VERDICT_RE.test(x));
+      const vText = isVerdict(c[vCol] ?? "") ? c[vCol] : c.find((x, j) => j > 1 && isVerdict(x));
       if (!vText) {
         problems.push(`Fund-wise review: no verdict found for "${c[0]}".`);
         continue;
@@ -517,7 +533,13 @@ export function parseAdvisoryReportLines(rawLines: string[]): AdvisoryReportPars
     for (const r of review) {
       if (r.verdict === "EXIT" || r.verdict === "SWITCH") {
         const s = sells.filter((x) => !claimed.has(x) && samePlan(x, r) && nameSimilarity(x.fund, r.fund) >= 0.7).find((x) => close(x.value, r.value)) ?? bestSell(r);
-        if (!s) problems.push(`Review says ${r.verdictText} for ${r.fund} (${inr(r.value)}) but the sell table has no row for it.`);
+        if (!s && r.verdict === "EXIT" && sh >= 0) {
+          // "Full exit" in the review only (the report has a sell table that leaves it out): sold in full, at its review value.
+          const added: ReportSellRow = { fund: r.fund, folio: null, actionText: r.verdictText, action: "SELL", partial: false, value: r.value, planType: r.planType, ...(r.folioCount ? { folioCount: r.folioCount } : {}) };
+          sells.push(added);
+          claimed.add(added);
+          if (sellTotal !== null) sellTotal = Math.round((sellTotal + r.value) * 100) / 100;
+        } else if (!s) problems.push(`Review says ${r.verdictText} for ${r.fund} (${inr(r.value)}) but the sell table has no row for it.`);
         else {
           claimed.add(s);
           if (!close(s.value, r.value)) problems.push(`${r.fund}: review value ${inr(r.value)} but sell row value ${inr(s.value)} (a full exit should sell everything).`);

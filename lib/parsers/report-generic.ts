@@ -94,6 +94,7 @@ export function parseAdvisoryReportGeneric(pages: PdfPage[]): AdvisoryReportPars
   const buys: ReportBuyRow[] = [];
   const sips: ReportSipRow[] = [];
   const holds: AdvisoryReportParse["holds"] = [];
+  const reviewSells: { fund: string; folio: string | null; folioCount: number | null; planType: "DIRECT" | "REGULAR" | null; value: number; verdict: string; action: "SELL" | "SWITCH" }[] = [];
   const mentioned: AdvisoryReportParse["mentioned"] = [];
   let sellTotal: number | null = null;
   let buyTotal: number | null = null;
@@ -151,7 +152,13 @@ export function parseAdvisoryReportGeneric(pages: PdfPage[]): AdvisoryReportPars
         // The same fund listed in two review tables (with or without its detail line).
         const same = (x: { fund: string; planType: string | null; value?: number }) =>
           x.planType === f.planType && (nameSimilarity(x.fund, labelled(f)) >= 0.9 || (x.value !== undefined && Math.abs(x.value - value) <= 1 && nameSimilarity(x.fund, labelled(f)) >= 0.5));
-        if (/^(hold|keep|retain|continue|no change|unchanged)/i.test(verdict)) {
+        // "Full exit" / "Exit" / "Sell all" in the review: a sell now (deferred exits read as keep).
+        const action = mapSellAction(verdict);
+        if (action === "SELL" || action === "SWITCH") {
+          if (!reviewSells.some((x) => same(x))) reviewSells.push({ fund: labelled(f), folio: f.folio, folioCount: f.folioCount, planType: f.planType, value, verdict, action });
+          continue;
+        }
+        if (/^(hold|keep|retain|continue|no change|unchanged)/i.test(verdict) || action === "RETAIN") {
           const dup = holds.find(same);
           // Prefer the cleaner name (a row without the "AMC · Category" detail line).
           if (dup && !/·/.test(r.fund) && dup.value === value) dup.fund = labelled(f);
@@ -210,6 +217,25 @@ export function parseAdvisoryReportGeneric(pages: PdfPage[]): AdvisoryReportPars
     }
     if (kind === "SELL") sellTotal = (sellTotal ?? 0) + (printed ?? 0);
     if (kind === "BUY") buyTotal = (buyTotal ?? 0) + (printed ?? 0);
+  }
+  // Review verdicts that sell with no row in a sell table: added as sells (a trim needs its share or amount).
+  for (const r of reviewSells) {
+    const inTable = sells.some((s) => nameSimilarity(s.fund, r.fund) >= 0.7 && (!s.planType || !r.planType || s.planType === r.planType));
+    if (inTable) continue;
+    const percent = percentOf(r.verdict) ?? null;
+    const trimAmount = amount(/(₹|Rs\.?)\s?[\d,.]+\s*(L|lakh|Cr|crore|k)?/i.exec(r.verdict)?.[0]);
+    const partial = percent !== null || /trim|partial|part of|reduce|book profit|right[- ]?size/i.test(r.verdict);
+    if (partial && percent === null && !trimAmount) {
+      problems.push(`The review says "${r.verdict}" for ${r.fund} but gives no amount or percentage, and no sell table lists it.`);
+      continue;
+    }
+    const value = partial ? (trimAmount ?? 0) : r.value;
+    sells.push({
+      fund: r.fund, folio: r.folio, folioCount: r.folioCount ?? undefined, planType: r.planType,
+      actionText: percent !== null ? `Trim ${percent}%` : partial ? "Partial sell" : "Full exit",
+      action: r.action, partial, value, percent,
+    });
+    if (sellTotal !== null) sellTotal += value;
   }
   if (!sells.length && !buys.length && !sips.length) throw new ReportParseError("No sell, buy or SIP table could be read from this report.");
 
