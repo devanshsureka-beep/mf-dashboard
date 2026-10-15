@@ -19,6 +19,7 @@ import { getPlan, getPlanItems, getSipItems, getTranches, listReportQuestions } 
 import { ReportQuestions } from "./questions";
 import { ItemEditor } from "./item-editor";
 import { DraftView } from "./draft-view";
+import { AsReportedNote } from "./as-reported-note";
 import { getSipProgress } from "@/services/sip";
 import { countMigrateNotes } from "@/services/migrations";
 import { listAllSecurities } from "@/services/securities";
@@ -97,6 +98,7 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
           {plan.approved_at ? ` on ${formatDateTime(plan.approved_at)}` : ""}. Calls are issued and tracked there.
         </div>
       ) : null}
+      {plan.as_reported ? <AsReportedNote a={plan.as_reported} className="mb-4" /> : null}
       {plan.notes ? <p className="mb-4 whitespace-pre-wrap rounded-md bg-white p-3 text-sm text-muted ring-1 ring-border">{plan.notes}</p> : null}
 
       <div className="grid gap-3 lg:grid-cols-2">

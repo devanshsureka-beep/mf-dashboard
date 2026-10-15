@@ -9,7 +9,7 @@ import type { CasParseOutput } from "@/lib/parsers/cas";
 import type { AdvisoryReportParse } from "@/lib/parsers/advisory-report";
 import type { PlanKind } from "@/types/domain";
 import { objectPath, uploadAsUser, type PreparedFile } from "@/lib/storage";
-import { ensureClientFromDocuments, onboardFromDocuments } from "@/services/onboarding";
+import { ensureClientFromDocuments, onboardFromDocuments, type AsReportedChoice } from "@/services/onboarding";
 import { findClientByPan } from "@/services/cas-intake";
 import { getActivePlanId } from "@/services/plans";
 
@@ -70,10 +70,11 @@ export async function saveOnboarding(
     phone: string | null;
     kind?: PlanKind;
     newerCas?: boolean;
+    asReported?: AsReportedChoice | null;
   },
 ): Promise<SavedOnboarding> {
   const run = onboardingTx(actor);
-  const client = await run((tx, a) => ensureClientFromDocuments(tx, a, { cas: args.cas, report: args.report, advisorId: args.advisorId, phone: args.phone, kind: args.kind, newerCas: args.newerCas }));
+  const client = await run((tx, a) => ensureClientFromDocuments(tx, a, { cas: args.cas, report: args.report, advisorId: args.advisorId, phone: args.phone, kind: args.kind, newerCas: args.newerCas, asReported: args.asReported }));
 
   const casPath = objectPath(client.id, "CAS", args.casFile);
   const reportPath = objectPath(client.id, "ADVISORY_REPORT", args.reportFile);
@@ -88,6 +89,7 @@ export async function saveOnboarding(
     reportFile: { fileName: args.reportFile.fileName, mimeType: args.reportFile.mimeType, size: args.reportFile.size, sha256: args.reportFile.sha256, path: reportPath },
     kind: args.kind,
     newerCas: args.newerCas,
+    asReported: args.asReported,
   }));
   return {
     clientId: out.clientId, clientCode: out.clientCode, clientName: client.full_name, created: client.created,

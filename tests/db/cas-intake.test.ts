@@ -7,6 +7,7 @@ import { confirmSnapshot, createSnapshotFromParsed, registerCasDocument } from "
 import { runReconciliation } from "@/services/reconciliation";
 import { ingestParsedCas } from "@/services/cas-intake";
 import { ensureClientFromDocuments, onboardFromDocuments } from "@/services/onboarding";
+import { outsideFunds } from "@/services/reconciliation";
 import { resolveOrCreateSecurity } from "@/services/securities";
 import { createClient } from "@/services/clients";
 import { addPlanItem, createDraftPlan } from "@/services/plans";
@@ -250,6 +251,41 @@ describeDb("onboarding from CAS + advisory report", () => {
       const upd = await ctx.as("ops", (t) => t`update public.advisory_plans set status = 'ACTIVE' where id = ${out.planId}`);
       expect(upd.count).toBe(0); // row-level security: not visible for update
       expect((await ctx.tx<{ status: string }[]>`select status from public.advisory_plans where id = ${out.planId}`)[0].status).toBe("DRAFT");
+    });
+  });
+
+  it("onboards with the report as it is: lines follow the report, CAS funds it does not cover stay outside", async () => {
+    await scenario(async (ctx) => {
+      // The client holds more than the report advises on, and one value differs.
+      const bigger: CasParseOutput = { ...cas, schemes: [
+        ...cas.schemes.map((x) => (x.isin === "INF200K01180" ? { ...x, marketValue: 1650000, closingUnits: 16500 } : x)),
+        { ...cas.schemes[0], schemeName: "Axis Small Cap Fund - Direct Growth", rawSchemeLine: "Axis Small Cap Fund - Direct Growth", isin: "INF846K01K35", folio: "70000011", closingUnits: 30000, marketValue: 3000000 },
+        { ...cas.schemes[0], schemeName: "Quant Active Fund - Direct Growth", rawSchemeLine: "Quant Active Fund - Direct Growth", isin: "INF966L01AB1", folio: "70000012", closingUnits: 20000, marketValue: 2000000 },
+      ] };
+      expect(await ctx.expectError("advisor", (t) => ensureClientFromDocuments(t, ctx.users.advisor, { cas: bigger, report }))).toMatch(/not covered by the report/);
+      // Another investor's report is never taken as it is.
+      expect(await ctx.expectError("advisor", (t) => ensureClientFromDocuments(t, ctx.users.advisor, {
+        cas: bigger, report: { ...report, clientName: "Somebody Else Entirely" }, asReported: { reason: "client asked", points: [] } }))).toMatch(/report is for/);
+
+      const asReported = { reason: "Client wants advice on part of the portfolio", points: ["(points shown at onboarding)"] };
+      const client = await ctx.as("advisor", (t) => ensureClientFromDocuments(t, ctx.users.advisor, { cas: bigger, report, phone: null, asReported }));
+      const out = await ctx.as("advisor", (t) => onboardFromDocuments(t, ctx.users.advisor, {
+        clientId: client.id, cas: bigger, casFile: { ...file("cas.pdf"), passwordProtected: true }, report, reportFile: file("report.pdf"), asReported,
+      }));
+      const plan = (await ctx.tx<{ status: string; as_reported: { reason: string; outside: { isin: string; value: number }[] } }[]>`
+        select status, as_reported from public.advisory_plans where id = ${out.planId}`)[0];
+      expect(plan.status).toBe("DRAFT");
+      expect(plan.as_reported.reason).toBe(asReported.reason);
+      expect(plan.as_reported.outside.map((o) => o.isin).sort()).toEqual(["INF846K01K35", "INF966L01AB1"]);
+      const lines = await ctx.tx<{ action: string; isin: string | null; target_amount: number }[]>`
+        select i.action, sm.isin, i.target_amount::float8 as target_amount
+        from public.advisory_plan_items i left join public.security_master sm on sm.id = i.security_id where i.plan_id = ${out.planId}`;
+      // Outside funds are not plan lines; the full exit sells the whole holding the CAS shows.
+      expect(lines.some((l) => l.isin === "INF846K01K35" || l.isin === "INF966L01AB1")).toBe(false);
+      expect(lines.find((l) => l.isin === "INF200K01180")).toMatchObject({ action: "SELL", target_amount: 1650000 });
+      expect((await ctx.as("advisor", (t) => outsideFunds(t, client.id))).size).toBe(2);
+      // What was accepted stays as it was.
+      expect(await ctx.expectError("advisor", (t) => t`update public.advisory_plans set as_reported = null where id = ${out.planId}`)).toMatch(/never changed/);
     });
   });
 

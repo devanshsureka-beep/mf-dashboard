@@ -7,7 +7,7 @@ import { fileNamePasswords } from "@/lib/cas/password";
 import { objectPath, uploadAsUser, fileFromForm } from "@/lib/storage";
 import { reportAiConfigured } from "@/lib/integrations/report-ai";
 import type { AdvisoryReportParse } from "@/lib/parsers/advisory-report";
-import { createNewInvestor, newInvestorMessage, newInvestorPlan, previewNewInvestor } from "@/services/onboarding";
+import { createNewInvestor, isBlockingNewInvestorProblem, newInvestorMessage, newInvestorPlan, previewNewInvestor } from "@/services/onboarding";
 import { resolveWithClaude } from "@/services/report-resolve";
 import { AppError } from "@/lib/errors";
 import { ALL_ROLES } from "@/lib/server";
@@ -53,17 +53,27 @@ export async function onboardNewInvestorAction(_p: ActionResult | null, fd: Form
         problems = [r.message];
       } else {
         problems = r.problems;
+        report = r.report ?? report; // Claude's best reading, for "create the draft with what was read"
       }
     }
-    if (problems.length || !report) throw new AppError(newInvestorMessage(problems));
+    // "Create the draft with what was read": reading problems are accepted (with a reason), never the name / PAN.
+    const asReason = str(fd, "as_reported_reason").slice(0, 500) || null;
+    if (asReason && actor.role === "OPERATIONS") throw new AppError("Only an advisor or an admin can create the draft with what was read.");
+    const accept = Boolean(asReason && asReason.length >= 3 && report && problems.length && !problems.some(isBlockingNewInvestorProblem));
+    if (!accept && (problems.length || !report)) {
+      throw new AppError(newInvestorMessage(problems) + (problems.length && !problems.some(isBlockingNewInvestorProblem) && actor.role !== "OPERATIONS"
+        ? "\nTo create the draft with what was read, give a reason under More options and submit again." : ""));
+    }
+    if (!report) throw new AppError(newInvestorMessage(problems));
+    const asReported = accept && asReason ? { reason: asReason, points: problems } : null;
 
     const run = onboardingTx(actor);
     const final = report;
-    const client = await run((tx, a) => createNewInvestor(tx, a, { who, advisorId, report: final }));
+    const client = await run((tx, a) => createNewInvestor(tx, a, { who, advisorId, report: final, asReported }));
     const path = objectPath(client.id, "ADVISORY_REPORT", reportFile);
     await uploadAsUser(path, reportFile);
     const plan = await run((tx, a) => newInvestorPlan(tx, a, {
-      clientId: client.id, who, report: final,
+      clientId: client.id, who, report: final, asReported,
       reportFile: { fileName: reportFile.fileName, mimeType: reportFile.mimeType, size: reportFile.size, sha256: reportFile.sha256, path },
     }));
     const out = { clientId: client.id, planId: plan.planId };

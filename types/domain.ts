@@ -109,6 +109,8 @@ export interface PlanRow {
   extraction_payload: unknown;
   plan_kind: PlanKind;
   fresh_money: number | null;
+  /** Onboarded with the report as it is (migration 0034). */
+  as_reported: AsReported | null;
   merged_into_plan_id: string | null;
 }
 
@@ -441,4 +443,13 @@ export interface DocumentRow {
   description: string | null;
   created_at: Date;
   uploader_name: string | null;
+}
+
+/** What the desk accepted when onboarding with the report as it is. */
+export interface AsReported {
+  reason: string;
+  points: string[];
+  outside: { scheme_name: string; isin: string | null; folio_number: string | null; value: number }[];
+  by: string;
+  at: string;
 }

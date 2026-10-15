@@ -134,6 +134,16 @@ export const advisoryReportResultSchema = z
       notes: z.string().trim().max(8000).optional().nullable(),
       plan_kind: z.enum(["FULL", "ADDITIONAL"]).optional(),
       fresh_money: money.optional().nullable(),
+      /** Onboarded with the report as it is (the desk accepted these differences from the CAS). */
+      as_reported: z.object({
+        reason: z.string().trim().min(3).max(500),
+        points: z.array(z.string().max(1000)).max(200),
+        outside: z.array(z.object({
+          scheme_name: z.string().max(300), isin: z.string().max(20).nullable(), folio_number: z.string().max(60).nullable(), value: z.number(),
+        })).max(300),
+        by: z.uuid(),
+        at: z.string().max(40),
+      }).optional().nullable(),
     }),
     items: z.array(advisoryPlanItemSchema).max(300).default([]),
     sip_items: z.array(advisorySipItemSchema).max(100).default([]),

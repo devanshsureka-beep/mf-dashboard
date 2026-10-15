@@ -15,7 +15,9 @@ import { checkDocumentsBelongTogether, holdingsFromCas, previewOnboarding } from
 
 export type ResolveResult =
   | { status: "RESOLVED"; report: AdvisoryReportParse; kind: PlanKind; corrections: string[]; rounds: number }
-  | { status: "OPEN"; problems: string[]; corrections: string[]; rounds: number; error: string | null }
+  | { status: "OPEN"; problems: string[]; corrections: string[]; rounds: number; error: string | null;
+      /** The best reading so far (Claude's last, else the built-in reader's): "onboard with the report as it is" uses it. */
+      report?: AdvisoryReportParse | null }
   | { status: "WRONG_PAIR"; message: string; corrections: string[]; rounds: number };
 
 type Ask = (input: ReportAiInput, timeoutMs: number) => Promise<{ report: AdvisoryReportParse; corrections: string[] }>;
@@ -68,7 +70,7 @@ export async function resolveWithClaude(args: {
     } catch (e) {
       const error = e instanceof AppError ? e.message : "Claude could not be reached.";
       if (!(e instanceof AppError)) throw e;
-      return { status: "OPEN", problems, corrections, rounds, error };
+      return { status: "OPEN", problems, corrections, rounds, error, report: draft };
     }
     rounds = round;
     corrections = [...corrections, ...ai.corrections.map((c) => (round > 1 ? `(round ${round}) ${c}` : c))];
@@ -102,5 +104,5 @@ export async function resolveWithClaude(args: {
     if (problems.some(isStaleCasProblem)) break;
     draft = candidate;
   }
-  return { status: "OPEN", problems, corrections, rounds, error: rounds ? null : "Not enough time left for Claude in this request." };
+  return { status: "OPEN", problems, corrections, rounds, error: rounds ? null : "Not enough time left for Claude in this request.", report: draft };
 }

@@ -108,6 +108,8 @@ export interface BulkOnboardRow {
   outcome: "ONBOARDED" | "NEEDS_REVIEW" | "ALREADY" | "FAILED";
   /** The CAS is dated after the report: what the client already did became questions on the draft. */
   newerCas?: boolean;
+  /** Onboarded with the report as it is: this many differences from the CAS were accepted. */
+  accepted?: number;
   draft?: DraftSummary;
   message: string;
   problems: string[];
@@ -136,6 +138,11 @@ export async function onboardBulkPairAction(fd: FormData): Promise<BulkOnboardRo
     const run = onboardingTx(actor);
     const advisorId = str(fd, "advisor_id") || null;
     await checkAdvisor(actor, advisorId);
+    // "Onboard with the report as it is": the differences from the CAS are accepted, with a reason.
+    const asReason = str(fd, "as_reported_reason").slice(0, 500) || null;
+    if (asReason && actor.role === "OPERATIONS") return fail("FAILED", "Only an advisor or an admin can onboard with the report as it is.");
+    if (asReason !== null && asReason.length < 3) return fail("FAILED", "Write why the report is taken as it is (e.g. the client is advised on part of the portfolio).");
+    let accepted: string[] | null = null;
 
     const casUpload = await fileFromForm(fd, "cas");
     const reportUpload = await fileFromForm(fd, "report");
@@ -185,26 +192,38 @@ export async function onboardBulkPairAction(fd: FormData): Promise<BulkOnboardRo
     // 2) Claude for what did not reconcile (points still open go back to Claude);
     //    every answer passes the same CAS tie-out.
     if (problems.length) {
-      if (!reportAiConfigured()) {
+      if (!reportAiConfigured() && asReason && report) accepted = problems;
+      else if (!reportAiConfigured()) {
         return fail("NEEDS_REVIEW", "The report does not reconcile with the CAS, and the Claude reader is not set up.", { problems });
       }
-      const r = await resolveWithClaude({ cas, reportPdf: reportUpload.bytes, draft: report, readerError: read.error, problems, deadline, reportFileName: reportUpload.fileName, check });
+    }
+    if (problems.length && !accepted) {
+      // Taking the report as it is: Claude only needs to read it well, not to make it tie out (fewer rounds).
+      const r = await resolveWithClaude({ cas, reportPdf: reportUpload.bytes, draft: report, readerError: read.error, problems, deadline, reportFileName: reportUpload.fileName, check,
+        maxRounds: asReason ? (report ? 1 : 2) : undefined });
       usedClaude = r.rounds > 0;
       corrections = r.corrections;
       if (r.status === "WRONG_PAIR") return fail("FAILED", `${r.message} Pair this CAS with the right report.`, { usedClaude, corrections });
-      if (r.status === "OPEN" && r.problems.some(isStaleCasProblem)) {
+      const best = r.status === "OPEN" ? r.report ?? report : null;
+      if (r.status === "OPEN" && asReason && best) {
+        // Taken as it is: the best reading (Claude's last, else the built-in reader's), the open points accepted.
+        report = withFresh(best);
+        accepted = r.problems;
+      } else if (r.status === "OPEN" && r.problems.some(isStaleCasProblem)) {
         return fail("NEEDS_REVIEW", "The CAS is older than the one the report was made from. Upload the client's newer CAS with this report.", { problems: r.problems, usedClaude, corrections });
       }
-      if (r.status === "OPEN") {
+      else if (r.status === "OPEN") {
         return fail("NEEDS_REVIEW", r.error && !usedClaude
           ? `The report does not reconcile, and Claude could not help: ${r.error}`
           : `Even after Claude re-read the report${r.rounds > 1 ? ` (${r.rounds} rounds)` : ""}, these points do not reconcile with the CAS.${r.error ? ` (${r.error})` : ""}`,
         { problems: r.problems, usedClaude, corrections });
+      } else if (r.status === "RESOLVED") {
+        report = withFresh(r.report);
+        kind = r.kind;
       }
-      report = withFresh(r.report);
-      kind = r.kind;
     }
-    if (!report) return fail("FAILED", "The report could not be read.");
+    if (!report) return fail("FAILED", accepted || asReason ? "The report could not be read at all, so there is nothing to onboard from." : "The report could not be read.");
+    if (accepted) kind = choice === "ADDITIONAL" ? "ADDITIONAL" : check(report).kind;
 
     const who = cas.investor.name ?? "client";
     const saved = await saveOnboarding(actor, {
@@ -216,7 +235,8 @@ export async function onboardBulkPairAction(fd: FormData): Promise<BulkOnboardRo
       advisorId,
       phone: null,
       kind,
-      newerCas: newerThan(report),
+      newerCas: accepted ? false : newerThan(report),
+      asReported: accepted && asReason ? { reason: asReason, points: accepted } : null,
     });
     revalidatePath("/clients");
     revalidatePath("/");
@@ -224,13 +244,14 @@ export async function onboardBulkPairAction(fd: FormData): Promise<BulkOnboardRo
     return {
       outcome: "ONBOARDED",
       message: [
+        accepted ? `Onboarded with the report as it is: ${accepted.length} difference(s) from the CAS accepted.` : null,
         saved.kind === "ADDITIONAL"
           ? `Additional investment${report.freshMoney ? ` of ₹${report.freshMoney.toLocaleString("en-IN")}` : ""}: a draft tranche to add to the active plan.`
           : saved.created ? "New client created." : "Existing client: the report is a new draft plan (approving replaces the current plan).",
         saved.itemsNeedingReview ? `${saved.itemsNeedingReview} plan line(s) need a fund picked.` : null,
         ...saved.warnings,
       ].filter(Boolean).join(" "),
-      problems: [], usedClaude, corrections, newerCas: newerThan(report),
+      problems: [], usedClaude, corrections, newerCas: accepted ? false : newerThan(report), accepted: accepted?.length,
       draft: d ? { sells: d.sells, buys: d.buys, sipLines: d.sip_lines, keeps: d.keeps, questions: d.open_questions, toCheck: d.needs_review } : undefined,
       clientId: saved.clientId, clientName: saved.clientName, clientCode: saved.clientCode, planId: saved.planId, created: saved.created,
     };

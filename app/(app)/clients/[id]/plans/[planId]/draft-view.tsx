@@ -14,6 +14,7 @@ import type { ReportQuestionRow } from "@/services/plans";
 import type { listAllSecurities } from "@/services/securities";
 import { ReportQuestions } from "./questions";
 import { ItemEditor } from "./item-editor";
+import { AsReportedNote } from "./as-reported-note";
 import {
   addPlanItemAction, addSipAction, approvePlanAction, closePlanAction, convertMigrateNotesAction, deleteSipAction,
   resolveSipSecurityAction, updateSipAmountsAction, convertSipToLumpsumAction,
@@ -146,6 +147,7 @@ export function DraftView({ c, plan, items, sips, questions, securities, heldIds
 
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
         <div className="min-w-0 space-y-3">
+          {plan.as_reported ? <AsReportedNote a={plan.as_reported} /> : null}
           {additional ? (
             <div className="rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
               Approving adds these lines to the <Link className="underline" href={`/clients/${clientId}/plans/${c.active_plan_id}`}>active plan</Link> as a new tranche{plan.fresh_money ? <> with <Money value={plan.fresh_money} /> of fresh money</> : null}. The current plan, its calls and its numbers stay.

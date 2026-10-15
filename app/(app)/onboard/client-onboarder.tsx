@@ -58,7 +58,7 @@ function draftLine(d: DraftSummary | undefined): string {
   return `Draft ready${parts.length ? `: ${parts.join(", ")}` : ""}.`;
 }
 
-export function ClientOnboarder({ advisors, defaultAdvisorId, advisorRequired, canChooseAdvisor, aiReady, templateSet }: {
+export function ClientOnboarder({ advisors, defaultAdvisorId, advisorRequired, canChooseAdvisor, aiReady, templateSet, canTakeAsReported }: {
   advisors: { id: string; full_name: string; role: string }[];
   defaultAdvisorId: string;
   /** Operations must name the advisor who approves. */
@@ -66,6 +66,8 @@ export function ClientOnboarder({ advisors, defaultAdvisorId, advisorRequired, c
   canChooseAdvisor: boolean;
   aiReady: boolean;
   templateSet: boolean;
+  /** Advisors and admins may onboard with the report as it is (differences from the CAS accepted). */
+  canTakeAsReported: boolean;
 }) {
   const [files, setFiles] = useState<File[]>([]);
   const [infos, setInfos] = useState<(BulkFileInfo | null)[]>([]);
@@ -176,7 +178,7 @@ export function ClientOnboarder({ advisors, defaultAdvisorId, advisorRequired, c
   });
   const ready = (r: Row) => r.cas !== null && r.report !== null && !r.skip && !done(results[r.key]) && !infos[r.cas]?.message?.startsWith("This CAS shows no PAN");
 
-  async function onboard(only?: string) {
+  async function onboard(only?: string, asReason?: string) {
     setRunning(true);
     setStarted(true);
     const todo = rows.filter((r) => (only ? r.key === only : ready(r)));
@@ -190,6 +192,7 @@ export function ClientOnboarder({ advisors, defaultAdvisorId, advisorRequired, c
       if (password) fd.set("password", password);
       fd.set("report_kind", r.kind);
       if (r.fresh.trim()) fd.set("fresh_money", r.fresh.replace(/[^\d.]/g, ""));
+      if (asReason) fd.set("as_reported_reason", asReason);
       let res: Result;
       try {
         await stageLargeFiles(fd);
@@ -260,6 +263,7 @@ export function ClientOnboarder({ advisors, defaultAdvisorId, advisorRequired, c
                 key={r.key} r={r} files={files} infos={infos} result={results[r.key]} started={started} running={running}
                 reports={reports} open={open === r.key} onToggle={() => setOpen(open === r.key ? null : r.key)}
                 onPatch={(p) => patch(r.key, p)} onRetry={() => onboard(r.key)} canRetry={!advisorMissing}
+                onAsReported={canTakeAsReported ? (reason) => onboard(r.key, reason) : undefined}
                 onAddCas={() => filesInput.current?.click()} unpairedReports={rows.filter((x) => x.cas === null && x.report !== null).length}
               />
             ))}
@@ -326,10 +330,13 @@ function Chip({ ok, warn, children }: { ok?: boolean; warn?: boolean; children: 
   return <span className={cn("inline-block rounded-md px-2 py-0.5 text-xs", ok ? "bg-emerald-50 text-emerald-800" : warn ? "bg-amber-50 text-amber-900" : "bg-red-50 text-red-700")}>{children}</span>;
 }
 
-function ClientRow({ r, files, infos, result, started, running, reports, open, onToggle, onPatch, onRetry, canRetry, onAddCas, unpairedReports }: {
+function ClientRow({ r, files, infos, result, started, running, reports, open, onToggle, onPatch, onRetry, canRetry, onAddCas, unpairedReports, onAsReported }: {
   r: Row; files: File[]; infos: (BulkFileInfo | null)[]; result: Result | undefined; started: boolean; running: boolean; reports: number[];
   open: boolean; onToggle: () => void; onPatch: (p: Partial<Row>) => void; onRetry: () => void; canRetry: boolean; onAddCas: () => void; unpairedReports: number;
+  onAsReported?: (reason: string) => void;
 }) {
+  const [asOpen, setAsOpen] = useState(false);
+  const [asReason, setAsReason] = useState("");
   const c = r.cas !== null ? infos[r.cas] : null;
   const rep = r.report !== null ? infos[r.report] : null;
   const name = clientName(r, infos) ?? "Unknown investor";
@@ -371,7 +378,7 @@ function ClientRow({ r, files, infos, result, started, running, reports, open, o
       status = (
         <div className="text-xs">
           <div className={cn(row.outcome === "ONBOARDED" ? "text-ink" : row.outcome === "ALREADY" ? "text-muted" : "text-red-800")}>
-            {row.outcome === "ONBOARDED" ? <>{draftLine(d)}{d?.questions ? <b className="text-amber-800"> {plural(d.questions, "question")} to answer.</b> : null}{d?.toCheck ? <span className="text-amber-800"> {plural(d.toCheck, "line")} to check.</span> : null}{row.newerCas ? " The CAS is newer than the report: trades since became questions." : ""}</>
+            {row.outcome === "ONBOARDED" ? <>{draftLine(d)}{d?.questions ? <b className="text-amber-800"> {plural(d.questions, "question")} to answer.</b> : null}{d?.toCheck ? <span className="text-amber-800"> {plural(d.toCheck, "line")} to check.</span> : null}{row.newerCas ? " The CAS is newer than the report: trades since became questions." : ""}{row.accepted ? <span className="text-amber-800"> Taken as the report says ({plural(row.accepted, "difference")} from the CAS accepted).</span> : null}</>
               : row.message}
             {row.usedClaude ? <span className="ml-1 rounded bg-sky-50 px-1 text-[10.5px] font-medium text-sky-800">read by Claude</span> : null}
           </div>
@@ -383,6 +390,33 @@ function ClientRow({ r, files, infos, result, started, running, reports, open, o
               {row.problems.length ? <ol className="list-decimal space-y-0.5 pl-4 text-red-800">{row.problems.map((x, i) => <li key={i}>{x}</li>)}</ol> : null}
               {row.corrections.length ? <ul className="list-disc space-y-0.5 pl-4 text-muted">{row.corrections.map((x, i) => <li key={i}>Claude: {x}</li>)}</ul> : null}
             </div>
+          ) : null}
+          {row.outcome === "NEEDS_REVIEW" && row.problems.length > 0 && onAsReported && !running && c && rep ? (
+            asOpen ? (
+              <div className="mt-2 space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-950">
+                <p>
+                  The draft follows the report as it is: its funds and amounts, with the report&rsquo;s total as the advised portfolio.
+                  A full exit sells the whole CAS holding. CAS funds the report does not cover stay outside the plan (shown in holdings, not advised).
+                  {row.problems.length === 1 ? "The difference above is" : `The ${row.problems.length} differences above are`} kept on the draft. Nothing counts until you approve.
+                </p>
+                <label className="block">
+                  <span className="mb-1 block font-medium">Why (kept on the plan) *</span>
+                  <textarea value={asReason} onChange={(e) => setAsReason(e.target.value)} rows={2} maxLength={500}
+                    placeholder="e.g. Client wants advice on ₹50L of the ₹1Cr portfolio"
+                    className="w-full rounded-md border border-amber-300 bg-white px-2 py-1.5 text-xs" />
+                </label>
+                <div className="flex gap-2">
+                  <Button size="sm" disabled={asReason.trim().length < 3} onClick={() => {
+                    if (window.confirm("Create the draft as the report says, accepting the differences from the CAS?")) onAsReported(asReason.trim());
+                  }}>Create draft as the report says</Button>
+                  <Button size="sm" variant="ghost" onClick={() => setAsOpen(false)}>Cancel</Button>
+                </div>
+              </div>
+            ) : (
+              <button type="button" className="mt-1 block font-medium text-brand hover:underline" onClick={() => setAsOpen(true)}>
+                Onboard with the report as it is →
+              </button>
+            )
           ) : null}
         </div>
       );

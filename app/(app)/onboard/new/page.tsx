@@ -58,6 +58,12 @@ export default async function NewInvestorPage() {
             <div className="grid gap-3 border-t border-border px-4 py-3 sm:grid-cols-2">
               <Field label="Report password (only if it has one)"><Input name="password" type="password" autoComplete="off" /></Field>
               {actor.role === "ADMIN" ? advisorField : null}
+              {ops ? null : (
+                <Field label="If the report cannot be fully read: why create the draft with what was read" className="sm:col-span-2"
+                  hint="Only reading points are accepted (never the name or PAN); they are kept on the draft. Leave empty to be stopped at any point.">
+                  <Input name="as_reported_reason" maxLength={500} autoComplete="off" placeholder="e.g. Report layout partly unreadable; lines checked by hand" />
+                </Field>
+              )}
             </div>
           </details>
         </div>

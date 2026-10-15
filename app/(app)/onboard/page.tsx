@@ -31,6 +31,7 @@ export default async function OnboardPage() {
           canChooseAdvisor={actor.role !== "ADVISOR"}
           aiReady={reportAiConfigured()}
           templateSet={casPasswordTemplate() !== null}
+          canTakeAsReported={!ops}
         />
         <div className="mt-6 grid gap-3 text-xs text-muted sm:grid-cols-3">
           <p><b className="block text-ink">From the CAS</b>Name, PAN, mobile, email, every fund, units and SIPs.</p>

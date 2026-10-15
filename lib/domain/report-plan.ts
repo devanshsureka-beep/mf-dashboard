@@ -95,6 +95,8 @@ export interface ReportPlanDraft {
   drift: string[];
   /** @deprecated alias of `problems` */
   warnings: string[];
+  /** "Report as it is": CAS holdings the report does not cover, left out of the plan (outside the advised portfolio). */
+  outside?: PlanHolding[];
 }
 
 /** "HDFC Flexi Cap Fund" + DIRECT -> "HDFC Flexi Cap Fund (Direct)" so plan types never get mixed up. */
@@ -205,6 +207,15 @@ export function buildPlanFromReport(
      * questions for the desk, prefilled with the trades the CAS shows since the report.
      */
     since?: { trades: SinceTrade[] };
+    /**
+     * "Onboard with the report as it is": the desk accepts that the report and the
+     * CAS differ (e.g. the client is advised on only part of the portfolio). Every
+     * line follows the report; a full exit sells the whole CAS holding; CAS funds
+     * the report does not cover are left out of the plan (`outside`). Nothing is
+     * asked and nothing blocks: callers keep the normal run's problems as the
+     * accepted differences.
+     */
+    asReported?: boolean;
   } = {},
 ): ReportPlanDraft {
   // ADDITIONAL: a report for fresh money on top of the active plan. Only its own
@@ -216,7 +227,8 @@ export function buildPlanFromReport(
   let priority = 10;
   const live = holdings.filter((h) => h.current_value > 0);
   // Report vs a newer CAS: lines that differ are marked, asked about at the end (see `since`).
-  const tolerant = Boolean(opts.since);
+  const asReported = opts.asReported === true;
+  const tolerant = Boolean(opts.since) || asReported;
   const differs = new Map<PlanItemDraft, { kind: ReportDiff["kind"]; report: number | null }>();
   const flagged = new Map<PlanHolding, { kind: ReportDiff["kind"]; report: number | null }>();
   /** A fund the report names that the newer CAS no longer holds (a zero balance keeps its ISIN). */
@@ -374,6 +386,13 @@ export function buildPlanFromReport(
       }
       if (trimDiffers && !tolerant) {
         problems.push(`${h.scheme_name}: the report trims ${inr(sold)}, but the CAS holding is only ${inr(h.current_value)}.`);
+      }
+      if (asReported && (exitDiffers || trimDiffers)) {
+        // A full exit sells the whole holding; a trim never more than is held.
+        items.push({ action: s.action === "SWITCH" ? "SWITCH" : "SELL", scheme_name: h.scheme_name, isin: h.isin, folio_number: h.folio_number,
+          target_amount: s.partial ? Math.min(sold, h.current_value) : h.current_value, current_amount: h.current_value,
+          reason: `${s.actionText || "Sell"} (report ${inr(s.partial ? sold : s.value)})`.slice(0, 300), priority: (priority += 10) });
+        continue;
       }
       if (tolerant && (exitDiffers || trimDiffers)) {
         // Partly done since the report (or the holding changed): the report's amount stays the target.
@@ -553,6 +572,7 @@ export function buildPlanFromReport(
     }
   }
 
+  const outside: PlanHolding[] = [];
   for (const h of live) {
     if (taken.has(h)) continue;
     const q = asked.get(h);
@@ -572,6 +592,11 @@ export function buildPlanFromReport(
     }
     if (additional) continue;
     const f = flagged.get(h);
+    // Report as it is: a fund the report does not cover is outside the advised portfolio.
+    if (asReported && f?.kind === "NOT_IN_REPORT") {
+      outside.push(h);
+      continue;
+    }
     if (f?.kind === "BUY_HELD") continue; // the report's Buy line covers it (asked there)
     const keepIt: PlanItemDraft = { action: "RETAIN", scheme_name: h.scheme_name, isin: h.isin, folio_number: h.folio_number, target_amount: 0, current_amount: h.current_value, reason: holdReason.get(h) ?? "Not sold in the report", priority: (priority += 10) };
     items.push(keepIt);
@@ -700,7 +725,9 @@ export function buildPlanFromReport(
     if (s.change !== "START" && !h) {
       if (tolerant) {
         // Report vs a newer CAS: the fund is already exited, so its SIP has nothing left to stop.
-        drift.push(`SIP ${s.change === "STOP" ? "stop" : "change"} for ${s.fund}: the new CAS no longer holds the fund (already exited).`);
+        drift.push(asReported
+          ? `SIP ${s.change === "STOP" ? "stop" : "change"} for ${s.fund}: the fund is not in the CAS, so it is not a plan line.`
+          : `SIP ${s.change === "STOP" ? "stop" : "change"} for ${s.fund}: the new CAS no longer holds the fund (already exited).`);
         continue;
       }
       problems.push(`SIP ${s.change === "STOP" ? "stop" : "change"} for "${s.fund}" does not match any fund in the CAS.`);
@@ -749,6 +776,26 @@ export function buildPlanFromReport(
     ...(drift.length ? ["NAV movement since the report:", ...drift.map((d) => `• ${d}`)] : []),
     ...(unreported.length ? ["Not mentioned in the report (kept as they are; please confirm):", ...unreported.map((d) => `• ${d}`)] : []),
   ].filter(Boolean).join("\n");
+
+  if (asReported) {
+    const inPlan = live.filter((h) => !outside.includes(h)).reduce((t, h) => t + h.current_value, 0);
+    return {
+      plan_name: `${additional ? "Additional investment" : "Rebalancing plan"}${report.preparedDate ? ` · ${report.preparedDate}` : ""}`,
+      plan_kind: additional ? "ADDITIONAL" : "FULL",
+      fresh_money: freshMoney,
+      plan_date: report.preparedDate,
+      // The advised portfolio is what the report covers (e.g. ₹50L of a ₹1Cr CAS).
+      starting_portfolio_value: report.currentValue ?? (Math.round(inPlan * 100) / 100 || null),
+      items,
+      sip_items,
+      declared_totals: { exit_value: report.sellTotal, buy_value: report.buyTotal },
+      notes,
+      problems: [],
+      drift,
+      warnings: [],
+      outside,
+    };
+  }
 
   return {
     plan_name: `${additional ? "Additional investment" : "Rebalancing plan"}${report.preparedDate ? ` · ${report.preparedDate}` : ""}`,

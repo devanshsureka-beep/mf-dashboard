@@ -272,8 +272,11 @@ async function saveTxnProposals(
   tx: Tx, actor: Actor | null, runId: string, clientId: string, proposals: TxnProposal[], folioOf: Map<string, string | null>,
 ): Promise<void> {
   const toConfirm: string[] = [];
+  const outside = await outsideFunds(tx, clientId);
   for (const p of proposals) {
     if (p.kind === "SIP_CANCELLED") continue; // no units moved; handled via SIP plan items
+    // A fund outside the advised portfolio (onboarded with the report as it is): noted, not a trade to decide.
+    const isOutside = p.kind === "UNADVISED" && p.securityId !== null && outside.has(p.securityId);
     const sign = p.direction === "SELL" ? -1 : 1;
     const classification = p.kind === "ADVICE_MATCH" ? "ADVICE_MATCH" : p.kind === "SIP_INSTALMENT" ? "SIP_INSTALMENT" : "UNADVISED";
     const status = p.kind === "ADVICE_MATCH" ? "SUGGESTED" : "UNEXPLAINED";
@@ -287,9 +290,13 @@ async function saveTxnProposals(
               ${folioOf.get(p.txnId) ? [folioOf.get(p.txnId) as string] : []},
               ${sign < 0 ? "DECREASE" : "INCREASE"}, ${classification}, ${sign * p.txnUnits}, ${p.allocatedAmount},
               ${p.nav}, ${p.expectedAmount}, ${p.allocatedUnits}, ${p.confidence}, ${status}, ${p.note},
-              ${p.kind === "SIP_INSTALMENT" ? new Date() : null}, ${p.txnId}, ${p.date}, ${p.txnAmount}, ${p.txnUnits},
+              ${p.kind === "SIP_INSTALMENT" || isOutside ? new Date() : null}, ${p.txnId}, ${p.date}, ${p.txnAmount}, ${p.txnUnits},
               ${p.nav}, ${p.kind === "ADVICE_MATCH" && p.autoConfirm})
       returning id`;
+    if (isOutside) {
+      await setAuditReason(tx, OUTSIDE_ADVISED);
+      await tx`update public.reconciliation_matches set resolution_note = ${OUTSIDE_ADVISED} where id = ${ins[0].id}`;
+    }
     if (p.kind === "ADVICE_MATCH" && p.autoConfirm) toConfirm.push(ins[0].id);
   }
   for (const id of toConfirm) {
@@ -773,4 +780,20 @@ export async function settleSipInstalments(
     await closeRunIfDone(tx, r.run_id);
   }
   return { reclassified, callsCancelled };
+}
+
+// -----------------------------------------------------------------------------
+// Funds outside the advised portfolio ("onboard with the report as it is")
+// -----------------------------------------------------------------------------
+export const OUTSIDE_ADVISED = "Outside the advised portfolio: the report this client was onboarded with does not cover this fund";
+
+/** Security ids of the CAS funds the client's active / draft plan leaves outside the advised portfolio. */
+export async function outsideFunds(tx: Tx, clientId: string): Promise<Set<string>> {
+  const rows = await tx<{ id: string }[]>`
+    select distinct sm.id
+    from public.advisory_plans p
+    cross join lateral jsonb_array_elements(coalesce(p.as_reported->'outside', '[]'::jsonb)) o
+    join public.security_master sm on sm.isin = o->>'isin'
+    where p.client_id = ${clientId} and p.status in ('ACTIVE', 'DRAFT')`;
+  return new Set(rows.map((r) => r.id));
 }

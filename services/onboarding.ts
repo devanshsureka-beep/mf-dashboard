@@ -11,7 +11,10 @@ import { ingestAdvisoryReport } from "@/services/plans";
 import { resolveOrCreateSecurity, suggestSecurity } from "@/services/securities";
 import { findDirectVariant } from "@/services/migrations";
 import type { SecurityCandidate } from "@/lib/domain/securities";
-import { RISK_PROFILES, type PlanKind } from "@/types/domain";
+import { RISK_PROFILES, type AsReported, type PlanKind } from "@/types/domain";
+
+/** The desk's choice to onboard although the report and the CAS differ. */
+export interface AsReportedChoice { reason: string; points: string[] }
 
 /**
  * Onboarding from two documents: the client's CAS and the paid advisory
@@ -137,11 +140,19 @@ export interface OnboardResult {
 export async function ensureClientFromDocuments(
   tx: Tx,
   actor: Actor,
-  args: { cas: CasParseOutput; report: AdvisoryReportParse; advisorId?: string | null; phone?: string | null; kind?: PlanKind; newerCas?: boolean },
+  args: { cas: CasParseOutput; report: AdvisoryReportParse; advisorId?: string | null; phone?: string | null; kind?: PlanKind; newerCas?: boolean; asReported?: AsReportedChoice | null },
 ): Promise<{ id: string; client_code: string; full_name: string; created: boolean }> {
-  // Nothing is created unless every line of the report ties to the CAS (or, for a newer CAS, is asked about).
-  const problems = previewOnboarding(args.cas, args.report, args.kind ?? "FULL", { newerCas: args.newerCas }).problems;
-  if (problems.length) throw new AppError(problemsMessage(problems));
+  if (args.asReported) {
+    // Report as it is: the differences are accepted, but the two documents must still be the same investor's.
+    // (A report that prints no name is paired by the desk; one naming someone else is never taken.)
+    const together = checkDocumentsBelongTogether(args.cas, args.report);
+    if (together.problem && (args.report.clientName || !args.cas.investor.pan)) throw new AppError(together.problem);
+    holdingsFromCas(args.cas); // a CAS that does not reconcile in itself is never accepted
+  } else {
+    // Nothing is created unless every line of the report ties to the CAS (or, for a newer CAS, is asked about).
+    const problems = previewOnboarding(args.cas, args.report, args.kind ?? "FULL", { newerCas: args.newerCas }).problems;
+    if (problems.length) throw new AppError(problemsMessage(problems));
+  }
   const existing = await findClientByPan(tx, args.cas.investor.pan);
   if (existing) return { id: existing.id, client_code: existing.client_code, full_name: existing.full_name, created: false };
   const name = args.cas.investor.name ?? args.report.clientName ?? "Unknown";
@@ -170,6 +181,8 @@ export async function onboardFromDocuments(
     kind?: PlanKind;
     /** The CAS was taken after the report: differences become questions on the plan. */
     newerCas?: boolean;
+    /** Onboard with the report as it is: these differences from the CAS are accepted. */
+    asReported?: AsReportedChoice | null;
   },
 ): Promise<Omit<OnboardResult, "created">> {
   const kind = args.kind ?? "FULL";
@@ -221,11 +234,27 @@ export async function onboardFromDocuments(
     order by h.current_value desc`;
   const draft = buildPlanFromReport(args.report, holdings, args.cas.valuationDate, {
     additional: kind === "ADDITIONAL",
-    since: args.newerCas ? { trades: tradesFromCas(args.cas) } : undefined,
+    since: args.newerCas && !args.asReported ? { trades: tradesFromCas(args.cas) } : undefined,
+    asReported: Boolean(args.asReported),
   });
   if (draft.problems.length) throw new AppError(problemsMessage(draft.problems));
+  const asReported: AsReported | null = args.asReported ? {
+    reason: args.asReported.reason,
+    points: args.asReported.points.slice(0, 200),
+    outside: (draft.outside ?? []).map((h) => ({ scheme_name: h.scheme_name, isin: h.isin, folio_number: h.folio_number, value: Math.round(h.current_value * 100) / 100 })),
+    by: actor.id,
+    at: new Date().toISOString(),
+  } : null;
+  if (asReported) {
+    const outsideTotal = asReported.outside.reduce((t, o) => t + o.value, 0);
+    draft.notes = [
+      draft.notes,
+      `Onboarded with the report as it is (${asReported.points.length} difference(s) from the CAS accepted): ${asReported.reason}`,
+      asReported.outside.length ? `Outside the advised portfolio (${asReported.outside.length} fund(s), ₹${Math.round(outsideTotal).toLocaleString("en-IN")} in the CAS): not plan lines.` : null,
+    ].filter(Boolean).join("\n");
+  }
 
-  const plan = await planFromDraft(tx, actor, { clientId: client.id, reportDocId, report: args.report, draft, holdings });
+  const plan = await planFromDraft(tx, actor, { clientId: client.id, reportDocId, report: args.report, draft, holdings, asReported });
 
   return {
     clientId: client.id,
@@ -244,7 +273,7 @@ export async function onboardFromDocuments(
 async function planFromDraft(
   tx: Tx,
   actor: Actor,
-  args: { clientId: string; reportDocId: string; report: AdvisoryReportParse; draft: ReportPlanDraft; holdings: (PlanHolding & { security_id: string | null })[]; planName?: string },
+  args: { clientId: string; reportDocId: string; report: AdvisoryReportParse; draft: ReportPlanDraft; holdings: (PlanHolding & { security_id: string | null })[]; planName?: string; asReported?: AsReported | null },
 ): Promise<{ planId: string; itemsNeedingReview: number; warnings: string[] }> {
   const { draft, holdings, reportDocId } = args;
   // Funds to buy are usually new to the client: find them, or create a
@@ -282,6 +311,7 @@ async function planFromDraft(
       notes: draft.notes,
       plan_kind: draft.plan_kind,
       fresh_money: draft.fresh_money,
+      as_reported: args.asReported ?? null,
     },
     items: draft.items.map((i) => ({
       action: i.action, scheme_name: i.scheme_name, isin: i.isin, folio_number: i.folio_number,
@@ -338,14 +368,18 @@ export function previewNewInvestor(report: AdvisoryReportParse, who: NewInvestor
   return { problems, draft };
 }
 
+/** New-investor problems no "as it is" can accept: the name / PAN, or a report for someone who already holds funds. */
+export const isBlockingNewInvestorProblem = (p: string) => /^Enter |is for "|already holds mutual funds|does not have: onboard/.test(p);
+
 /** Step 1: create the client (refused when the PAN is already a client or the report does not hold up). */
 export async function createNewInvestor(
   tx: Tx,
   actor: Actor,
-  args: { who: NewInvestorDetails; advisorId?: string | null; report: AdvisoryReportParse },
+  args: { who: NewInvestorDetails; advisorId?: string | null; report: AdvisoryReportParse; asReported?: AsReportedChoice | null },
 ): Promise<{ id: string; client_code: string }> {
   const { problems } = previewNewInvestor(args.report, args.who);
-  if (problems.length) throw new AppError(newInvestorMessage(problems));
+  const blocking = args.asReported ? problems.filter(isBlockingNewInvestorProblem) : problems;
+  if (blocking.length) throw new AppError(newInvestorMessage(blocking));
   const pan = args.who.pan.trim().toUpperCase();
   const existing = await findClientByPan(tx, pan);
   if (existing) {
@@ -388,10 +422,11 @@ export function newInvestorMessage(problems: string[]): string {
 export async function newInvestorPlan(
   tx: Tx,
   actor: Actor,
-  args: { clientId: string; who: NewInvestorDetails; report: AdvisoryReportParse; reportFile: StoredFile },
+  args: { clientId: string; who: NewInvestorDetails; report: AdvisoryReportParse; reportFile: StoredFile; asReported?: AsReportedChoice | null },
 ): Promise<{ planId: string; itemsNeedingReview: number; warnings: string[] }> {
   const { problems, draft } = previewNewInvestor(args.report, args.who);
-  if (problems.length || !draft) throw new AppError(newInvestorMessage(problems));
+  const blocking = args.asReported ? problems.filter(isBlockingNewInvestorProblem) : problems;
+  if (blocking.length || !draft) throw new AppError(newInvestorMessage(blocking.length ? blocking : problems));
   const reportDocId = await registerDocument(tx, actor.id, {
     clientId: args.clientId,
     type: "ADVISORY_REPORT",
@@ -406,9 +441,11 @@ export async function newInvestorPlan(
   const notes = [
     "New investor: no mutual funds before Univest. Everything is bought with fresh money; the first CAS shows the buys.",
     draft.notes.split("\n").filter((l) => !/^Additional investment/.test(l)).join("\n"),
+    args.asReported ? `Onboarded with the report as it is (${problems.length} point(s) accepted): ${args.asReported.reason}` : null,
   ].filter(Boolean).join("\n");
   return planFromDraft(tx, actor, {
-    clientId: args.clientId, reportDocId, report: args.report, draft: { ...draft, plan_kind: "FULL", notes }, holdings: [],
+    clientId: args.clientId, reportDocId, report: args.report, draft: { ...draft, plan_kind: "FULL", notes, problems: [] }, holdings: [],
     planName: `First investment plan${args.report.preparedDate ? ` · ${args.report.preparedDate}` : ""}`,
+    asReported: args.asReported ? { reason: args.asReported.reason, points: problems.slice(0, 200), outside: [], by: actor.id, at: new Date().toISOString() } : null,
   });
 }

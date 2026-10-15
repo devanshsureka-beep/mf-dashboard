@@ -454,12 +454,13 @@ export async function ingestAdvisoryReport(
   const warnings = [...payload.warnings];
   const plan = await tx<{ id: string }[]>`
     insert into public.advisory_plans (client_id, plan_name, plan_date, notes, baseline_snapshot_id, starting_portfolio_value,
-                                       source_document_id, extraction_source, extraction_payload, created_by, plan_kind, fresh_money)
+                                       source_document_id, extraction_source, extraction_payload, created_by, plan_kind, fresh_money, as_reported)
     values (${clientId}, ${payload.plan.plan_name}, coalesce(${payload.plan.plan_date ?? null}::date, app.today_ist()),
             ${payload.plan.notes ?? null}, ${snapshot[0]?.id ?? null},
             ${payload.plan.starting_portfolio_value ?? snapshot[0]?.total_current_value ?? null},
             ${payload.document_id ?? null}, ${opts.extractionSource ?? "AI_EXTRACTION"}, ${tx.json(JSON.parse(JSON.stringify(payload)))}, ${createdBy},
-            ${payload.plan.plan_kind ?? "FULL"}, ${payload.plan.fresh_money ?? null})
+            ${payload.plan.plan_kind ?? "FULL"}, ${payload.plan.fresh_money ?? null},
+            ${payload.plan.as_reported ? tx.json(JSON.parse(JSON.stringify(payload.plan.as_reported))) : null})
     returning id`;
   const planId = plan[0].id;
 
