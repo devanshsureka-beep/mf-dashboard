@@ -58,8 +58,10 @@ export async function planBulkCall(tx: Tx, spec: BulkSpec, securityId: string | 
     : [];
   const side = spec.action === "SELL" ? "SELL" : "BUY";
   const items = securityId
-    ? await tx<{ client_id: string; plan_item_id: string; security_id: string; yet_to_advise_amount: number }[]>`
-        select distinct on (v.client_id) v.client_id, v.plan_item_id, v.security_id, v.yet_to_advise_amount
+    ? await tx<{ client_id: string; plan_item_id: string; security_id: string; yet_to_advise_amount: number; full_exit: boolean }[]>`
+        select distinct on (v.client_id) v.client_id, v.plan_item_id, v.security_id, v.yet_to_advise_amount,
+               -- Sells the whole holding (same test as the Issue call page's full exit).
+               (v.side = 'SELL' and coalesce(v.current_amount, 0) > 0 and v.target_amount >= v.current_amount * 0.999) as full_exit
         from public.v_plan_item_progress v
         where v.plan_status = 'ACTIVE' and v.item_status <> 'CANCELLED' and v.side = ${side}
           and v.security_id = any(${family}::uuid[]) and v.client_id = any(${spec.clientIds}::uuid[])
@@ -71,6 +73,7 @@ export async function planBulkCall(tx: Tx, spec: BulkSpec, securityId: string | 
     const res = bulkAmount(spec.mode, spec.value, {
       money_left: r.money_left, live_value: r.live_value, holding_value: holding, cash: r.cash,
       plan_left: item ? Number(item.yet_to_advise_amount) : null,
+      plan_full_exit: Boolean(item?.full_exit),
     }, spec.action);
     return {
       client_id: r.client_id, client_code: r.client_code, full_name: r.full_name, money_left: r.money_left, live_value: r.live_value, cash: r.cash,

@@ -32,6 +32,8 @@ export interface BulkClientFigures {
   cash?: number;
   /** The client's plan line for this fund and side: what is left to advise (null: no such line). */
   plan_left?: number | null;
+  /** The plan line sells the whole holding (a full exit). */
+  plan_full_exit?: boolean;
 }
 
 export type BulkAmount = { amount: number } | { skip: string };
@@ -44,8 +46,8 @@ export function bulkAmount(mode: BulkMode, value: number, c: BulkClientFigures, 
     case "PLAN":
       if (c.plan_left == null) return { skip: "No plan line for this fund" };
       if (c.plan_left < 0.5) return { skip: "Plan line already fully advised" };
-      // A planned sell is never more than what the client holds today (a full exit after the NAV fell).
-      raw = action === "SELL" && c.holding_value != null ? Math.min(c.plan_left, c.holding_value) : c.plan_left;
+      // A planned full exit after the NAV fell: the whole holding today. A partial sell is never stretched to an exit.
+      raw = action === "SELL" && c.plan_full_exit && c.holding_value != null ? Math.min(c.plan_left, c.holding_value) : c.plan_left;
       break;
     case "PCT_CASH": raw = (Math.max(c.cash ?? 0, 0) * value) / 100; break;
     case "FIXED": raw = value; break;

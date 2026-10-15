@@ -133,16 +133,33 @@ export interface FundMatch { security_id: string; scheme_name: string; isin: str
  * "option", "fund", "growth" and punctuation are dropped count as one fund.
  * Direct and Regular stay apart (the words are in the names).
  */
-const FUND_KEY = (col: string) => `regexp_replace(lower(${col}), '\\m(plan|option|fund|growth)\\M|non[^a-z]*demat|[^a-z0-9]', '', 'g')`;
+const FUND_KEY = (col: string) => `regexp_replace(lower(${col}), '\\m(plan|option|fund|growth)\\M|\\mnon[^a-z]*demat\\M|[^a-z0-9]', '', 'g')`;
 
-/** Every security record of the fund `securityId` belongs to. */
+/**
+ * Every security record of the fund `securityId` belongs to: records of the same name key and ISIN, plus the
+ * records without an ISIN when the name has exactly one ISIN (the same groups as the fund search). Two
+ * different ISINs, or Growth vs IDCW, are never one fund.
+ */
 export async function fundFamily(tx: Tx, securityId: string): Promise<string[]> {
   const rows = await tx<{ id: string }[]>`
-    select f.id from public.security_master f, public.security_master s
-    where s.id = ${securityId} and ${tx.unsafe(FUND_KEY("f.scheme_name"))} = ${tx.unsafe(FUND_KEY("s.scheme_name"))}
-      -- Two different ISINs (or Growth vs IDCW) are two securities, whatever the names say.
-      and (f.isin is null or s.isin is null or f.isin = s.isin)
-      and (f.option_type is null or s.option_type is null or f.option_type = s.option_type)`;
+    with s as (
+      select id, isin, option_type, ${tx.unsafe(FUND_KEY("scheme_name"))} as k from public.security_master where id = ${securityId}
+    ), same as (
+      select f.id, f.isin from public.security_master f, s
+      where ${tx.unsafe(FUND_KEY("f.scheme_name"))} = s.k
+        and (f.option_type is null or s.option_type is null or f.option_type = s.option_type)
+    ), isins as (
+      select count(distinct isin)::int as n, max(isin) as only from same where isin is not null
+    )
+    select same.id from same, s, isins
+    where case
+      -- Starting from an ISIN: that ISIN, plus no-ISIN records when the name has no other ISIN.
+      when s.isin is not null then same.isin = s.isin or (same.isin is null and isins.n = 1)
+      -- No ISIN, and the name has exactly one: that ISIN's group.
+      when isins.n = 1 then same.isin is null or same.isin = isins.only
+      -- No ISIN and none or several ISINs for the name: only the records without one.
+      else same.isin is null
+    end`;
   return rows.length ? rows.map((r) => r.id) : [securityId];
 }
 

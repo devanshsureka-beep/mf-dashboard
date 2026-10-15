@@ -24,7 +24,9 @@ describe("bulk call amounts", () => {
     expect(bulkAmount("PLAN", 0, { ...c, plan_left: null }, "BUY")).toEqual({ skip: "No plan line for this fund" });
     expect(bulkAmount("PLAN", 0, { ...c, plan_left: 0 }, "BUY")).toEqual({ skip: "Plan line already fully advised" });
     // A planned full exit after the NAV fell: the whole holding, not a skip.
-    expect(bulkAmount("PLAN", 0, { ...c, plan_left: 5000000 }, "SELL")).toEqual({ amount: c.holding_value });
+    expect(bulkAmount("PLAN", 0, { ...c, plan_left: 5000000, plan_full_exit: true }, "SELL")).toEqual({ amount: c.holding_value });
+    // A partial sell larger than the holding is skipped, not turned into an exit.
+    expect(bulkAmount("PLAN", 0, { ...c, plan_left: 5000000 }, "SELL")).toMatchObject({ skip: expect.stringContaining("exceeds the holding") });
     expect(bulkAmount("PLAN", 0, { ...c, plan_left: 400000, holding_value: null }, "SELL")).toEqual({ skip: "Does not hold this fund" });
     expect(bulkAmount("PCT_CASH", 40, { ...c, cash: 1820000 }, "BUY")).toEqual({ amount: 728000 });
   });
