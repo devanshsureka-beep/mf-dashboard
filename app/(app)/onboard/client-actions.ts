@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { askClaudeWhatPdfIs, readCasAnyPdf } from "@/lib/integrations/cas-ai";
-import { str } from "@/lib/actions";
+import { num, str } from "@/lib/actions";
 import { casPasswordTemplate, fileNamePasswords, passwordCandidates } from "@/lib/cas/password";
 import { identifyPdf, readReportDetailed } from "@/lib/cas/reader";
 import { AppError, logServerError, toUserMessage } from "@/lib/errors";
@@ -18,12 +18,13 @@ import { checkDocumentsBelongTogether, decideReportKind, type ReportKindChoice }
 import type { PlanKind } from "@/types/domain";
 import { isStaleCasProblem } from "@/lib/domain/report-plan";
 import { resolveWithClaude } from "@/services/report-resolve";
-import { checkAdvisor, hasActivePlanForPan, onboardingTx, saveOnboarding } from "../save";
+import { listDraftPlans } from "@/services/plans";
+import { checkAdvisor, hasActivePlanForPan, onboardingTx, saveOnboarding } from "./save";
 
 /**
- * Bulk onboarding from one folder of CAS + report PDFs with no naming rule.
- * Step 1 reads each file (what it is, whose it is); step 2 onboards one
- * CAS + report pair per call. CAS passwords are tried from the file name,
+ * Client onboarding from any number of CAS + report PDFs (one client or a
+ * whole folder) with no naming rule. Step 1 reads each file (what it is,
+ * whose it is); step 2 onboards one CAS + report pair per call. CAS passwords are tried from the file name,
  * the house template and known mobiles, kept in memory only, and stripped
  * from the stored file names. Request bodies are never logged.
  */
@@ -34,6 +35,8 @@ export interface BulkFileInfo {
   name: string | null;
   panMasked: string | null;
   casDate: string | null;
+  /** Report: the date of the CAS it was made from (or the day it was prepared). */
+  reportDate: string | null;
   /** Report: the built-in reader understood its layout. */
   readerOk: boolean;
   existingClient: string | null;
@@ -41,20 +44,23 @@ export interface BulkFileInfo {
 }
 
 
-async function candidatesFor(actorRun: ReturnType<typeof onboardingTx>, fileName: string): Promise<string[]> {
+async function candidatesFor(actorRun: ReturnType<typeof onboardingTx>, fileName: string, typed: string | null = null): Promise<string[]> {
   const phones = await actorRun((tx) => knownClientPhones(tx));
-  return passwordCandidates({ template: casPasswordTemplate(), fileName, phones, fileNameParts: true });
+  return passwordCandidates({ template: casPasswordTemplate(), explicit: [typed], fileName, phones, fileNameParts: true });
 }
+
+/** The date of the CAS the report was made from (else the day it was prepared). */
+const reportDateOf = (r: AdvisoryReportParse): string | null => r.valuationDate ?? r.casPeriod?.to ?? r.preparedDate ?? null;
 
 export async function identifyBulkFileAction(fd: FormData): Promise<BulkFileInfo> {
   const fileName = formFileName(fd, "file");
-  const base: BulkFileInfo = { fileName, kind: "UNREADABLE", name: null, panMasked: null, casDate: null, readerOk: false, existingClient: null, message: "" };
+  const base: BulkFileInfo = { fileName, kind: "UNREADABLE", name: null, panMasked: null, casDate: null, reportDate: null, readerOk: false, existingClient: null, message: "" };
   try {
     const actor = await requireActorForAction(ALL_ROLES);
     const run = onboardingTx(actor);
     const file = await fileFromForm(fd, "file");
     if (file.mimeType !== "application/pdf") return { ...base, message: "Not a PDF." };
-    const id = await identifyPdf(file.bytes, await candidatesFor(run, file.fileName));
+    const id = await identifyPdf(file.bytes, await candidatesFor(run, file.fileName, str(fd, "password") || null));
     switch (id.kind) {
       case "CAS": {
         const existing = await run((tx) => findClientByPan(tx, id.cas.investor.pan));
@@ -66,11 +72,11 @@ export async function identifyBulkFileAction(fd: FormData): Promise<BulkFileInfo
       }
       case "REPORT":
         return {
-          ...base, kind: "REPORT", name: id.nameGuess, readerOk: id.report !== null,
+          ...base, kind: "REPORT", name: id.nameGuess, readerOk: id.report !== null, reportDate: id.report ? reportDateOf(id.report) : null,
           message: id.report ? "" : `Layout not known to the built-in reader${reportAiConfigured() ? "; Claude will read it" : ""}.`,
         };
       case "LOCKED":
-        return { ...base, kind: "LOCKED", message: "Password protected, and no part of the file name opened it. Rename the file to include the password." };
+        return { ...base, kind: "LOCKED", message: "Password protected, and neither the file name nor a saved mobile opened it. Type the password under More options, then read again." };
       case "IMAGE_ONLY": {
         // Pages are pictures: Claude says what it is and whose; the pair step then reads it in full.
         if (id.locked) return { ...base, message: "Its pages are pictures and it is password protected, so it cannot be read. Upload the original PDF." };
@@ -95,8 +101,14 @@ export async function identifyBulkFileAction(fd: FormData): Promise<BulkFileInfo
   }
 }
 
+/** What the new draft holds (shown per client after onboarding). */
+export interface DraftSummary { sells: number; buys: number; sipLines: number; keeps: number; questions: number; toCheck: number }
+
 export interface BulkOnboardRow {
   outcome: "ONBOARDED" | "NEEDS_REVIEW" | "ALREADY" | "FAILED";
+  /** The CAS is dated after the report: what the client already did became questions on the draft. */
+  newerCas?: boolean;
+  draft?: DraftSummary;
   message: string;
   problems: string[];
   usedClaude: boolean;
@@ -129,7 +141,7 @@ export async function onboardBulkPairAction(fd: FormData): Promise<BulkOnboardRo
     const reportUpload = await fileFromForm(fd, "report");
     if (casUpload.mimeType !== "application/pdf" || reportUpload.mimeType !== "application/pdf") return fail("FAILED", "Both files must be PDFs.");
 
-    const casCandidates = await candidatesFor(run, casUpload.fileName);
+    const casCandidates = await candidatesFor(run, casUpload.fileName, str(fd, "password") || null);
     const { parsed: cas, passwordProtected } = await readCasAnyPdf(casUpload.bytes, casCandidates, { timeoutMs: Math.min(200_000, deadline - Date.now()) });
     if (!cas.investor.pan) return fail("FAILED", "The CAS shows no PAN, so the client cannot be identified.");
 
@@ -146,7 +158,9 @@ export async function onboardBulkPairAction(fd: FormData): Promise<BulkOnboardRo
 
     // 1) Built-in readers.
     const read = await readReportDetailed(reportUpload.bytes, [...fileNamePasswords(reportUpload.fileName), ...casCandidates]);
-    let report: AdvisoryReportParse | null = read.report;
+    const fresh = num(fd, "fresh_money");
+    const withFresh = (r: AdvisoryReportParse): AdvisoryReportParse => (fresh && fresh > 0 ? { ...r, freshMoney: fresh } : r);
+    let report: AdvisoryReportParse | null = read.report ? withFresh(read.report) : null;
     if (report) {
       const together = checkDocumentsBelongTogether(cas, report);
       if (together.problem && report.clientName) return fail("FAILED", `${together.problem} Pair this CAS with the right report.`);
@@ -155,7 +169,13 @@ export async function onboardBulkPairAction(fd: FormData): Promise<BulkOnboardRo
     const hasActivePlan = await hasActivePlanForPan(actor, cas.investor.pan);
     const rk = str(fd, "report_kind");
     const choice: ReportKindChoice = rk === "FULL" || rk === "ADDITIONAL" ? rk : "AUTO";
-    const check = (r: AdvisoryReportParse) => decideReportKind(cas, r, { choice, hasActivePlan });
+    // A CAS dated after the report: the client already acted on part of it, so each
+    // difference becomes a question on the draft (prefilled from the CAS trades since).
+    const newerThan = (r: AdvisoryReportParse) => {
+      const d = reportDateOf(r);
+      return Boolean(cas.valuationDate && d && cas.valuationDate > d);
+    };
+    const check = (r: AdvisoryReportParse) => decideReportKind(cas, withFresh(r), { choice, hasActivePlan, newerCas: newerThan(r) });
     const first = report ? check(report) : null;
     let kind: PlanKind = first?.kind ?? "FULL";
     const problems = first ? first.problems : [`The built-in reader could not read the report: ${read.error}`];
@@ -181,7 +201,7 @@ export async function onboardBulkPairAction(fd: FormData): Promise<BulkOnboardRo
           : `Even after Claude re-read the report${r.rounds > 1 ? ` (${r.rounds} rounds)` : ""}, these points do not reconcile with the CAS.${r.error ? ` (${r.error})` : ""}`,
         { problems: r.problems, usedClaude, corrections });
       }
-      report = r.report;
+      report = withFresh(r.report);
       kind = r.kind;
     }
     if (!report) return fail("FAILED", "The report could not be read.");
@@ -196,8 +216,11 @@ export async function onboardBulkPairAction(fd: FormData): Promise<BulkOnboardRo
       advisorId,
       phone: null,
       kind,
+      newerCas: newerThan(report),
     });
     revalidatePath("/clients");
+    revalidatePath("/");
+    const d = (await run((tx) => listDraftPlans(tx, { planId: saved.planId })))[0];
     return {
       outcome: "ONBOARDED",
       message: [
@@ -207,7 +230,8 @@ export async function onboardBulkPairAction(fd: FormData): Promise<BulkOnboardRo
         saved.itemsNeedingReview ? `${saved.itemsNeedingReview} plan line(s) need a fund picked.` : null,
         ...saved.warnings,
       ].filter(Boolean).join(" "),
-      problems: [], usedClaude, corrections,
+      problems: [], usedClaude, corrections, newerCas: newerThan(report),
+      draft: d ? { sells: d.sells, buys: d.buys, sipLines: d.sip_lines, keeps: d.keeps, questions: d.open_questions, toCheck: d.needs_review } : undefined,
       clientId: saved.clientId, clientName: saved.clientName, clientCode: saved.clientCode, planId: saved.planId, created: saved.created,
     };
   } catch (e) {

@@ -9,6 +9,8 @@ import { pageData } from "@/lib/server";
 import { cn } from "@/lib/utils";
 import { listAdvisors, listDeskClients, type DeskFilters } from "@/services/clients";
 import { listDeletedClients } from "@/services/client-admin";
+import { listDraftPlans } from "@/services/plans";
+import { DraftList } from "@/components/app/draft-list";
 import { CLIENT_STATUSES, RISK_PROFILES } from "@/types/domain";
 import { ActionForm, SubmitButton } from "@/components/app/action-form";
 import { SelectAll } from "@/components/app/select-all";
@@ -22,12 +24,12 @@ const lakh = (v: string | undefined) => (v && Number(v) > 0 ? Number(v) * 100000
 type Desk = Awaited<ReturnType<typeof listDeskClients>>[number];
 const VIEWS: { key: string; label: string; params: Record<string, string | undefined>; match: (f: DeskFilters) => boolean; count: (c: Desk) => boolean; alert?: boolean }[] = [
   { key: "all", label: "All", params: {}, match: (f) => !f.attention && !f.plan && !f.premium && !f.agreement, count: () => true },
+  { key: "draft", label: "Drafts", params: { plan: "draft" }, match: (f) => f.plan === "draft", count: (c) => c.has_draft_plan },
   { key: "needs", label: "Needs action", params: { attention: "needs" }, match: (f) => f.attention === "needs", count: (c) => c.action_count > 0, alert: true },
   { key: "tranche", label: "Next tranche to advise", params: { attention: "tranche" }, match: (f) => f.attention === "tranche", count: (c) => Boolean(c.active_plan_id) && c.pending_total < 0.5 && c.remaining_to_advise >= 0.5 },
   { key: "pending", label: "Waiting for client", params: { attention: "pending" }, match: (f) => f.attention === "pending", count: (c) => c.pending_total > 0 },
   { key: "unadvised", label: "Unadvised Trades", params: { attention: "unadvised" }, match: (f) => f.attention === "unadvised", count: (c) => c.unadvised_to_review > 0, alert: true },
   { key: "cas", label: "CAS to check", params: { attention: "cas_review" }, match: (f) => f.attention === "cas_review", count: (c) => c.cas_to_review > 0 },
-  { key: "draft", label: "Plan to approve", params: { plan: "draft" }, match: (f) => f.plan === "draft", count: (c) => c.has_draft_plan },
   { key: "follow", label: "Follow-ups due", params: { attention: "follow_up" }, match: (f) => f.attention === "follow_up", count: (c) => c.follow_ups_due > 0 },
   { key: "agreement", label: "No agreement", params: { agreement: "missing" }, match: (f) => f.agreement === "missing", count: (c) => c.agreement_status !== "VALID" },
 ];
@@ -44,8 +46,10 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
     minValue: lakh(one("min")), maxValue: lakh(one("max")), sort: (one("sort") as DeskFilters["sort"]) ?? "action",
   };
   const showDeleted = one("deleted") === "1";
-  const { clients, all, advisors, deleted, actor } = await pageData(async (tx, a) => ({
+  const draftView = f.plan === "draft";
+  const { clients, all, advisors, deleted, drafts, actor } = await pageData(async (tx, a) => ({
     clients: await listDeskClients(tx, f),
+    drafts: draftView ? await listDraftPlans(tx, { advisorId: f.advisorId }) : [],
     all: await listDeskClients(tx, {}),
     advisors: await listAdvisors(tx),
     deleted: a.role === "ADMIN" ? await listDeletedClients(tx) : [],
@@ -107,14 +111,19 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
         <span className="ml-auto text-[11px] text-muted">More views: <Link className="hover:underline" href={viewHref({ premium: "renewal_due" })}>renewal due</Link> · <Link className="hover:underline" href={viewHref({ premium: "expired" })}>premium expired</Link> · <Link className="hover:underline" href={viewHref({ attention: "no_plan" })}>no active plan</Link> · tick clients for one action on all · click a column to sort</span>
       </form>
 
-      <ClientList
+      {draftView ? (
+        <>
+          <p className="mb-2 text-xs text-muted">Each draft opens its plan: answer its questions, check the lines, approve. Nothing counts until it is approved.</p>
+          <DraftList rows={drafts.filter((d) => !f.q || `${d.client_name} ${d.client_code}`.toLowerCase().includes(f.q.toLowerCase()))} />
+        </>
+      ) : <ClientList
         rows={clients.map(toRow)}
         isAdmin={isAdmin}
         canAdvise={actor.role !== "OPERATIONS"}
         advisors={advisors.map((a) => ({ id: a.id, name: a.full_name }))}
         deleteAction={deleteClientsAction}
         reassignAction={reassignClientsAction}
-      />
+      />}
     </>
   );
 }
@@ -138,7 +147,7 @@ function toRow(c: Row): ListRow {
   if (c.follow_ups_due) sub.push({ text: `${c.follow_ups_due} follow-up`, tone: "amber", href: `/clients/${c.client_id}?tab=file#notes` });
   if (c.unadvised_to_review) sub.push({ text: `${c.unadvised_to_review} unadvised`, tone: "red", href: tranchesHref });
   if (c.cas_to_review) sub.push({ text: "CAS to check", tone: "amber", href: "/reconciliation" });
-  if (c.has_draft_plan) sub.push({ text: "plan to approve", tone: "brand", href: tranchesHref });
+  if (c.has_draft_plan) sub.push({ text: "draft to approve", tone: "brand", href: c.draft_plan_id ? `/clients/${c.client_id}/plans/${c.draft_plan_id}` : "/clients?plan=draft" });
   return {
     id: c.client_id, name: c.full_name, code: c.client_code, tag, subTags: sub,
     advisor: c.advisor_name ?? "—", risk: c.risk_profile ? humanize(c.risk_profile) : "—",

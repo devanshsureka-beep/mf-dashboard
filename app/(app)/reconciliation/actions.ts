@@ -112,3 +112,39 @@ export async function bulkUnadvisedAction(runId: string, input: BulkUnadvisedInp
   revalidatePath("/");
   return out;
 }
+
+/**
+ * One CAS trade no call explains, decided from the inbox in one click:
+ * ADVISED records the call given outside the dashboard (on the trade's day) and
+ * confirms the trade as its execution; OWN marks it the client's own trade.
+ */
+export async function decideTradeAction(matchId: string, _p: ActionResult | null, fd: FormData): Promise<ActionResult> {
+  return runAction("decideTrade", async () => {
+    const decision = reqStr(fd, "decision");
+    const note = optStr(fd, "note");
+    if (decision === "ADVISED") {
+      await actionTx((tx, actor) => recordAdvisedOffline(tx, actor, matchId, { channel: "PHONE", communicatedAt: null, note }), { roles: ["ADMIN", "ADVISOR"] });
+    } else if (decision === "OWN") {
+      await actionTx(async (tx, actor) => {
+        const m = (await tx<{ status: string }[]>`select status from public.reconciliation_matches where id = ${matchId}`)[0];
+        if (m?.status === "SUGGESTED") await resolveMatch(tx, actor, matchId, "UNADVISED", { note: null });
+        await resolveMatch(tx, actor, matchId, "ACKNOWLEDGE", { note: note ?? "Client's own trade (no call): marked from the CAS inbox" });
+      });
+    } else {
+      throw new AppError("Unknown decision.");
+    }
+    revalidatePath("/reconciliation");
+    revalidatePath("/");
+    return decision === "ADVISED" ? "Recorded as our call, done." : "Marked as the client's own trade.";
+  });
+}
+
+/** An advised trade the CAS seems to show: confirm it done from the inbox. */
+export async function confirmMatchFromInboxAction(matchId: string, _p: ActionResult | null, _fd: FormData): Promise<ActionResult> {
+  return runAction("confirmMatchInbox", async () => {
+    await actionTx((tx, actor) => resolveMatch(tx, actor, matchId, "CONFIRM", {}));
+    revalidatePath("/reconciliation");
+    revalidatePath("/");
+    return "Confirmed done.";
+  });
+}

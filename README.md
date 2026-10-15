@@ -243,11 +243,13 @@ Nothing goes live until it is merged into `main`. Step-by-step guide: [`docs/LOC
 
 Database changes follow the same path: a new migration is applied to the staging project first and to production just before the merge into `main`.
 
-**Document Check** (`/onboard/check`) runs every onboarding check on a CAS + report and shows the exact plan that would be created, without saving anything. It is safe to use on the live site.
+Onboarding never changes live numbers by itself: each client becomes a DRAFT plan, which can be rejected, and nothing counts until it is approved.
 
-## Bulk onboarding
+## Onboarding
 
-**Bulk Onboarding** (`/onboard/bulk`) takes a whole folder of CAS and advisory-report PDFs with any file names. Each file is recognised by its content (a CAS password is looked for in the file name, then the house template), each CAS is paired with the report carrying the same client name, and each pair is onboarded. Report lines the built-in readers cannot tie to the CAS are sent, with the CAS fund list and the exact failing points, to Claude through an n8n workflow; Claude's answer must pass the same CAS tie-out, and the plan is still a DRAFT. See [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md), section 7.
+**Onboard** (`/onboard`) has two tabs. **Client onboard** takes one drop of CAS and advisory-report PDFs (one client or a whole folder, any file names); **New MF user** takes only the report plus name / PAN / mobile / email for a client with no mutual funds yet. After the drop, every client shows its status (draft ready, questions to answer, reading, a file missing); a CAS dated after its report is handled by itself (each difference becomes a question on the draft). Drafts wait under **Clients → Drafts** and on **Today**. The old `/onboard/bulk` and `/onboard/check` links redirect to `/onboard`.
+
+In Client onboard, files of any name are accepted. Each file is recognised by its content (a CAS password is looked for in the file name, then the house template), each CAS is paired with the report carrying the same client name, and each pair is onboarded. Report lines the built-in readers cannot tie to the CAS are sent, with the CAS fund list and the exact failing points, to Claude through an n8n workflow; Claude's answer must pass the same CAS tie-out, and the plan is still a DRAFT. See [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md), section 7.
 
 ## Daily NAVs
 

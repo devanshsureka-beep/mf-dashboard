@@ -34,6 +34,51 @@ export async function getPlan(tx: Tx, planId: string): Promise<PlanRow & PlanTra
   return rows[0];
 }
 
+/** A DRAFT plan waiting for approval, with what it moves and what is left before it can be approved. */
+export interface DraftPlanRow {
+  plan_id: string;
+  plan_name: string;
+  plan_kind: string;
+  plan_date: string;
+  created_at: Date;
+  fresh_money: number | null;
+  client_id: string;
+  client_name: string;
+  client_code: string;
+  advisor_name: string | null;
+  has_active_plan: boolean;
+  sells: number;
+  buys: number;
+  keeps: number;
+  sell_total: number;
+  buy_total: number;
+  sip_lines: number;
+  open_questions: number;
+  needs_review: number;
+}
+
+export async function listDraftPlans(tx: Tx, f: { advisorId?: string | null; planId?: string } = {}): Promise<DraftPlanRow[]> {
+  return tx<DraftPlanRow[]>`
+    select p.id as plan_id, p.plan_name, p.plan_kind, p.plan_date::text as plan_date, p.created_at, p.fresh_money::float8 as fresh_money,
+           s.client_id, s.full_name as client_name, s.client_code, s.advisor_name, s.active_plan_id is not null as has_active_plan,
+           count(i.id) filter (where i.action = 'SELL')::int as sells,
+           count(i.id) filter (where i.action in ('BUY', 'SWITCH'))::int as buys,
+           count(i.id) filter (where i.action = 'RETAIN')::int as keeps,
+           coalesce(sum(i.target_amount) filter (where i.action = 'SELL'), 0)::float8 as sell_total,
+           coalesce(sum(i.target_amount) filter (where i.action in ('BUY', 'SWITCH')), 0)::float8 as buy_total,
+           (select count(*)::int from public.sip_plan_items x where x.plan_id = p.id and x.status <> 'CANCELLED') as sip_lines,
+           count(i.id) filter (where i.report_question is not null and i.report_answer is null)::int as open_questions,
+           (count(i.id) filter (where i.needs_review or (i.action <> 'RETAIN' and i.security_id is null))
+             + (select count(*) from public.sip_plan_items x where x.plan_id = p.id and x.status <> 'CANCELLED' and x.needs_review))::int as needs_review
+    from public.advisory_plans p
+    join public.v_client_summary s on s.client_id = p.client_id
+    left join public.advisory_plan_items i on i.plan_id = p.id and i.status <> 'CANCELLED'
+    where p.status = 'DRAFT' and (${f.advisorId ?? null}::uuid is null or s.advisor_id = ${f.advisorId ?? null})
+      and (${f.planId ?? null}::uuid is null or p.id = ${f.planId ?? null})
+    group by p.id, s.client_id, s.full_name, s.client_code, s.advisor_name, s.active_plan_id
+    order by p.created_at`;
+}
+
 export async function getActivePlanId(tx: Tx, clientId: string): Promise<string | null> {
   const rows = await tx<{ id: string }[]>`
     select id from public.advisory_plans where client_id = ${clientId} and status = 'ACTIVE'`;

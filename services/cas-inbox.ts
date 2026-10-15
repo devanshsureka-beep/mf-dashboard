@@ -95,3 +95,44 @@ export async function getCasInbox(tx: Tx) {
       .sort((a, b) => b.waiting_amount + b.unverified_amount - (a.waiting_amount + a.unverified_amount) || (b.days ?? 9999) - (a.days ?? 9999)),
   };
 }
+
+/** What one CAS matching run did by itself and what it left for a person (for the inbox cards). */
+export interface InboxRunDetail {
+  run_id: string;
+  previous_date: string | null;
+  sip_lines_ticked: number;
+  /** Calls the CAS shows done (confirmed by itself or by a person). */
+  done: { scheme_name: string; action: string | null }[];
+  /** Calls the CAS seems to show, waiting for a click. */
+  suggested: { id: string; scheme_name: string; action: string | null; amount: number; date: string | null }[];
+  /** CAS trades no call explains, not yet reviewed. */
+  unadvised: { id: string; scheme_name: string; change_type: string; amount: number; date: string | null; single_trade: boolean }[];
+}
+
+export async function getInboxRunDetails(tx: Tx, runIds: string[]): Promise<Record<string, InboxRunDetail>> {
+  if (!runIds.length) return {};
+  const runs = await tx<{ run_id: string; previous_date: string | null; sip_lines_ticked: number }[]>`
+    select r.id as run_id, ps.snapshot_date::text as previous_date, coalesce((r.summary->>'sip_items_completed')::int, 0) as sip_lines_ticked
+    from public.reconciliation_runs r left join public.portfolio_snapshots ps on ps.id = r.previous_snapshot_id
+    where r.id = any(${runIds}::uuid[])`;
+  const rows = await tx<{ id: string; run_id: string; scheme_name: string; classification: string; status: string; reviewed: boolean; action: string | null;
+    change_type: string; amount: number; date: string | null; single_trade: boolean }[]>`
+    select m.id, m.run_id, m.scheme_name, m.classification, m.status, m.reviewed_at is not null as reviewed, a.action, m.change_type,
+           abs(coalesce(m.transaction_amount, m.approx_amount))::float8 as amount, m.transaction_date::text as date,
+           (m.cas_transaction_id is not null and coalesce(m.transaction_amount, 0) > 0) as single_trade
+    from public.reconciliation_matches m left join public.advice_items a on a.id = m.advice_item_id
+    where m.run_id = any(${runIds}::uuid[]) and m.classification in ('ADVICE_MATCH', 'UNADVISED')
+    order by m.transaction_date nulls last, m.scheme_name`;
+  const out: Record<string, InboxRunDetail> = {};
+  for (const r of runs) out[r.run_id] = { ...r, done: [], suggested: [], unadvised: [] };
+  for (const m of rows) {
+    const d = out[m.run_id];
+    if (!d) continue;
+    if (m.classification === "ADVICE_MATCH" && (m.status === "CONFIRMED" || m.status === "PARTIAL")) d.done.push({ scheme_name: m.scheme_name, action: m.action });
+    else if (m.classification === "ADVICE_MATCH" && m.status === "SUGGESTED") d.suggested.push({ id: m.id, scheme_name: m.scheme_name, action: m.action, amount: m.amount, date: m.date });
+    else if (m.classification === "UNADVISED" && (m.status === "UNEXPLAINED" || m.status === "SUGGESTED") && !m.reviewed) {
+      d.unadvised.push({ id: m.id, scheme_name: m.scheme_name, change_type: m.change_type, amount: m.amount, date: m.date, single_trade: m.single_trade });
+    }
+  }
+  return out;
+}

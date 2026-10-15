@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
-import { Field, Input, Select, Textarea } from "@/components/ui/form";
+import { Field, Input, Select } from "@/components/ui/form";
 import { Badge } from "@/components/ui/badge";
 import { LinkButton } from "@/components/ui/button";
 import { TransitionBar } from "@/components/ui/progress";
@@ -17,15 +17,15 @@ import { pageData } from "@/lib/server";
 import { getClientSummary } from "@/services/clients";
 import { getPlan, getPlanItems, getSipItems, getTranches, listReportQuestions } from "@/services/plans";
 import { ReportQuestions } from "./questions";
+import { ItemEditor } from "./item-editor";
+import { DraftView } from "./draft-view";
 import { getSipProgress } from "@/services/sip";
 import { countMigrateNotes } from "@/services/migrations";
 import { listAllSecurities } from "@/services/securities";
 import { getHoldings } from "@/services/portfolio";
-import type { PlanItemProgress } from "@/types/domain";
 import {
-  addPlanItemAction, addSipAction, approvePlanAction, cancelPlanItemAction, closePlanAction, deletePlanItemAction,
-  convertMigrateNotesAction, deleteSipAction, resolveSipSecurityAction, updatePlanItemAction,
-  convertBuyToSipAction, convertSipToLumpsumAction, updateSipAmountsAction,
+  addPlanItemAction, addSipAction, closePlanAction, convertMigrateNotesAction, resolveSipSecurityAction,
+  convertSipToLumpsumAction, updateSipAmountsAction,
 } from "../actions";
 import { setSipStatusAction } from "../../actions";
 
@@ -33,6 +33,7 @@ export const metadata = { title: "Portfolio plan" };
 
 export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[planId]">) {
   const { id, planId } = await props.params;
+  const sp = await props.searchParams;
   const { c, plan, items: allItems, sips, sipProgress, securities, heldIds, tranches, migrateNotes, questions, actor } = await pageData(async (tx) => {
     const c = await getClientSummary(tx, id);
     const plan = await getPlan(tx, planId);
@@ -50,12 +51,15 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
     };
   });
   const canAdvise = actor.role !== "OPERATIONS";
+  if (plan.status === "DRAFT") {
+    return (
+      <DraftView c={c} plan={plan} items={allItems} sips={sips} questions={questions} securities={securities} heldIds={heldIds}
+        migrateNotes={migrateNotes} canAdvise={canAdvise} clientId={id} planId={planId} onboarded={typeof sp.onboarded === "string" ? sp.onboarded : null} />
+    );
+  }
   const items = allItems;
-  const editable = canAdvise && (plan.status === "DRAFT" || plan.status === "ACTIVE");
+  const editable = canAdvise && plan.status === "ACTIVE";
   const isActive = plan.status === "ACTIVE";
-  const actionable = items.filter((i) => i.side !== "NONE" && i.item_status !== "CANCELLED");
-  const reviewCount = items.filter((i) => i.needs_review && i.item_status !== "CANCELLED").length + sips.filter((s) => s.needs_review && s.status !== "CANCELLED").length;
-  const missingSecurity = actionable.filter((i) => !i.security_id).length;
 
   return (
     <>
@@ -91,18 +95,6 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
         <div className="mb-4 rounded-lg border border-border bg-gray-50 px-4 py-3 text-sm">
           Added to the <Link className="text-brand hover:underline" href={`/clients/${id}/plans/${plan.merged_into_plan_id}`}>active plan</Link> as a tranche
           {plan.approved_at ? ` on ${formatDateTime(plan.approved_at)}` : ""}. Calls are issued and tracked there.
-        </div>
-      ) : null}
-      {plan.status === "DRAFT" && plan.plan_kind === "ADDITIONAL" ? (
-        <div className="mb-4 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
-          <strong>Additional investment</strong>{plan.fresh_money ? <> of <Money value={plan.fresh_money} /> fresh money</> : null}. Approving adds these lines to the client&apos;s
-          {" "}{c.active_plan_id ? <Link className="underline" href={`/clients/${id}/plans/${c.active_plan_id}`}>active plan</Link> : "active plan"} as a new tranche: the current plan, its calls and its numbers stay.
-        </div>
-      ) : null}
-      {plan.status === "DRAFT" ? (
-        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          <strong>DRAFT</strong> — this plan is not active and does not drive any numbers yet. {plan.extraction_source === "AI_EXTRACTION" ? "It was extracted from a document: verify every line against the report before approving." : ""}
-          {reviewCount ? <> <strong>{reviewCount}</strong> line(s) need review.</> : null}
         </div>
       ) : null}
       {plan.notes ? <p className="mb-4 whitespace-pre-wrap rounded-md bg-white p-3 text-sm text-muted ring-1 ring-border">{plan.notes}</p> : null}
@@ -226,7 +218,7 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
             ) : undefined}
           />
         ) : <CardContent><p className="text-sm text-muted">No SIP actions.</p></CardContent>}
-        {editable && sips.some((s) => s.needs_review || plan.status === "DRAFT") ? (
+        {editable && sips.some((s) => s.needs_review) ? (
           <CardContent className="space-y-2 border-t border-border">
             {sips.filter((s) => s.needs_review).map((s) => (
               <ActionForm key={s.id} action={resolveSipSecurityAction.bind(null, id, planId, s.id)} className="flex flex-wrap items-center gap-2 text-sm">
@@ -235,11 +227,6 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
                 <SubmitButton size="sm" variant="outline">Confirm</SubmitButton>
               </ActionForm>
             ))}
-            {plan.status === "DRAFT" ? sips.map((s) => (
-              <ActionForm key={`d-${s.id}`} action={deleteSipAction.bind(null, id, planId, s.id)} className="inline-block">
-                <SubmitButton size="sm" variant="ghost" confirm="Remove this SIP line from the draft?">Remove {s.action} {s.scheme_name.slice(0, 30)}</SubmitButton>
-              </ActionForm>
-            )) : null}
           </CardContent>
         ) : null}
         {editable ? (
@@ -261,39 +248,14 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
         ) : null}
       </Card>
 
-      {plan.status === "DRAFT" && canAdvise ? (
-        <Card className="mt-4 border-brand/30">
-          <CardHeader><CardTitle>Approve plan</CardTitle></CardHeader>
-          <CardContent>
-            {missingSecurity || reviewCount ? (
-              <p className="mb-3 text-sm text-red-700">Resolve {missingSecurity ? `${missingSecurity} item(s) without a security` : ""}{missingSecurity && reviewCount ? " and " : ""}{reviewCount ? `${reviewCount} line(s) flagged "needs review"` : ""} first. The database refuses approval otherwise.</p>
-            ) : null}
-            <ActionForm action={approvePlanAction.bind(null, id, planId)} className="space-y-3">
-              {c.active_plan_id && c.active_plan_id !== planId && plan.plan_kind !== "ADDITIONAL" ? (
-                <Field label="Reason for replacing the current ACTIVE plan *"><Input name="reason" required /></Field>
-              ) : <input type="hidden" name="reason" value="" />}
-              <label className="flex items-start gap-2 text-sm">
-                <input type="checkbox" name="confirm" value="yes" className="mt-1" />
-                {plan.plan_kind === "ADDITIONAL" && c.active_plan_id ? (
-                  <span>I have reviewed every line. Approving adds them to the active plan as a new tranche{plan.fresh_money ? <> and records <Money value={plan.fresh_money} /> of fresh money</> : null}. It does <strong>not</strong> issue any call to the client.</span>
-                ) : (
-                  <span>I have reviewed every line. Approving makes this plan ACTIVE and freezes its approved targets. It does <strong>not</strong> issue any call to the client.</span>
-                )}
-              </label>
-              <SubmitButton>{plan.plan_kind === "ADDITIONAL" && c.active_plan_id ? "Approve & add to active plan" : "Approve & activate"}</SubmitButton>
-            </ActionForm>
-          </CardContent>
-        </Card>
-      ) : null}
-
-      {canAdvise && (plan.status === "ACTIVE" || plan.status === "DRAFT") ? (
+      {canAdvise && plan.status === "ACTIVE" ? (
         <details className="mt-4 rounded-xl border border-border bg-surface">
           <summary className="cursor-pointer select-none px-4 py-2.5 text-sm font-semibold">Close the plan</summary>
           <CardContent className="border-t border-border pt-3">
             <ActionForm action={closePlanAction.bind(null, id, planId)} className="flex flex-wrap items-end gap-2">
               <Field label="New status">
                 <Select name="status" className="w-40">
-                  {plan.status === "ACTIVE" ? <option value="COMPLETED">Completed</option> : null}
+                  <option value="COMPLETED">Completed</option>
                   <option value="CANCELLED">Cancelled</option>
                 </Select>
               </Field>
@@ -306,59 +268,3 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
     </>
   );
 }
-
-function ItemEditor({ i, clientId, planId, isActive, securities, heldIds }: {
-  i: PlanItemProgress; clientId: string; planId: string; isActive: boolean;
-  securities: Awaited<ReturnType<typeof listAllSecurities>>; heldIds: string[];
-}) {
-  return (
-    <details className="text-xs">
-      <summary className="cursor-pointer text-brand">{isActive ? "Amend / cancel" : i.needs_review ? "Resolve / edit" : "Edit"}</summary>
-      <div className="absolute z-30 mt-1 w-[520px] rounded-lg border border-border bg-white p-3 shadow-lg">
-        <ActionForm action={updatePlanItemAction.bind(null, clientId, planId, i.plan_item_id)} className="grid grid-cols-2 gap-2">
-          <Field label="Security" className="col-span-2"><SecuritySelect securities={securities} heldIds={heldIds} defaultValue={i.security_id} /></Field>
-          <input type="hidden" name="scheme_name" value={i.scheme_name} />
-          <input type="hidden" name="folio_number" value={i.folio_number ?? ""} />
-          <Field label="Action">
-            <Select name="action" defaultValue={i.action}><option>SELL</option><option>BUY</option><option value="RETAIN">KEEP</option></Select>
-          </Field>
-          <Field label="Target amount (₹)"><Input name="target_amount" defaultValue={i.original_target_amount || ""} /></Field>
-          <Field label="Current value (₹)"><Input name="current_amount" defaultValue={i.current_amount ?? ""} /></Field>
-          <Field label="Target units"><Input name="target_units" defaultValue={i.target_units ?? ""} /></Field>
-          <Field label="Target weight %"><Input name="target_weight" defaultValue={i.target_weight ?? ""} /></Field>
-          <Field label="Priority"><Input name="priority" defaultValue={i.priority} /></Field>
-          <Field label="Reason" className="col-span-2"><Textarea name="reason" rows={2} defaultValue={i.reason ?? ""} /></Field>
-          {isActive ? <Field label="Reason for amending an ACTIVE plan *" className="col-span-2"><Input name="change_reason" required /></Field> : null}
-          <div className="col-span-2"><SubmitButton size="sm">Save</SubmitButton></div>
-        </ActionForm>
-        {i.action === "BUY" && i.item_status === "OPEN" && i.yet_to_advise_amount > 0 ? (
-          <div className="mt-3 border-t border-border pt-3">
-            <div className="mb-1 font-medium text-ink">Move to SIP</div>
-            <ActionForm action={convertBuyToSipAction.bind(null, clientId, planId, i.plan_item_id)} className="grid grid-cols-2 gap-2">
-              <Field label="Monthly SIP ₹ *"><Input name="monthly_amount" inputMode="decimal" required /></Field>
-              <Field label="Lump sum to move ₹" hint={`Up to ${Math.round(i.yet_to_advise_amount).toLocaleString("en-IN")} not yet advised`}>
-                <Input name="lumpsum_amount" inputMode="decimal" defaultValue={Math.round(i.yet_to_advise_amount)} />
-              </Field>
-              <Field label="Debit day"><Input name="debit_day" inputMode="numeric" /></Field>
-              <Field label="Reason *"><Input name="reason" required placeholder="e.g. client prefers SIP" /></Field>
-              <div className="col-span-2"><SubmitButton size="sm" variant="outline">Move to SIP</SubmitButton></div>
-            </ActionForm>
-          </div>
-        ) : null}
-        <div className="mt-3 border-t border-border pt-3">
-          {isActive ? (
-            <ActionForm action={cancelPlanItemAction.bind(null, clientId, planId, i.plan_item_id)} className="flex gap-2">
-              <Input name="reason" placeholder="Reason to cancel this item" required />
-              <SubmitButton size="sm" variant="danger">Cancel item</SubmitButton>
-            </ActionForm>
-          ) : (
-            <ActionForm action={deletePlanItemAction.bind(null, clientId, planId, i.plan_item_id)}>
-              <SubmitButton size="sm" variant="danger" confirm="Delete this line from the draft?">Delete from draft</SubmitButton>
-            </ActionForm>
-          )}
-        </div>
-      </div>
-    </details>
-  );
-}
-

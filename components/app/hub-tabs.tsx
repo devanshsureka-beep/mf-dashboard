@@ -12,9 +12,8 @@ export const HUBS = {
     { key: "bulk", href: "/advice/bulk", label: "Call many clients", roles: ["ADMIN", "ADVISOR"] },
   ],
   onboard: [
-    { key: "one", href: "/onboard", label: "One client" },
-    { key: "many", href: "/onboard/bulk", label: "Many clients (PDFs or folder)" },
-    { key: "check", href: "/onboard/check", label: "Check documents only" },
+    { key: "client", href: "/onboard", label: "Client onboard · CAS + report" },
+    { key: "new", href: "/onboard/new", label: "New MF user · report only" },
   ],
   admin: [
     { key: "team", href: "/admin/users", label: "Team & assignments" },

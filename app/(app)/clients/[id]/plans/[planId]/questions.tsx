@@ -23,18 +23,18 @@ function DiffFacts({ d }: { d: NonNullable<ReportQuestionRow["report_diff"]> }) 
  * stays a Keep line until the desk answers; a draft plan cannot be approved
  * while one is open.
  */
-export function ReportQuestions({ rows, clientId, planId, canAnswer }: { rows: ReportQuestionRow[]; clientId: string; planId: string; canAnswer: boolean }) {
+export function ReportQuestions({ rows, clientId, planId, canAnswer, title, foldAnswered = false }: { rows: ReportQuestionRow[]; clientId: string; planId: string; canAnswer: boolean; title?: string; foldAnswered?: boolean }) {
   const open = rows.filter((r) => r.open);
   return (
-    <Card id="questions" className={open.length ? "mt-4 scroll-mt-14 border-amber-300" : "mt-4 scroll-mt-14"}>
+    <Card id="questions" className={open.length ? "scroll-mt-14 border-amber-300 [&:not(:first-child)]:mt-4" : "scroll-mt-14 [&:not(:first-child)]:mt-4"}>
       <CardHeader>
-        <CardTitle>Questions from the report{open.length ? ` · ${open.length} open` : ""}</CardTitle>
+        <CardTitle>{title ?? `Questions from the report${open.length ? ` · ${open.length} open` : ""}`}</CardTitle>
         <span className="text-xs text-muted">
           The report&rsquo;s words for these funds could not be read as Buy, Sell or Keep, or a newer CAS differs from the report. Each is kept until you answer.
         </span>
       </CardHeader>
       <ul className="divide-y divide-border border-t border-border">
-        {rows.map((r) => (
+        {(foldAnswered ? open : rows).map((r) => (
           <li key={r.id} className="px-4 py-3 text-sm">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <div className="min-w-0">
@@ -84,6 +84,19 @@ export function ReportQuestions({ rows, clientId, planId, canAnswer }: { rows: R
           </li>
         ))}
       </ul>
+      {foldAnswered && rows.length > open.length ? (
+        <details className="border-t border-border">
+          <summary className="cursor-pointer select-none px-4 py-2 text-xs text-muted">{rows.length - open.length} answered · show</summary>
+          <ul className="divide-y divide-border border-t border-border">
+            {rows.filter((r) => !r.open).map((r) => (
+              <li key={r.id} className="px-4 py-2 text-[13px]">
+                <span className="font-medium">{r.scheme_name}</span>
+                <span className="text-emerald-800"> · {r.action === "RETAIN" ? "Keep" : <>{r.action === "SELL" ? "Sell" : "Buy"} <Money value={r.target_amount} /></>}{r.report_answer ? ` · ${r.report_answer}` : ""}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
     </Card>
   );
 }

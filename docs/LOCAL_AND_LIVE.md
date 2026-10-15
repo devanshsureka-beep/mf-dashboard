@@ -79,7 +79,7 @@ Open http://localhost:3000 and sign in with your **staging** account. Pages relo
 
 ## D. Good to know
 
-- **Document Check** (`/onboard/check`) is read-only and safe on the live site too.
+- Onboarding on the live site only creates DRAFT plans; reject a draft (Plan details · reject draft) to undo a test.
 - The daily NAV feed (n8n) posts to the live site. To test it locally, send the AMFI file to
   `http://localhost:3000/api/integrations/nav-update` with your local `INTEGRATION_API_KEY` (see `docs/INTEGRATIONS.md`, section 6).
 - If you prefer a database on your own machine instead of the staging project, see `docs/LOCAL_WITHOUT_DOCKER.md` or use `supabase start`.

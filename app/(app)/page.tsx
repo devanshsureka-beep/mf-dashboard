@@ -11,6 +11,8 @@ import { askCasHref } from "@/lib/ask-cas";
 import { listDeskClients } from "@/services/clients";
 import { listDueFollowUps } from "@/services/notes";
 import { listWaiting } from "@/services/waiting";
+import { listDraftPlans } from "@/services/plans";
+import { DraftList } from "@/components/app/draft-list";
 
 export const metadata = { title: PAGES.overview };
 
@@ -60,7 +62,8 @@ export default async function Today(props: PageProps<"/">) {
   const sp = await props.searchParams;
   const mine = sp.mine === "1";
   const day = todayIst();
-  const { all, calls, openCalls, stale, sip, followUps, casStats, actor } = await pageData(async (tx, a) => ({
+  const { all, calls, openCalls, stale, sip, followUps, casStats, draftPlans, actor } = await pageData(async (tx, a) => ({
+    draftPlans: await listDraftPlans(tx, { advisorId: mine ? a.id : null }),
     all: await listDeskClients(tx, mine ? { advisorId: a.id } : {}),
     calls: await listWaiting(tx, { advisorId: mine ? a.id : null, limit: 5 }),
     openCalls: Number((await tx<{ n: number }[]>`select count(*)::int as n from public.v_pending_executions where (${mine} = false or advisor_id = ${a.id})`)[0]?.n ?? 0),
@@ -82,7 +85,7 @@ export default async function Today(props: PageProps<"/">) {
   const toCheck = all.filter((c) => c.cas_to_review > 0);
   const unadvised = all.filter((c) => c.unadvised_to_review > 0);
   const nextTranche = all.filter((c) => c.active_plan_id && c.pending_total < 0.5 && c.remaining_to_advise >= 0.5).sort((a, b) => b.remaining_to_advise - a.remaining_to_advise);
-  const drafts = all.filter((c) => c.has_draft_plan);
+  const drafts = draftPlans;
   const noAgreement = all.filter((c) => c.agreement_status !== "VALID");
   const premiumGap = all.filter((c) => c.premium_status !== "ACTIVE" || c.renewal_due);
   const items = (awaiting.length ? 1 : 0) + (toCheck.length || unadvised.length || casStats.confirm ? 1 : 0) + nextTranche.length + drafts.length + followUps.length;
@@ -166,6 +169,14 @@ export default async function Today(props: PageProps<"/">) {
               href="/reconciliation" linkLabel="Open inbox" />
           ) : null}
 
+          {drafts.length ? (
+            <Queue n={drafts.length} tone="bg-violet-100 text-violet-800" title="Drafts to approve"
+              sub={<>Onboarded from a CAS and a report · {drafts.filter((d) => d.open_questions || d.needs_review).length} with questions or lines to check · nothing counts until approved</>}
+              href="/clients?plan=draft" linkLabel={drafts.length > 5 ? `See all ${drafts.length}` : "Open drafts"}>
+              <div className="p-2"><DraftList rows={drafts.slice(0, 5)} compact /></div>
+            </Queue>
+          ) : null}
+
           {nextTranche.length ? (
             <Queue n={nextTranche.length} tone="bg-brand-50 text-brand-700" title="Next tranche to advise"
               sub={<>Last tranche done; the plan still has money to move · <Money value={nextTranche.reduce((s, c) => s + c.remaining_to_advise, 0)} /></>}
@@ -185,11 +196,7 @@ export default async function Today(props: PageProps<"/">) {
             </Queue>
           ) : null}
 
-          <div className="grid gap-3 md:grid-cols-3">
-            <Link href="/clients?plan=draft" className="rounded-xl border border-border bg-surface p-4 hover:border-brand-200">
-              <div className="flex justify-between"><b>Plans to approve</b><span className="font-bold text-brand">{drafts.length}</span></div>
-              <div className="mt-1 text-xs text-muted">{drafts.length ? drafts.slice(0, 2).map((c) => c.full_name).join(", ") + (drafts.length > 2 ? "…" : "") : "No drafts waiting"}</div>
-            </Link>
+          <div className="grid gap-3 md:grid-cols-2">
             <Link href="/clients?attention=follow_up" className="rounded-xl border border-border bg-surface p-4 hover:border-brand-200">
               <div className="flex justify-between"><b>Follow-ups due</b><span className={cn("font-bold", followUps.length ? "text-amber-700" : "text-muted")}>{followUps.length}</span></div>
               <div className="mt-1 text-xs text-muted">{followUps.length ? followUps.slice(0, 2).map((n) => n.client_name).join(", ") : "None due"}</div>

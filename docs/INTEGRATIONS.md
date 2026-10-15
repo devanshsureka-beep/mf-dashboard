@@ -219,7 +219,7 @@ curl -X POST "$APP/api/integrations/nav-update?source=manual" \
 
 ## 7. Claude report reader (Bulk Onboarding)
 
-Advisory reports come in many layouts. The built-in readers (`lib/parsers/*`) run first; when a report does not fully tie out to the CAS, the **Bulk Onboarding** page (`/onboard/bulk`) asks Claude to read it through n8n, so the Anthropic key stays in n8n.
+Advisory reports come in many layouts. The built-in readers (`lib/parsers/*`) run first; when a report does not fully tie out to the CAS, the **Onboard** page (`/onboard`, both tabs) asks Claude to read it through n8n, so the Anthropic key stays in n8n.
 
 **n8n workflow:** "Univest MF Desk - Report reader (Claude)": Webhook (POST, Header Auth) → HTTP Request to `https://api.anthropic.com/v1/messages` (Anthropic credential) → Respond to Webhook with `{ status, body }`. Executions are not saved (the request holds client documents).
 

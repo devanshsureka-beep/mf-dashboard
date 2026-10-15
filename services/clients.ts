@@ -119,6 +119,8 @@ export type DeskClient = ClientSummary & {
   cas_to_review: number;
   follow_ups_due: number;
   has_draft_plan: boolean;
+  /** The newest DRAFT plan (opens from the Drafts list). */
+  draft_plan_id: string | null;
   /** Confirmed CAS from onboarding on: CAS n closes tranche n, so the open tranche is max(1, cas_count). */
   cas_count: number;
   /** Plan money not yet advised (sell + buy). */
@@ -138,6 +140,7 @@ export async function listDeskClients(tx: Tx, f: DeskFilters = {}): Promise<Desk
            coalesce(bk.in_bank, 0)::float8 as in_bank,
            coalesce(un.n, 0)::int as unadvised_to_review, coalesce(cr.n, 0)::int as cas_to_review, coalesce(fu.n, 0)::int as follow_ups_due,
            exists (select 1 from public.advisory_plans d where d.client_id = s.client_id and d.status = 'DRAFT') as has_draft_plan,
+           (select d.id from public.advisory_plans d where d.client_id = s.client_id and d.status = 'DRAFT' order by d.created_at desc limit 1) as draft_plan_id,
            (select count(*)::int from public.portfolio_snapshots ps2 where ps2.client_id = s.client_id and ps2.review_status = 'CONFIRMED'
               and ps2.snapshot_date >= coalesce((select b.snapshot_date from public.portfolio_snapshots b where b.client_id = s.client_id and b.is_baseline limit 1), '-infinity'::date)) as cas_count
     from public.v_client_summary s
