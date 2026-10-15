@@ -109,3 +109,39 @@ export async function issueBulkCall(
   if (!issued.length) throw new AppError("No call was recorded: every selected client was skipped.");
   return { issued, skipped: lines.filter((l) => l.amount == null) };
 }
+
+// ---------------------------------------------------------------------------
+// Calling clients by a fund they hold
+// ---------------------------------------------------------------------------
+export interface HeldFund { security_id: string; scheme_name: string; isin: string | null; nav: number | null; clients: number; total: number }
+
+/** Funds in the clients' latest CAS whose name (every word) or ISIN matches; most-held first. */
+export async function fundsHeldMatching(tx: Tx, q: string): Promise<HeldFund[]> {
+  const words = q.trim().split(/\s+/).filter((w) => w.length > 0).slice(0, 6);
+  if (!words.length) return [];
+  const isin = /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/i.test(q.trim()) ? q.trim().toUpperCase() : null;
+  const like = words.map((w) => `%${w.replace(/[\\%_]/g, (m) => `\\${m}`)}%`);
+  return tx<HeldFund[]>`
+    select h.security_id, max(h.scheme_name) as scheme_name, max(h.isin) as isin, max(h.nav)::float8 as nav,
+           count(distinct h.client_id)::int as clients, sum(h.live_value)::float8 as total
+    from public.v_holding_live h
+    join public.clients c on c.id = h.client_id and c.deleted_at is null
+    where h.security_id is not null and h.units > 0.0005
+      and (${isin}::text is not null and h.isin = ${isin}
+           or ${isin}::text is null and h.scheme_name ilike all(${like}::text[]))
+    group by h.security_id
+    order by count(distinct h.client_id) desc, sum(h.live_value) desc
+    limit 30`;
+}
+
+export interface ClientHolding { value: number; units: number; folios: number }
+
+/** Each client's holding in one fund (latest CAS, valued at today's NAV). */
+export async function holdingsOfFund(tx: Tx, securityId: string): Promise<Map<string, ClientHolding>> {
+  const rows = await tx<{ client_id: string; value: number; units: number; folios: number }[]>`
+    select client_id, sum(live_value)::float8 as value, sum(units)::float8 as units, count(distinct folio_number)::int as folios
+    from public.v_holding_live
+    where security_id = ${securityId} and units > 0.0005
+    group by client_id`;
+  return new Map(rows.map((r) => [r.client_id, { value: r.value, units: r.units, folios: r.folios }]));
+}

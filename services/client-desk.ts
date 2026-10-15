@@ -123,7 +123,7 @@ export async function getFundRows(tx: Tx, clientId: string): Promise<{ rows: Fun
   // Trades seen in CAS since onboarding.
   const txns = views.baseline
     ? await tx<{ security_id: string; date: string; type: string; amount: number | null; units: number | null }[]>`
-        select security_id, transaction_date::text as date, transaction_type as type, amount, units
+        select security_id, transaction_date::text as date, public.txn_effective_type(transaction_type, description, units) as type, amount, units
         from public.portfolio_transactions
         where client_id = ${clientId} and security_id is not null and transaction_date > ${views.baseline.snapshot_date}::date
         order by transaction_date`

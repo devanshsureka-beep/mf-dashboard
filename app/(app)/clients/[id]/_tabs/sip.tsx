@@ -45,7 +45,7 @@ export async function SipTab({ client: c, actor }: { client: ClientSummary; acto
     recent: await tx<{ date: string; scheme_name: string; amount: number; units: number | null }[]>`
       select t.transaction_date::text as date, t.scheme_name, abs(t.amount)::float8 as amount, t.units::float8 as units
       from public.portfolio_transactions t
-      where t.client_id = ${c.client_id} and t.transaction_type = 'SIP' and coalesce(t.amount, 0) <> 0
+      where t.client_id = ${c.client_id} and public.txn_effective_type(t.transaction_type, t.description, t.units) = 'SIP' and coalesce(t.amount, 0) <> 0
       order by t.transaction_date desc limit 60`,
     lastCas: (await tx<{ d: string | null }[]>`
       select max(snapshot_date)::text as d from public.portfolio_snapshots where client_id = ${c.client_id} and review_status = 'CONFIRMED'`)[0]?.d ?? null,

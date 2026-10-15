@@ -69,7 +69,7 @@ export async function getMonthlyReport(tx: Tx, clientId: string, ym: string): Pr
   const sipRows = await tx<{ scheme_name: string; amount: number; instalments: number }[]>`
     select scheme_name, sum(abs(amount))::float8 as amount, count(*)::int as instalments
     from public.portfolio_transactions
-    where client_id = ${clientId} and transaction_type = 'SIP' and coalesce(amount, 0) <> 0
+    where client_id = ${clientId} and public.txn_effective_type(transaction_type, description, units) = 'SIP' and coalesce(amount, 0) <> 0
       and transaction_date between ${start}::date and ${end}::date
     group by scheme_name order by 2 desc`;
 

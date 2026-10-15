@@ -16,12 +16,16 @@ import { issueBulkAction, previewBulkAction } from "./actions";
 
 const safeIssue = safeAction(issueBulkAction);
 
-export interface BulkClient { id: string; name: string; code: string; advisor: string | null; risk: string | null; value: number; moneyLeft: number; hasPlan: boolean }
+export interface BulkClient {
+  id: string; name: string; code: string; advisor: string | null; risk: string | null; value: number; moneyLeft: number; hasPlan: boolean;
+  /** Filtered by a fund: the client's holding in it (latest CAS, today's NAV). */
+  holding?: { value: number; units: number; folios: number } | null;
+}
 
-export function BulkCallForm({ clients, searchFunds, initial = [] }: { clients: BulkClient[]; searchFunds: (q: string) => Promise<FundOption[]>; initial?: string[] }) {
+export function BulkCallForm({ clients, searchFunds, initial = [], initialFund = null }: { clients: BulkClient[]; searchFunds: (q: string) => Promise<FundOption[]>; initial?: string[]; initialFund?: PickedFund | null }) {
   const [selected, setSelected] = useState<Set<string>>(() => new Set(initial.filter((id) => clients.some((c) => c.id === id))));
   const [action, setAction] = useState<"BUY" | "SELL">("BUY");
-  const [fund, setFund] = useState<PickedFund | null>(null);
+  const [fund, setFund] = useState<PickedFund | null>(initialFund);
   const [mode, setMode] = useState<BulkMode>("FIXED");
   const [value, setValue] = useState("");
   const [preview, setPreview] = useState<{ lines: BulkLine[]; error?: string; key: string } | null>(null);
@@ -52,6 +56,7 @@ export function BulkCallForm({ clients, searchFunds, initial = [] }: { clients: 
   const current = ready && preview?.key === specKey ? preview : null;
   const toIssue = current?.lines.filter((l) => l.amount != null) ?? [];
   const total = toIssue.reduce((s, l) => s + (l.amount ?? 0), 0);
+  const byFund = clients.some((c) => c.holding);
   const allOn = clients.length > 0 && clients.every((c) => selected.has(c.id));
   const toggle = (id: string) => setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
@@ -84,7 +89,7 @@ export function BulkCallForm({ clients, searchFunds, initial = [] }: { clients: 
         </div>
         {clients.length === 0 ? <p className="p-4 text-sm text-muted">No client matches these filters.</p> : (
           <Table className="text-[13px]">
-            <THead><TR><TH /><TH>Client</TH><TH>Advisor</TH><TH>Risk</TH><TH className="text-right">Value today</TH><TH className="text-right">This call</TH></TR></THead>
+            <THead><TR><TH /><TH>Client</TH><TH>Advisor</TH><TH>Risk</TH>{byFund ? <TH className="text-right">In this fund</TH> : null}<TH className="text-right">Value today</TH><TH className="text-right">This call</TH></TR></THead>
             <TBody>
               {clients.map((c) => {
                 const line = current?.lines.find((l) => l.client_id === c.id);
@@ -94,6 +99,12 @@ export function BulkCallForm({ clients, searchFunds, initial = [] }: { clients: 
                     <TD><div className="font-medium">{c.name}</div><div className="text-[11px] text-muted">{c.code}{c.hasPlan ? "" : " · no plan"}</div></TD>
                     <TD className="text-xs">{c.advisor ?? "—"}</TD>
                     <TD className="text-xs">{humanize(c.risk)}</TD>
+                    {byFund ? (
+                      <TD className="text-right">
+                        <div className="num font-semibold">{c.holding ? formatINR(c.holding.value) : "—"}</div>
+                        {c.holding ? <div className="text-[11px] text-muted">{c.holding.units.toLocaleString("en-IN", { maximumFractionDigits: 3 })} u{c.holding.folios > 1 ? ` · ${c.holding.folios} folios` : ""}{c.value > 0 ? ` · ${Math.round((c.holding.value / c.value) * 100)}% of portfolio` : ""}</div> : null}
+                      </TD>
+                    ) : null}
                     <TD className="text-right num">{formatINRCompact(c.value)}</TD>
                     <TD className="text-right text-xs">
                       {!selected.has(c.id) ? null : !line ? <span className="text-muted">…</span> : line.amount != null ? (

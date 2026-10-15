@@ -9,6 +9,7 @@
  *   NONE     - never had an instalment
  * Comparing the previous CAS date with the latest one gives what changed.
  */
+import { SIP_CANCEL_TEXT, SIP_TEXT } from "@/lib/parsers/cas";
 
 export interface SipTxn {
   date: string; // YYYY-MM-DD
@@ -45,9 +46,10 @@ export interface SipFundStatus {
 
 export const ACTIVE_WINDOW_DAYS = 40;
 
-const CANCEL = /\bsip\b.*\b(cancel|ceas|terminat|stopp?ed|closed)|systematic.*\b(cancel|ceas|terminat)/i;
+/** Cancellations and SIP wordings: one rule shared with the CAS reader. */
+const CANCEL = SIP_CANCEL_TEXT;
 /** Explicitly marked by the RTA / reader as a systematic instalment. */
-const EXPLICIT = /sys\.?\s*invest|systematic\s*(investment|purchase|instal)|purchase-?\s*systematic|\bsip\b/i;
+const EXPLICIT = SIP_TEXT;
 const isPurchase = (t: SipTxn) => (t.amount ?? 0) > 0 && (t.type === "SIP" || t.type === "PURCHASE");
 const isExplicit = (t: SipTxn) => t.type === "SIP" || EXPLICIT.test(t.description ?? "");
 

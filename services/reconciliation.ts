@@ -93,7 +93,7 @@ export async function runReconciliation(
   }));
 
   const txns = await tx<{ security_id: string | null; isin: string | null; scheme_name: string; transaction_type: string; units: number | null; transaction_date: string }[]>`
-    select security_id, isin, scheme_name, transaction_type, units, transaction_date
+    select security_id, isin, scheme_name, public.txn_effective_type(transaction_type, description, units) as transaction_type, units, transaction_date
     from public.portfolio_transactions
     where client_id = ${args.clientId}
       and transaction_date > ${prev[0].snapshot_date}::date and transaction_date <= ${curr[0].snapshot_date}::date`;

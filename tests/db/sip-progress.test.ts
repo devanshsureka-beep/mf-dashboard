@@ -34,7 +34,8 @@ describeDb("SIP alongside lump sums", () => {
         const pr = parsed("2026-10-01", [{ security: ctx.sec.Y, name: y.scheme_name, units: 400, nav: 100 }], [
           { date: "2026-08-05", type: "SIP", scheme_name: y.scheme_name, isin: y.isin, folio_number: "T1", amount: 20000, units: 200, nav: 100, balance_units: 200 },
           { date: "2026-09-05", type: "SIP", scheme_name: y.scheme_name, isin: y.isin, folio_number: "T1", amount: 20000, units: 100, nav: 200, balance_units: 300 },
-          { date: "2026-10-01", type: "SIP", scheme_name: y.scheme_name, isin: y.isin, folio_number: "T1", amount: 20000, units: 100, nav: 200, balance_units: 400 },
+          // Stored as a plain purchase by an older reader: still a SIP instalment.
+          { date: "2026-10-01", type: "PURCHASE", description: "Systematic Purchase - Instalment 3/12", scheme_name: y.scheme_name, isin: y.isin, folio_number: "T1", amount: 20000, units: 100, nav: 200, balance_units: 400 },
         ]);
         pr.holdings[0].isin = y.isin;
         const id = await createSnapshotFromParsed(t, { clientId: p.clientId, casDocumentId: null, parsed: pr, source: "CAS", createdBy: ctx.users.ops.id });

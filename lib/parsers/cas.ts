@@ -98,9 +98,19 @@ const NOISE = [
   /^@@PAGE_BREAK/,
 ];
 
+/**
+ * SIP instalments as RTAs word them: "SIP Purchase", "Sys. Investment (3/120)",
+ * "Systematic Purchase - Instalment 3/12", "Purchase Systematic-BSE",
+ * "Purchase Ongoing Systematic", "Purchase Instalment No". Same rule as
+ * public.txn_effective_type() in the database.
+ */
+export const SIP_TEXT = /\bsip\b|sip[\s-]*purchase|purchase[\s-]*sip|sys\.?\s*invest|systematic\s*(investment|purchase|instal)|purchase[\s-]*(ongoing\s*)?systematic|purchase[\s-]*instal/i;
+/** A SIP stopped: "SIP Cancelled", "SIPCancelled", "SIPTerminated", "Systematic Cancellation", "SIP ceased as per investor". */
+export const SIP_CANCEL_TEXT = /sip\s*(systematic\s*)?(cancel|ceas|terminat|stopp?ed|closed)|systematic\s*(cancel|ceas|terminat)|sip ceased|ceased as per investor/i;
+
 export function classifyTransaction(desc: string, units: number | null = null): { type: CasTxn["type"]; sipCancelled: boolean } {
   const d = desc.toLowerCase();
-  const sipCancelled = /sip\s*cancel/.test(d);
+  const sipCancelled = SIP_CANCEL_TEXT.test(d);
   const tax = /stamp duty/.test(d) ? "STAMP_DUTY" : /\bstt\b/.test(d) ? "STT" : /\btds\b/.test(d) ? "TDS" : null;
   // Reversals, cancellations and rejections are never a new trade, whatever they mention.
   if (/cancel|revers(al|ed)|rejection|rejected/.test(d)) return { type: "OTHER", sipCancelled };
@@ -119,7 +129,7 @@ export function classifyTransaction(desc: string, units: number | null = null): 
   if (/(dividend|idcw).*(reinvest)/.test(d)) return { type: "DIVIDEND_REINVESTMENT", sipCancelled };
   if (/dividend|idcw/.test(d)) return { type: "DIVIDEND_PAYOUT", sipCancelled };
   if (/bonus/.test(d)) return { type: "BONUS", sipCancelled };
-  if (/\bsip\b|systematic investment/.test(d)) return { type: "SIP", sipCancelled };
+  if (SIP_TEXT.test(d)) return { type: "SIP", sipCancelled };
   if (/purchase|nfo|investment|new fund offer|subscription|initial allotment/.test(d)) return { type: "PURCHASE", sipCancelled };
   return { type: "OTHER", sipCancelled };
 }
@@ -131,7 +141,10 @@ export function classifyTransaction(desc: string, units: number | null = null): 
  */
 export function effectiveTxnType(type: string, description: string | null, units: number | string | null): string {
   const u = units === null || units === undefined ? 0 : Number(units);
-  if (!description || !u || !["STT", "TDS", "STAMP_DUTY", "OTHER"].includes(type)) return type;
+  if (!description || !u) return type;
+  // A SIP instalment an older reader stored as a plain purchase.
+  if (type === "PURCHASE") return classifyTransaction(description, u).type === "SIP" ? "SIP" : type;
+  if (!["STT", "TDS", "STAMP_DUTY", "OTHER"].includes(type)) return type;
   return classifyTransaction(description, u).type;
 }
 
