@@ -7,9 +7,9 @@ type Tab = { key: string; href: string; label: string; roles?: AppRole[] };
 /** Pages that live together under one menu item, shown as tabs. */
 export const HUBS = {
   calls: [
-    { key: "pending", href: "/executions/pending", label: "Waiting for clients" },
-    { key: "ledger", href: "/advice", label: "All calls" },
-    { key: "bulk", href: "/advice/bulk", label: "Call many clients", roles: ["ADMIN", "ADVISOR"] },
+    { key: "find", href: "/advice/find", label: "Find clients", roles: ["ADMIN", "ADVISOR"] },
+    { key: "pending", href: "/executions/pending", label: "Waiting" },
+    { key: "ledger", href: "/advice", label: "Tranches" },
   ],
   onboard: [
     { key: "client", href: "/onboard", label: "Client onboard · CAS + report" },

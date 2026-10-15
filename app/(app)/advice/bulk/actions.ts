@@ -13,9 +13,10 @@ const specSchema = z.object({
   clientIds: z.array(z.uuid()).min(1, "Select at least one client").max(300),
   fundRef: z.string().regex(/^sec:[0-9a-f-]{36}$|^isin:[A-Z]{2}[A-Z0-9]{9}[0-9]$/i, "Choose the fund"),
   action: z.enum(["BUY", "SELL"]),
-  mode: z.enum(["FIXED", "PCT_MONEY_LEFT", "PCT_PORTFOLIO", "PCT_HOLDING"]),
-  value: z.coerce.number().positive("Enter the amount or percentage"),
-});
+  mode: z.enum(["PLAN", "FIXED", "PCT_CASH", "PCT_MONEY_LEFT", "PCT_PORTFOLIO", "PCT_HOLDING"]),
+  // "As each plan says" needs no number.
+  value: z.coerce.number().min(0),
+}).refine((s) => s.mode === "PLAN" || s.value > 0, { message: "Enter the amount or percentage", path: ["value"] });
 
 /** What each client would be told (nothing is saved). */
 export async function previewBulkAction(raw: unknown): Promise<{ lines: BulkLine[]; error?: string }> {

@@ -85,7 +85,30 @@ export async function issueAdviceAction(clientId: string, _p: ActionResult | nul
   if (!res.ok) return res;
   revalidatePath("/advice");
   revalidatePath(`/clients/${clientId}`);
+  // A round from Find clients: straight on to the next client, same time and channel.
+  const round = fd.has("queue_done") ? queueNext(fd, 1) : null;
+  if (round) redirect(round);
   redirect(batchId ? `/advice?client=${clientId}&issued=${batchId}` : `/clients/${clientId}?tab=sip`);
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Where a round goes after this client: the next one's Issue call page, or
+ * back to Find clients when it was the last. Only client ids and the time and
+ * channel typed go into the link.
+ */
+function queueNext(fd: FormData, advised: number): string {
+  const next = str(fd, "queue_next").split(",").filter((x) => UUID.test(x)).slice(0, 300);
+  const done = (Number(str(fd, "queue_done")) || 0) + advised;
+  if (!next.length) return `/advice/find?round=${done}`;
+  const q = new URLSearchParams({ client: next[0], done: String(done) });
+  if (next.length > 1) q.set("queue", next.slice(1).join(","));
+  const at = str(fd, "communicated_at");
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(at)) q.set("at", at);
+  const ch = str(fd, "channel");
+  if ((CHANNELS as readonly string[]).includes(ch)) q.set("ch", ch);
+  return `/advice/new?${q.toString()}`;
 }
 
 export async function reviseAdviceAction(itemId: string, _p: ActionResult | null, fd: FormData): Promise<ActionResult> {

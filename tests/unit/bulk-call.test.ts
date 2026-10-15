@@ -19,5 +19,11 @@ describe("bulk call amounts", () => {
     expect(bulkAmount("FIXED", 2000000, c, "SELL")).toMatchObject({ skip: expect.stringContaining("exceeds the holding") });
     expect(bulkAmount("PCT_PORTFOLIO", 150, c, "BUY")).toEqual({ skip: "Percentage above 100%" });
     expect(bulkAmount("FIXED", 0, c, "BUY")).toEqual({ skip: "No amount / percentage entered" });
+    // As each plan says: the line's amount left, whatever value is sent.
+    expect(bulkAmount("PLAN", 0, { ...c, plan_left: 400000 }, "BUY")).toEqual({ amount: 400000 });
+    expect(bulkAmount("PLAN", 0, { ...c, plan_left: null }, "BUY")).toEqual({ skip: "No plan line for this fund" });
+    expect(bulkAmount("PLAN", 0, { ...c, plan_left: 0 }, "BUY")).toEqual({ skip: "Plan line already fully advised" });
+    expect(bulkAmount("PLAN", 0, { ...c, plan_left: 5000000 }, "SELL")).toMatchObject({ skip: expect.stringContaining("exceeds the holding") });
+    expect(bulkAmount("PCT_CASH", 40, { ...c, cash: 1820000 }, "BUY")).toEqual({ amount: 728000 });
   });
 });

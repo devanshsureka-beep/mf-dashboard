@@ -22,18 +22,22 @@ export interface BulkClient {
   holding?: { value: number; units: number; folios: number } | null;
 }
 
-export function BulkCallForm({ clients, searchFunds, initial = [], initialFund = null }: { clients: BulkClient[]; searchFunds: (q: string) => Promise<FundOption[]>; initial?: string[]; initialFund?: PickedFund | null }) {
+export function BulkCallForm({ clients, searchFunds, initial = [], initialFund = null, initialAction, initialMode }: {
+  clients: BulkClient[]; searchFunds: (q: string) => Promise<FundOption[]>; initial?: string[]; initialFund?: PickedFund | null;
+  initialAction?: "BUY" | "SELL"; initialMode?: BulkMode;
+}) {
   const [selected, setSelected] = useState<Set<string>>(() => new Set(initial.filter((id) => clients.some((c) => c.id === id))));
-  const [action, setAction] = useState<"BUY" | "SELL">("BUY");
+  const [action, setAction] = useState<"BUY" | "SELL">(initialAction ?? "BUY");
   const [fund, setFund] = useState<PickedFund | null>(initialFund);
-  const [mode, setMode] = useState<BulkMode>("FIXED");
+  const [mode, setMode] = useState<BulkMode>(initialMode ?? (initialFund ? "PLAN" : "FIXED"));
   const [value, setValue] = useState("");
   const [preview, setPreview] = useState<{ lines: BulkLine[]; error?: string; key: string } | null>(null);
   const [state, formAction, pending] = useActionState(safeIssue, null);
 
-  const spec = useMemo(() => ({ clientIds: [...selected], fundRef: fund?.value ?? "", action, mode, value: Number(value) || 0 }), [selected, fund, action, mode, value]);
+  const amountValue = Number(value.replace(/[₹,\s]/g, "")) || 0;
+  const spec = useMemo(() => ({ clientIds: [...selected], fundRef: fund?.value ?? "", action, mode, value: mode === "PLAN" ? 0 : amountValue }), [selected, fund, action, mode, amountValue]);
   const specKey = JSON.stringify(spec);
-  const ready = selected.size > 0 && fund && Number(value) > 0;
+  const ready = selected.size > 0 && fund && (mode === "PLAN" || amountValue > 0);
 
   useEffect(() => {
     if (!ready) return;
@@ -108,7 +112,11 @@ export function BulkCallForm({ clients, searchFunds, initial = [], initialFund =
                     <TD className="text-right num">{formatINRCompact(c.value)}</TD>
                     <TD className="text-right text-xs">
                       {!selected.has(c.id) ? null : !line ? <span className="text-muted">…</span> : line.amount != null ? (
-                        <><span className="num font-medium">{formatINR(line.amount)}</span><div className="text-[11px] text-muted">{line.plan_item_id ? "on plan" : "off plan"}</div></>
+                        <>
+                          <span className="num font-medium">{formatINR(line.amount)}</span>
+                          <div className="text-[11px] text-muted">{line.plan_item_id ? `on plan${line.plan_yet_to_advise != null ? ` · ${formatINRCompact(line.plan_yet_to_advise)} left` : ""}` : "off plan"}</div>
+                          {action === "BUY" && line.amount > line.cash + 0.5 ? <div className="text-[11px] text-amber-700">more than their cash ({formatINRCompact(line.cash)})</div> : null}
+                        </>
                       ) : <span className="text-amber-700">{line.skip}</span>}
                     </TD>
                   </TR>
@@ -132,15 +140,17 @@ export function BulkCallForm({ clients, searchFunds, initial = [], initialFund =
         <Field label="Fund *">
           <FundPicker search={searchFunds} value={fund} onChange={setFund} />
         </Field>
-        <div className="grid grid-cols-[1fr_8rem] gap-2">
-          <Field label="How much">
+        <div className={mode === "PLAN" ? "grid gap-2" : "grid grid-cols-[1fr_8rem] gap-2"}>
+          <Field label="How much for each client">
             <Select value={mode} onChange={(e) => setMode(e.target.value as BulkMode)}>
               {BULK_MODES.filter((m) => m.value !== "PCT_MONEY_LEFT" && (action === "SELL" || m.value !== "PCT_HOLDING")).map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
             </Select>
           </Field>
-          <Field label={mode === "FIXED" ? "₹ per client" : "%"}>
-            <Input inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value)} placeholder={mode === "FIXED" ? "200000" : "25"} />
-          </Field>
+          {mode === "PLAN" ? <p className="text-xs text-muted">Each client gets what their plan has left for this fund. Clients without such a plan line are skipped.</p> : (
+            <Field label={mode === "FIXED" ? "₹ per client" : "%"}>
+              <Input inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value)} placeholder={mode === "FIXED" ? "2,00,000" : "25"} />
+            </Field>
+          )}
         </div>
         <div className="grid grid-cols-2 gap-2">
           <Field label="Communicated at (IST) *"><Input type="datetime-local" name="communicated_at" defaultValue={toISTDateTimeLocal()} required /></Field>

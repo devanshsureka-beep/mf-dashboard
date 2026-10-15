@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/form";
 import { PageHeader } from "@/components/app/page-header";
 import { Money } from "@/components/app/money";
-import { IssueAdviceForm, type RunningSip } from "@/components/app/issue-advice-form";
+import { IssueAdviceForm, type QueueStep, type RunningSip } from "@/components/app/issue-advice-form";
 import { ADVISORY_ROLES, pageData } from "@/lib/server";
 import { getClientSummary, listAdvisors, listClientSummaries } from "@/services/clients";
 import { getAdvisablePlanItems } from "@/services/plans";
@@ -22,6 +22,13 @@ export default async function NewAdvicePage(props: PageProps<"/advice/new">) {
   const side = sp.side === "SELL" || sp.side === "BUY" ? sp.side : "ALL";
   // A preselected plan item is shown regardless of the side filter.
   const effectiveSide = typeof sp.planItem === "string" ? "ALL" : side;
+  // A round from Find clients: ?queue= the clients still to come, ?done= how many are behind.
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const queueIds = typeof sp.queue === "string" ? sp.queue.split(",").filter((x) => UUID.test(x)).slice(0, 300) : [];
+  const inRound = typeof sp.queue === "string" || typeof sp.done === "string";
+  const done = Number(sp.done) || 0;
+  const at = typeof sp.at === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(sp.at) ? sp.at : undefined;
+  const ch = typeof sp.ch === "string" ? sp.ch : undefined;
 
   if (!clientId) {
     const { clients } = await pageData(async (tx) => ({ clients: await listClientSummaries(tx) }), ADVISORY_ROLES);
@@ -44,10 +51,14 @@ export default async function NewAdvicePage(props: PageProps<"/advice/new">) {
     );
   }
 
-  const { c, items, holdings, advisors, sipSeen, actor } = await pageData(async (tx) => {
+  const { c, items, holdings, advisors, sipSeen, actor, cash, roundNames } = await pageData(async (tx) => {
     const c = await getClientSummary(tx, clientId);
     return {
       c,
+      cash: Number((await tx<{ in_bank: number }[]>`select in_bank::float8 as in_bank from public.v_client_bank where client_id = ${clientId}`)[0]?.in_bank ?? 0),
+      roundNames: queueIds.length
+        ? await tx<{ client_id: string; full_name: string }[]>`select client_id, full_name from public.v_client_summary where client_id = any(${queueIds}::uuid[])`
+        : [],
       sipSeen: await getSipStatus(tx, clientId),
       items: await getAdvisablePlanItems(tx, clientId),
       holdings: c.latest_snapshot_id ? await getHoldings(tx, c.latest_snapshot_id) : [],
@@ -55,22 +66,43 @@ export default async function NewAdvicePage(props: PageProps<"/advice/new">) {
     };
   }, ADVISORY_ROLES);
 
+  const nameOf = (id: string) => roundNames.find((r) => r.client_id === id)?.full_name ?? "next client";
+  const skip = () => {
+    if (!queueIds.length) return `/advice/find?round=${done}`;
+    const q = new URLSearchParams({ client: queueIds[0], done: String(done) });
+    if (queueIds.length > 1) q.set("queue", queueIds.slice(1).join(","));
+    if (at) q.set("at", at);
+    if (ch) q.set("ch", ch);
+    return `/advice/new?${q.toString()}`;
+  };
+  const queue: QueueStep | undefined = inRound
+    ? { next: queueIds, done, nextName: queueIds.length ? nameOf(queueIds[0]) : null, skipHref: skip(), at, channel: ch }
+    : undefined;
+
   return (
     <>
+      {queue ? (
+        <ol aria-label="Clients in this round" className="mb-4 flex flex-wrap gap-2 text-[13px]">
+          {done ? <li className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-800">✓ {done} done</li> : null}
+          <li className="rounded-lg border-2 border-brand bg-white px-3 py-1.5"><b>{c.full_name}</b> <span className="text-brand">· now ({done + 1} of {done + 1 + queueIds.length})</span></li>
+          {queueIds.slice(0, 5).map((id, i) => <li key={id} className="rounded-lg border border-border bg-white px-3 py-2 text-slate-700">{i === 0 ? "Next: " : ""}{nameOf(id)}</li>)}
+          {queueIds.length > 5 ? <li className="px-2 py-2 text-muted">+{queueIds.length - 5} more</li> : null}
+        </ol>
+      ) : null}
       <PageHeader
         title={`Issue ${side === "ALL" ? "" : side.toLowerCase() + " "}call · ${c.full_name}`}
         subtitle={<>Records what you ACTUALLY communicated to the client. Remaining sell to advise <Money value={c.yet_to_advise_sell} /> · buy <Money value={c.yet_to_advise_buy} />.</>}
         actions={
           <div className="flex gap-1 text-xs">
             {(["SELL", "BUY", "ALL"] as const).map((s) => (
-              <Link key={s} href={`/advice/new?client=${clientId}&side=${s}`} className={`rounded-md px-2 py-1 ${s === side ? "bg-brand text-white" : "bg-white ring-1 ring-border"}`}>{s}</Link>
+              <Link key={s} href={`/advice/new?client=${clientId}&side=${s}${inRound ? `&done=${done}${queueIds.length ? `&queue=${queueIds.join(",")}` : ""}${at ? `&at=${at}` : ""}${ch ? `&ch=${ch}` : ""}` : ""}`} className={`rounded-md px-2 py-1 ${s === side ? "bg-brand text-white" : "bg-white ring-1 ring-border"}`}>{s}</Link>
             ))}
           </div>
         }
       />
       {!c.active_plan_id ? <p className="mb-3 text-sm text-amber-700">This client has no ACTIVE plan: only off-plan calls are possible.</p> : null}
       <IssueAdviceForm
-        key={`${clientId}:${effectiveSide}:${planItem ?? ""}`}
+        key={`${clientId}:${effectiveSide}:${planItem ?? ""}:${done}`}
         action={issueAdviceAction.bind(null, clientId)}
         side={effectiveSide}
         preselect={planItem}
@@ -84,6 +116,8 @@ export default async function NewAdvicePage(props: PageProps<"/advice/new">) {
         // SIPs the latest CAS shows running: "Full portfolio redemption" offers a Stop SIP line for each.
         runningSips={c.active_plan_id ? runningSips(sipSeen, holdings) : []}
         advisors={actor.role === "ADMIN" ? advisors.filter((a) => a.role === "ADVISOR") : undefined}
+        queue={queue}
+        cash={cash}
       />
     </>
   );

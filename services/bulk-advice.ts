@@ -8,6 +8,7 @@ import { AppError } from "@/lib/errors";
 import { bulkAmount, type BulkMode } from "@/lib/domain/bulk-call";
 import { issueAdvice } from "@/services/advice";
 import { resolveFundRef } from "@/services/fund-search";
+import { fundFamily } from "@/services/advise-desk";
 import type { Channel } from "@/types/domain";
 
 export interface BulkSpec {
@@ -24,6 +25,8 @@ export interface BulkLine {
   full_name: string;
   money_left: number;
   live_value: number;
+  /** Cash in bank (sold, not bought back, plus fresh money). */
+  cash: number;
   holding_value: number | null;
   amount: number | null;
   skip: string | null;
@@ -37,14 +40,18 @@ export const MAX_BULK_CLIENTS = 300;
 export async function planBulkCall(tx: Tx, spec: BulkSpec, securityId: string | null): Promise<BulkLine[]> {
   if (!spec.clientIds.length) return [];
   if (spec.clientIds.length > MAX_BULK_CLIENTS) throw new AppError(`Select at most ${MAX_BULK_CLIENTS} clients at once.`);
-  const rows = await tx<{ client_id: string; client_code: string; full_name: string; money_left: number; live_value: number }[]>`
-    select client_id, client_code, full_name, money_left, coalesce(live_portfolio_value, 0) as live_value
-    from public.v_client_summary where client_id = any(${spec.clientIds}::uuid[])
-    order by full_name`;
+  const rows = await tx<{ client_id: string; client_code: string; full_name: string; money_left: number; live_value: number; cash: number }[]>`
+    select s.client_id, s.client_code, s.full_name, s.money_left, coalesce(s.live_portfolio_value, 0) as live_value,
+           coalesce(bk.in_bank, 0)::float8 as cash
+    from public.v_client_summary s left join public.v_client_bank bk on bk.client_id = s.client_id
+    where s.client_id = any(${spec.clientIds}::uuid[])
+    order by s.full_name`;
+  // The fund's other records (a report line saved without an ISIN, a name variant) count too.
+  const family = securityId ? await fundFamily(tx, securityId) : [];
   const holdings = securityId
     ? await tx<{ client_id: string; value: number }[]>`
         select client_id, sum(live_value) as value from public.v_holding_live
-        where security_id = ${securityId} and client_id = any(${spec.clientIds}::uuid[]) group by client_id`
+        where security_id = any(${family}::uuid[]) and client_id = any(${spec.clientIds}::uuid[]) group by client_id`
     : [];
   const side = spec.action === "SELL" ? "SELL" : "BUY";
   const items = securityId
@@ -52,15 +59,18 @@ export async function planBulkCall(tx: Tx, spec: BulkSpec, securityId: string | 
         select distinct on (v.client_id) v.client_id, v.plan_item_id, v.yet_to_advise_amount
         from public.v_plan_item_progress v
         where v.plan_status = 'ACTIVE' and v.item_status <> 'CANCELLED' and v.side = ${side}
-          and v.security_id = ${securityId} and v.client_id = any(${spec.clientIds}::uuid[])
+          and v.security_id = any(${family}::uuid[]) and v.client_id = any(${spec.clientIds}::uuid[])
         order by v.client_id, v.yet_to_advise_amount desc`
     : [];
   return rows.map((r) => {
     const holding = holdings.find((h) => h.client_id === r.client_id)?.value ?? null;
-    const res = bulkAmount(spec.mode, spec.value, { money_left: r.money_left, live_value: r.live_value, holding_value: holding }, spec.action);
     const item = items.find((i) => i.client_id === r.client_id);
+    const res = bulkAmount(spec.mode, spec.value, {
+      money_left: r.money_left, live_value: r.live_value, holding_value: holding, cash: r.cash,
+      plan_left: item ? Number(item.yet_to_advise_amount) : null,
+    }, spec.action);
     return {
-      ...r,
+      client_id: r.client_id, client_code: r.client_code, full_name: r.full_name, money_left: r.money_left, live_value: r.live_value, cash: r.cash,
       holding_value: holding,
       amount: "amount" in res ? res.amount : null,
       skip: "skip" in res ? res.skip : null,

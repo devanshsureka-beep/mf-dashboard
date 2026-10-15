@@ -22,7 +22,7 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
     items: [
       { href: "/", label: PAGES.overview, icon: LayoutDashboard, exact: true },
       { href: "/clients", label: PAGES.clients, icon: Users },
-      { href: "/executions/pending", label: PAGES.calls, icon: PhoneCall, also: ["/advice", "/executions"], badge: "calls" },
+      { href: "/advice/find", label: PAGES.calls, icon: PhoneCall, also: ["/advice", "/executions"], badge: "calls" },
       { href: "/reconciliation", label: PAGES.casInbox, icon: Inbox, also: ["/cas", "/snapshots"], badge: "cas" },
     ],
   },

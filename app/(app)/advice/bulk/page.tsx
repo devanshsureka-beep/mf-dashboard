@@ -12,8 +12,9 @@ import { RISK_PROFILES } from "@/types/domain";
 import { humanize } from "@/lib/format";
 import { searchFundsAction } from "../actions";
 import { BulkCallForm } from "./bulk-form";
+import { BULK_MODES, type BulkMode } from "@/lib/domain/bulk-call";
 
-export const metadata = { title: "Call many clients" };
+export const metadata = { title: "One call for many clients" };
 
 const lakh = (v: string | undefined) => (v && Number(v) > 0 ? Number(v) * 100000 : null);
 
@@ -25,11 +26,15 @@ export default async function BulkCallPage(props: PageProps<"/advice/bulk">) {
     advisor: one("advisor"), risk: one("risk"), plan: one("plan"), q: one("q"),
     holds: one("holds")?.trim() || undefined,
     holdsSec: /^[0-9a-f-]{36}$/i.test(one("holds_sec") ?? "") ? one("holds_sec") : undefined,
+    // From Find clients: the fund, side and amount rule are set, the clients come as ?ids=.
+    fund: /^[0-9a-f-]{36}$/i.test(one("fund") ?? "") ? one("fund") : undefined,
   };
+  const side = one("side") === "SELL" ? "SELL" : one("side") === "BUY" ? "BUY" : undefined;
+  const mode = BULK_MODES.some((m) => m.value === one("mode")) ? (one("mode") as BulkMode) : undefined;
   const { clients, advisors, actor, heldFunds, fund, holdings } = await pageData(async (tx) => {
     // "Holds fund": the funds matching the text; one fund picked (or the only match) filters the clients.
     const heldFunds: HeldFund[] = f.holds && !f.holdsSec ? await fundsHeldMatching(tx, f.holds) : [];
-    const secId = f.holdsSec ?? (heldFunds.length === 1 ? heldFunds[0].security_id : undefined);
+    const secId = f.holdsSec ?? (heldFunds.length === 1 ? heldFunds[0].security_id : undefined) ?? f.fund;
     const fund = secId
       ? (await tx<{ security_id: string; scheme_name: string; nav: number | null }[]>`
           select sm.id as security_id, sm.scheme_name,
@@ -46,15 +51,17 @@ export default async function BulkCallPage(props: PageProps<"/advice/bulk">) {
   }, ADVISORY_ROLES);
 
   const minValue = lakh(f.minValue), maxValue = lakh(f.maxValue);
+  // "Holds fund" filters the clients; a fund set from Find clients only sets the call.
+  const byHolding = Boolean(f.holds || f.holdsSec) && holdings;
   // Clients ticked on the Clients list arrive as ?ids=…: show them whatever the filters say.
   const picked = (one("ids") ?? "").split(",").filter((x) => /^[0-9a-f-]{36}$/i.test(x));
   // Clients picked on the Clients list skip the other filters, but "Holds fund" still applies.
-  const matching = picked.length ? clients.filter((c) => picked.includes(c.client_id) && (!holdings || holdings.has(c.client_id))) : clients
+  const matching = picked.length ? clients.filter((c) => picked.includes(c.client_id) && (!byHolding || holdings!.has(c.client_id))) : clients
     .filter((c) => minValue == null || (c.live_portfolio_value ?? 0) >= minValue)
     .filter((c) => maxValue == null || (c.live_portfolio_value ?? 0) <= maxValue)
     .filter((c) => !f.risk || c.risk_profile === f.risk)
     .filter((c) => !f.plan || (f.plan === "yes" ? Boolean(c.active_plan_id) : !c.active_plan_id))
-    .filter((c) => !holdings || holdings.has(c.client_id))
+    .filter((c) => !byHolding || holdings!.has(c.client_id))
     .sort((a, b) => holdings
       ? (holdings.get(b.client_id)?.value ?? 0) - (holdings.get(a.client_id)?.value ?? 0)
       : (b.live_portfolio_value ?? 0) - (a.live_portfolio_value ?? 0));
@@ -69,11 +76,11 @@ export default async function BulkCallPage(props: PageProps<"/advice/bulk">) {
     <>
       <PageHeader
         title={PAGES.calls}
-        subtitle="Filter clients (for example by portfolio value or risk), tick them, and record the same call for all of them. Each client gets their own call in the ledger, linked to their plan when the plan has this fund."
+        subtitle={<>One call for many clients. Each client gets their own call in the ledger, linked to their plan when the plan has this fund. <Link href="/advice/find" className="text-brand hover:underline">← Find clients</Link></>}
       />
-      <HubTabs hub="calls" active="bulk" role={actor.role} />
+      <HubTabs hub="calls" active="find" role={actor.role} />
 
-      {picked.length ? <p className="mb-3 rounded-md bg-brand-50 px-3 py-2 text-sm text-brand-700">{matching.length} client(s) picked on the Clients list. <Link href="/advice/bulk" className="underline">Pick by filters instead</Link></p> : null}
+      {picked.length ? <p className="mb-3 rounded-md bg-brand-50 px-3 py-2 text-sm text-brand-700">{matching.length} client(s) picked. <Link href="/advice/find" className="underline">Pick again on Find clients</Link></p> : null}
       <form method="get" className="mb-4 grid gap-2 rounded-xl border border-border bg-white p-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
         <label className="text-xs text-muted sm:col-span-2">Holds fund (name or ISIN)
           <Input name="holds" defaultValue={f.holds ?? ""} placeholder="e.g. parag flexi, or INF879O01027" />
@@ -122,7 +129,7 @@ export default async function BulkCallPage(props: PageProps<"/advice/bulk">) {
           </ul>
         </div>
       ) : null}
-      {fund ? (
+      {fund && byHolding ? (
         <p className="mb-3 rounded-md bg-brand-50 px-3 py-2 text-sm text-brand-700">
           Clients holding <strong>{fund.scheme_name}</strong>: {matching.length} · {formatINRCompact(matching.reduce((t, c) => t + (holdings?.get(c.client_id)?.value ?? 0), 0))} in this fund today. The call below is set to this fund.{" "}
           <Link href={keep({ holds: "" })} className="underline">Clear</Link>
@@ -130,7 +137,9 @@ export default async function BulkCallPage(props: PageProps<"/advice/bulk">) {
       ) : null}
 
       <BulkCallForm
-        key={fund?.security_id ?? "any"}
+        key={`${fund?.security_id ?? "any"}-${side ?? ""}-${mode ?? ""}`}
+        initialAction={side}
+        initialMode={mode}
         initialFund={fund ? { value: `sec:${fund.security_id}`, scheme_name: fund.scheme_name, nav: fund.nav } : null}
         clients={matching.map((c) => ({
           id: c.client_id, name: c.full_name, code: c.client_code, advisor: c.advisor_name, risk: c.risk_profile,

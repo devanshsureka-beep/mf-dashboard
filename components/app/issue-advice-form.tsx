@@ -59,8 +59,20 @@ function ModeSwitch({ mode, onChange, full, units = true, fullTitle }: { mode: M
   );
 }
 
+/** Advising several clients one after another (from Find clients). */
+export interface QueueStep {
+  /** The clients still to come, in order. */
+  next: string[];
+  done: number;
+  nextName: string | null;
+  skipHref: string;
+  /** Time and channel set on the first client, kept for the rest of the round. */
+  at?: string;
+  channel?: string;
+}
+
 export function IssueAdviceForm({
-  action, planItems, holdings, searchFunds, side, preselect, advisors, runningSips = [],
+  action, planItems, holdings, searchFunds, side, preselect, advisors, runningSips = [], queue, cash,
 }: {
   action: Action;
   planItems: AdvisablePlanItem[];
@@ -70,6 +82,9 @@ export function IssueAdviceForm({
   preselect?: string | null;
   advisors?: { id: string; full_name: string }[];
   runningSips?: RunningSip[];
+  queue?: QueueStep;
+  /** Cash in bank: the bar shows what is left after these calls. */
+  cash?: number;
 }) {
   // A new wrapper per render is fine: React always calls the latest action passed in.
   const safe = safeAction(action);
@@ -263,12 +278,13 @@ export function IssueAdviceForm({
     <form action={formAction} className="space-y-4 pb-24">
       <input type="hidden" name="items" value={JSON.stringify(items)} />
       <input type="hidden" name="sip_stops" value={JSON.stringify(sipStops)} />
+      {queue ? <><input type="hidden" name="queue_next" value={queue.next.join(",")} /><input type="hidden" name="queue_done" value={queue.done} /></> : null}
       <div className="flex flex-wrap items-end gap-3">
         <Field label="Told at (IST) *" className="w-56">
-          <Input type="datetime-local" name="communicated_at" defaultValue={toISTDateTimeLocal()} required />
+          <Input type="datetime-local" name="communicated_at" defaultValue={queue?.at || toISTDateTimeLocal()} required />
         </Field>
         <Field label="Channel *" className="w-40">
-          <Select name="channel" defaultValue="PHONE">{CHANNELS.map((c) => <option key={c} value={c}>{c.replace("_", " ")}</option>)}</Select>
+          <Select name="channel" defaultValue={queue?.channel && (CHANNELS as readonly string[]).includes(queue.channel) ? queue.channel : "PHONE"}>{CHANNELS.map((c) => <option key={c} value={c}>{c.replace("_", " ")}</option>)}</Select>
         </Field>
         {advisors?.length ? (
           <Field label="Advisor (admin may record on behalf)" className="w-56">
@@ -276,7 +292,7 @@ export function IssueAdviceForm({
           </Field>
         ) : null}
         {showNotes ? null : <Button type="button" variant="outline" onClick={() => setShowNotes(true)}>+ Note</Button>}
-        <span className="pb-2 text-[11.5px] text-muted">The exact time the client was told; fixed once saved.</span>
+        <span className="pb-2 text-[11.5px] text-muted">{queue ? "Kept for every client in this round; change it here if needed." : "The exact time the client was told; fixed once saved."}</span>
       </div>
       {showNotes ? <Field label="Notes"><Textarea name="notes" rows={2} placeholder="What was said, market context…" /></Field> : null}
 
@@ -373,6 +389,15 @@ export function IssueAdviceForm({
           {fullExits ? <span className="text-slate-300"> ({fullExits} full exit{fullExits === 1 ? "" : "s"} in units)</span> : null}
           {" · "}<span className="font-semibold text-blue-300">Buy {formatINR(total("BUY"))}</span>
           {sipStops.length ? <span className="text-violet-200"> · {sipStops.length} SIP stop{sipStops.length === 1 ? "" : "s"}</span> : null}
+          {cash != null && items.length ? (
+            // Money check: cash in bank, plus what these sells bring, minus what these buys need.
+            <div className="text-xs text-slate-300">
+              Cash {formatINRCompact(cash)} + sells ≈ {formatINRCompact(total("SELL"))} − buys {formatINRCompact(total("BUY"))} = {cash + total("SELL") - total("BUY") < -0.5
+                ? <b className="text-amber-300">short by ≈ {formatINRCompact(total("BUY") - cash - total("SELL"))}</b>
+                : <b className="text-emerald-300">≈ {formatINRCompact(cash + total("SELL") - total("BUY"))} left</b>}
+              {total("BUY") > cash + 0.5 && total("SELL") >= 0.5 ? " · the buys need the sell money: buy once the redemption lands" : ""}
+            </div>
+          ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-3">
           {overAdvised.length ? (
@@ -380,10 +405,13 @@ export function IssueAdviceForm({
               <input type="checkbox" checked={confirmOver} onChange={(e) => setConfirmOver(e.target.checked)} /> {overAdvised.length} line(s) advise more than the plan has left: I mean it
             </label>
           ) : null}
+          {queue ? <a href={queue.skipHref} className="text-sm text-slate-300 hover:text-white hover:underline">{queue.nextName ? "Skip" : "Skip, end the round"}</a> : null}
           {missing ? <span className="text-xs text-amber-200">{missing} selected line{missing === 1 ? " has" : "s have"} no amount yet</span> : null}
           <button type="submit" disabled={pending || (items.length === 0 && sipStops.length === 0) || missing > 0 || (overAdvised.length > 0 && !confirmOver)}
             className="h-10 rounded-lg bg-white px-5 text-sm font-bold text-ink disabled:opacity-50">
-            {pending ? "Recording…" : items.length ? `Record ${items.length} call${items.length === 1 ? "" : "s"}${sipStops.length ? " + SIP stops" : ""} as given` : sipStops.length ? "Record the SIP stops as given" : "Record calls as given"}
+            {pending ? "Recording…" : queue
+              ? `Record ${items.length || ""} & ${queue.nextName ? `next: ${queue.nextName} →` : "finish the round"}`
+              : items.length ? `Record ${items.length} call${items.length === 1 ? "" : "s"}${sipStops.length ? " + SIP stops" : ""} as given` : sipStops.length ? "Record the SIP stops as given" : "Record calls as given"}
           </button>
         </div>
       </div>
