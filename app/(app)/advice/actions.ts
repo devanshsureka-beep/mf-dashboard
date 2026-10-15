@@ -86,7 +86,7 @@ export async function issueAdviceAction(clientId: string, _p: ActionResult | nul
   revalidatePath("/advice");
   revalidatePath(`/clients/${clientId}`);
   // A round from Find clients: straight on to the next client, same time and channel.
-  const round = fd.has("queue_done") ? queueNext(fd, 1) : null;
+  const round = fd.has("queue_done") ? queueNext(fd, 1, clientId) : null;
   if (round) redirect(round);
   redirect(batchId ? `/advice?client=${clientId}&issued=${batchId}` : `/clients/${clientId}?tab=sip`);
 }
@@ -98,8 +98,9 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  * back to Find clients when it was the last. Only client ids and the time and
  * channel typed go into the link.
  */
-function queueNext(fd: FormData, advised: number): string {
-  const next = str(fd, "queue_next").split(",").filter((x) => UUID.test(x)).slice(0, 300);
+function queueNext(fd: FormData, advised: number, current: string): string {
+  const next = [...new Set(str(fd, "queue_next").split(",").map((x) => x.toLowerCase()))]
+    .filter((x) => UUID.test(x) && x !== current.toLowerCase()).slice(0, 300);
   const done = (Number(str(fd, "queue_done")) || 0) + advised;
   if (!next.length) return `/advice/find?round=${done}`;
   const q = new URLSearchParams({ client: next[0], done: String(done) });

@@ -148,10 +148,12 @@ export interface ClientHolding { value: number; units: number; folios: number }
 
 /** Each client's holding in one fund (latest CAS, valued at today's NAV). */
 export async function holdingsOfFund(tx: Tx, securityId: string): Promise<Map<string, ClientHolding>> {
+  // The fund's other records (saved under another name or without an ISIN) are the same holding.
+  const family = await fundFamily(tx, securityId);
   const rows = await tx<{ client_id: string; value: number; units: number; folios: number }[]>`
     select client_id, sum(live_value)::float8 as value, sum(units)::float8 as units, count(distinct folio_number)::int as folios
     from public.v_holding_live
-    where security_id = ${securityId} and units > 0.0005
+    where security_id = any(${family}::uuid[]) and units > 0.0005
     group by client_id`;
   return new Map(rows.map((r) => [r.client_id, { value: r.value, units: r.units, folios: r.folios }]));
 }

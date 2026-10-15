@@ -24,7 +24,10 @@ export default async function NewAdvicePage(props: PageProps<"/advice/new">) {
   const effectiveSide = typeof sp.planItem === "string" ? "ALL" : side;
   // A round from Find clients: ?queue= the clients still to come, ?done= how many are behind.
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const queueIds = typeof sp.queue === "string" ? sp.queue.split(",").filter((x) => UUID.test(x)).slice(0, 300) : [];
+  // Each client once, and never the one on screen.
+  const queueIds = typeof sp.queue === "string"
+    ? [...new Set(sp.queue.split(",").map((x) => x.toLowerCase()))].filter((x) => UUID.test(x) && x !== clientId?.toLowerCase()).slice(0, 300)
+    : [];
   const inRound = typeof sp.queue === "string" || typeof sp.done === "string";
   const done = Number(sp.done) || 0;
   const at = typeof sp.at === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(sp.at) ? sp.at : undefined;
