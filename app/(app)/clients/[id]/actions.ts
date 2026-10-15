@@ -7,7 +7,7 @@ import { actionTx } from "@/lib/server";
 import { linkCallsToPlan } from "@/services/advice";
 import { addNote, completeFollowUp } from "@/services/notes";
 import { setSipStatus } from "@/services/plans";
-import { syncSipLinesFromCas } from "@/services/sip-status";
+import { syncSipLinesFromCas, syncSipLinesQuietly } from "@/services/sip-status";
 
 export async function addNoteAction(clientId: string, _p: ActionResult | null, fd: FormData): Promise<ActionResult> {
   return runAction("addNote", async () => {
@@ -57,7 +57,7 @@ export async function recheckSipAction(clientId: string, _p: ActionResult | null
   return runAction("recheckSip", async () => {
     const n = await actionTx((tx) => syncSipLinesFromCas(tx, clientId), { roles: ["ADMIN", "ADVISOR"] });
     revalidatePath(`/clients/${clientId}`);
-    return n ? `${n} SIP line(s) marked done from the CAS.` : "Nothing new: no other SIP line is shown done in the CAS yet.";
+    return n ? `${n} SIP line(s) updated from the CAS.` : "Nothing new: no other SIP line is shown done in the CAS yet.";
   });
 }
 
@@ -70,10 +70,11 @@ export async function recheckAllSipsAction(_p: ActionResult | null): Promise<Act
         join public.advisory_plans p on p.id = s.plan_id and p.status = 'ACTIVE'
         where s.status in ('PLANNED', 'ADVISED')`;
       let lines = 0;
-      for (const c of clients) lines += await syncSipLinesFromCas(tx, c.client_id);
+      // Each client on its own savepoint: one failing client does not undo the others.
+      for (const c of clients) lines += await syncSipLinesQuietly(tx, c.client_id);
       return { clients: clients.length, lines };
     }, { roles: ["ADMIN"] });
     revalidatePath("/clients");
-    return `Checked ${r.clients} client(s) with open SIP lines: ${r.lines} line(s) marked done from the CAS.`;
+    return `Checked ${r.clients} client(s) with open SIP lines: ${r.lines} line(s) updated from the CAS.`;
   });
 }

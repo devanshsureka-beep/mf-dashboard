@@ -108,7 +108,7 @@ export async function SipTab({ client: c, actor }: { client: ClientSummary; acto
                         if (!d.seen.latestCasDate || !seen?.isin) return null;
                         const now = seen.now;
                         const text = !now || now.state === "NONE" ? "No SIP in this fund in the CAS"
-                          : now.state === "ACTIVE" ? `CAS: ₹${(now.amount ?? 0).toLocaleString("en-IN")}/mo running, last ${formatDate(now.lastInstalment)}${l.action !== "STOP" && l.new_amount && Math.abs((now.amount ?? 0) - Number(l.new_amount)) > Math.max(50, Number(l.new_amount) * 0.01) ? ` · plan ₹${Number(l.new_amount).toLocaleString("en-IN")}` : ""}`
+                          : now.state === "ACTIVE" ? `CAS: ₹${(now.amount ?? 0).toLocaleString("en-IN")}/mo running, last ${formatDate(now.lastInstalment)}${l.action !== "STOP" && l.new_amount && Math.abs((now.amount ?? 0) - Number(l.new_amount)) > Math.max(50, Number(l.new_amount) * 0.05) ? ` · plan ₹${Number(l.new_amount).toLocaleString("en-IN")}` : ""}`
                           : `CAS: no SIP running${now.lastInstalment ? `, last ${formatDate(now.lastInstalment)}` : ""}`;
                         return <div className="mt-1 text-[11px] text-muted">{text}</div>;
                       })()}

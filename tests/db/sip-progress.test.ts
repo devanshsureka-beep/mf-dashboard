@@ -115,10 +115,11 @@ describeDb("SIP alongside lump sums", () => {
         await confirmSnapshot(t, id, "checked");
       });
       const st = await ctx.tx<{ id: string; status: string }[]>`select id, status from public.sip_plan_items where id in (${start.id}, ${stop.id})`;
-      expect(Object.fromEntries(st.map((r) => [r.id === start.id ? "start" : "stop", r.status]))).toEqual({ start: "COMPLETED", stop: "COMPLETED" });
+      // No CAS ever showed a SIP in X: nothing proves it stopped, so the stop stays with the desk.
+      expect(Object.fromEntries(st.map((r) => [r.id === start.id ? "start" : "stop", r.status]))).toEqual({ start: "COMPLETED", stop: "PLANNED" });
       const rows = await ctx.as("advisor", (t) => getSipProgress(t, p.planId));
       expect(rows.find((r) => r.sip_item_id === start.id)).toMatchObject({ invested_amount: 39998, instalments: 2 });
-      expect(await ctx.as("advisor", (t) => getClientSip(t, p.clientId))).toMatchObject({ sip_monthly_started: 20000, sips_stopped: 1 });
+      expect(await ctx.as("advisor", (t) => getClientSip(t, p.clientId))).toMatchObject({ sip_monthly_started: 20000, sips_stopped: 0 });
     });
   });
 

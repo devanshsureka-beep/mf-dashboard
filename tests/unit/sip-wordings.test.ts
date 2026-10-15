@@ -29,7 +29,12 @@ describe("SIP instalments, however the RTA words them", () => {
     expect(effectiveTxnType("REDEMPTION", "Systematic Withdrawal", -10)).toBe("REDEMPTION");
   });
 
-  it.each(["*** SIPCancelled ***", "***SIPTerminated***", "*** Systematic Cancellation ***", "*** Cancelled wef 01-OCT-2026 SIP ceased as per investor"])(
+  it("an instalment reversed or rejected is not the SIP stopping", () => {
+    expect(classifyTransaction("SIP Purchase (Reversal) - Instalment No 3 - Cancelled", -10).sipCancelled).toBe(false);
+    expect(classifyTransaction("Systematic Investment Rejection (3/12)", null).sipCancelled).toBe(false);
+  });
+
+  it.each(["*** SIPCancelled ***", "***SIPTerminated***", "*** Systematic Cancellation ***", "*** Cancelled wef 01-OCT-2026 SIP ceased as per investor", "SIP - Cancelled", "SIP Registration Cancelled", "SIP Mandate Ceased"])(
     "%s stops the SIP", (d) => {
       expect(classifyTransaction(d, null).sipCancelled).toBe(true);
       const txns: SipTxn[] = [

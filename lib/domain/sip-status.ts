@@ -156,5 +156,5 @@ export interface PlannedSip { action: "START" | "STOP" | "CHANGE"; isin: string 
 export function planSipMet(plan: PlannedSip, now: SipPoint | null): boolean {
   if (plan.action === "STOP") return !now || now.state !== "ACTIVE";
   if (!now || now.state !== "ACTIVE") return false;
-  return plan.new_amount == null || Math.abs((now.amount ?? 0) - plan.new_amount) <= Math.max(50, plan.new_amount * 0.01);
+  return plan.new_amount == null || Math.abs((now.amount ?? 0) - plan.new_amount) <= Math.max(50, plan.new_amount * 0.05);
 }

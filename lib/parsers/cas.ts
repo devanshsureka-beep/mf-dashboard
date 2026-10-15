@@ -106,7 +106,7 @@ const NOISE = [
  */
 export const SIP_TEXT = /\bsip\b|sip[\s-]*purchase|purchase[\s-]*sip|sys\.?\s*invest|systematic\s*(investment|purchase|instal)|purchase[\s-]*(ongoing\s*)?systematic|purchase[\s-]*instal/i;
 /** A SIP stopped: "SIP Cancelled", "SIPCancelled", "SIPTerminated", "Systematic Cancellation", "SIP ceased as per investor". */
-export const SIP_CANCEL_TEXT = /sip\s*(systematic\s*)?(cancel|ceas|terminat|stopp?ed|closed)|systematic\s*(cancel|ceas|terminat)|sip ceased|ceased as per investor/i;
+export const SIP_CANCEL_TEXT = /^(?!.*(revers|purchase|instal|reject)).*?(\bsip\b.{0,30}?\b(cancel|ceas|terminat|stopp?ed|closed)|sip(systematic\s*)?(cancel|ceas|terminat)|systematic.{0,30}?\b(cancel|ceas|terminat)|ceased as per investor)/i;
 
 export function classifyTransaction(desc: string, units: number | null = null): { type: CasTxn["type"]; sipCancelled: boolean } {
   const d = desc.toLowerCase();

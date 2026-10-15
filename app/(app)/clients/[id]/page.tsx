@@ -133,9 +133,9 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
   const raw = String(sp.tab ?? "");
   const tab: Tab = (TABS as readonly string[]).includes(raw) ? (raw as Tab) : LEGACY[raw] ?? "portfolio";
   const str = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : null);
-  const { c, bank, extra, unchecked, sip, premium, alerts, casCount, actor } = await pageData(async (tx) => ({
-    // SIP lines the CAS already shows done (started / changed / stopped since the report) are ticked first.
-    synced: await syncSipLinesQuietly(tx, id),
+  const { c, bank, extra, unchecked, sip, premium, alerts, casCount, actor } = await pageData(async (tx, who) => ({
+    // SIP lines the CAS already shows done (started / changed / stopped since the report) are ticked first (advisors / admins).
+    synced: who.role === "OPERATIONS" ? 0 : await syncSipLinesQuietly(tx, id),
     c: await getClientSummary(tx, id),
     extra: (await tx<RebalanceExtra[]>`
       select off_plan_sell_advised::float8 as off_plan_sell_advised, off_plan_sell_executed::float8 as off_plan_sell_executed, off_plan_sell_pending::float8 as off_plan_sell_pending,

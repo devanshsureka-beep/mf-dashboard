@@ -70,8 +70,8 @@ export async function getSipStatus(tx: Tx, clientId: string): Promise<SipStatusV
  * Idempotent; run when a CAS is confirmed, when a plan is approved, and on demand.
  */
 export async function syncSipLinesFromCas(tx: Tx, clientId: string): Promise<number> {
-  const open = await tx<{ id: string; action: string; status: string; report_date: string | null }[]>`
-    select s.id, s.action, s.status, p.plan_date::text as report_date
+  const open = await tx<{ id: string; action: string; status: string; frequency: string | null; old_amount: number | null; report_date: string | null }[]>`
+    select s.id, s.action, s.status, s.frequency, s.old_amount::float8 as old_amount, p.plan_date::text as report_date
     from public.sip_plan_items s join public.advisory_plans p on p.id = s.plan_id and p.status = 'ACTIVE'
     where s.client_id = ${clientId} and s.status in ('PLANNED', 'ADVISED') and s.security_id is not null`;
   if (!open.length) return 0;
@@ -81,10 +81,14 @@ export async function syncSipLinesFromCas(tx: Tx, clientId: string): Promise<num
   let done = 0;
   for (const line of open) {
     const p = view.plan.find((x) => x.id === line.id);
-    if (!p) continue;
+    // Without the fund's ISIN, or for a SIP that is not monthly, the CAS cannot tell: leave it to the desk.
+    if (!p?.isin || (line.frequency && line.frequency !== "MONTHLY")) continue;
     const from = line.report_date ?? "0000-00-00";
     // A SIP started in the fund since the report, at another amount: the call was given (advised), not done as planned.
-    if (!p.met && p.action !== "STOP" && line.status === "PLANNED" && p.now?.state === "ACTIVE" && p.now.lastInstalment && p.now.lastInstalment >= from) {
+    // (A CHANGE counts only when the running amount is not the old one: the old SIP still running is no sign of advice.)
+    const oldStillRunning = p.action === "CHANGE" && line.old_amount != null && p.now?.amount != null
+      && Math.abs(p.now.amount - line.old_amount) <= Math.max(50, line.old_amount * 0.05);
+    if (!p.met && p.action !== "STOP" && !oldStillRunning && line.status === "PLANNED" && p.now?.state === "ACTIVE" && p.now.lastInstalment && p.now.lastInstalment >= from) {
       await setAuditReason(tx, "SIP seen in CAS at another amount");
       const rows = await tx`
         update public.sip_plan_items set status = 'ADVISED', advised_at = coalesce(advised_at, now()),
@@ -95,7 +99,8 @@ export async function syncSipLinesFromCas(tx: Tx, clientId: string): Promise<num
     }
     if (!p.met) continue;
     const evidence = p.action === "STOP"
-      ? latest > from
+      // Stopped only when the CAS shows this fund's SIP and it is not running (a fund the CAS does not show proves nothing).
+      ? latest > from && p.now != null && p.now.state !== "ACTIVE" && Boolean(p.now.lastInstalment)
       : Boolean(p.now?.lastInstalment && p.now.lastInstalment >= from);
     if (!evidence) continue;
     const note = p.action === "STOP"
@@ -115,10 +120,11 @@ export async function syncSipLinesFromCas(tx: Tx, clientId: string): Promise<num
  * The same check when a client's page opens, so lines follow the CAS without
  * anyone clicking. Runs in a savepoint: a failure is logged and never breaks the page.
  */
-export async function syncSipLinesQuietly(tx: Tx, clientId: string): Promise<void> {
+export async function syncSipLinesQuietly(tx: Tx, clientId: string): Promise<number> {
   try {
-    await (tx as unknown as { savepoint: (cb: (sp: Tx) => Promise<unknown>) => Promise<unknown> }).savepoint((sp) => syncSipLinesFromCas(sp, clientId));
+    return (await (tx as unknown as { savepoint: <T>(cb: (sp: Tx) => Promise<T>) => Promise<T> }).savepoint((sp) => syncSipLinesFromCas(sp, clientId)));
   } catch (e) {
     logServerError("sip-sync", e);
+    return 0;
   }
 }

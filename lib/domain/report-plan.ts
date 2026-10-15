@@ -282,116 +282,126 @@ export function buildPlanFromReport(
 
   // ---- Sells: each tied to one holding (folio + name), values checked. ----
   for (const s of report.sells) {
-    const planType = detectPlanType(s.fund);
-    // A row without a folio for a fund held in several folios (reports that list funds, not folios):
-    // a full exit sells every folio of that fund.
-    const allFolios = !s.folio && (s.folioCount ?? 1) === 1 && !s.partial
-      ? sameFundHoldings(s.fund, live.filter((x) => !taken.has(x)), planType)
-      : [];
-    const wholeFund = allFolios.length > 1 && !allFolios.some((x) => sameValue(s.value, x.current_value));
-    if ((s.folioCount ?? 1) > 1 || wholeFund) {
-      // One row for several folios of the same fund ("x2 folios"): all of them, values summed.
-      const group = wholeFund ? allFolios : sameFundHoldings(s.fund, live.filter((x) => !taken.has(x)), planType);
-      const total = group.reduce((t, x) => t + x.current_value, 0);
-      // "Trim 33%": that share of the CAS holding (computed here, the report itself is not changed).
-      const sold = s.partial && !s.value && s.percent ? Math.round(total * s.percent) / 100 : s.value;
-      if (!wholeFund && group.length !== s.folioCount) {
-        if (tolerant) {
-          // Report vs a newer CAS: some or all of the folios are already sold. Folios still held stay
-          // a sell; the rest is one line for the fund, asked about.
-          for (const g of group) {
-            taken.add(g);
-            const it: PlanItemDraft = { action: s.action === "SWITCH" ? "SWITCH" : "SELL", scheme_name: g.scheme_name, isin: g.isin, folio_number: g.folio_number,
-              target_amount: g.current_value, current_amount: g.current_value, reason: `${s.actionText} (${s.folioCount} folios in the report)`, priority: (priority += 10) };
-            items.push(it);
-            differs.set(it, { kind: "SELL_CHANGED", report: null });
+    const before = items.length;
+    try {
+      const planType = detectPlanType(s.fund);
+      // A row without a folio for a fund held in several folios (reports that list funds, not folios):
+      // a full exit sells every folio of that fund.
+      const allFolios = !s.folio && (s.folioCount ?? 1) === 1 && !s.partial
+        ? sameFundHoldings(s.fund, live.filter((x) => !taken.has(x)), planType)
+        : [];
+      const wholeFund = allFolios.length > 1 && !allFolios.some((x) => sameValue(s.value, x.current_value));
+      if ((s.folioCount ?? 1) > 1 || wholeFund) {
+        // One row for several folios of the same fund ("x2 folios"): all of them, values summed.
+        const group = wholeFund ? allFolios : sameFundHoldings(s.fund, live.filter((x) => !taken.has(x)), planType);
+        const total = group.reduce((t, x) => t + x.current_value, 0);
+        // "Trim 33%": that share of the CAS holding (computed here, the report itself is not changed).
+        const sold = s.partial && !s.value && s.percent ? Math.round(total * s.percent) / 100 : s.value;
+        if (!wholeFund && group.length !== s.folioCount) {
+          if (tolerant) {
+            // Report vs a newer CAS: some or all of the folios are already sold. Folios still held stay
+            // a sell; the rest is one line for the fund, asked about.
+            for (const g of group) {
+              taken.add(g);
+              const it: PlanItemDraft = { action: s.action === "SWITCH" ? "SWITCH" : "SELL", scheme_name: g.scheme_name, isin: g.isin, folio_number: g.folio_number,
+                target_amount: g.current_value, current_amount: g.current_value, reason: `${s.actionText} (${s.folioCount} folios in the report)`, priority: (priority += 10) };
+              items.push(it);
+              differs.set(it, { kind: "SELL_CHANGED", report: null });
+            }
+            if (!group.length) {
+              const gone = goneHolding(s.fund, planType);
+              const it: PlanItemDraft = { action: s.action === "SWITCH" ? "SWITCH" : "SELL", scheme_name: gone?.scheme_name ?? s.fund, isin: gone?.isin ?? null, folio_number: null,
+                target_amount: s.value, current_amount: 0, reason: `${s.actionText} (${s.folioCount} folios)`, priority: (priority += 10), plan_type: planType };
+              items.push(it);
+              differs.set(it, { kind: "SELL_GONE", report: s.value });
+            }
+            continue;
           }
-          if (!group.length) {
-            const gone = goneHolding(s.fund, planType);
-            const it: PlanItemDraft = { action: s.action === "SWITCH" ? "SWITCH" : "SELL", scheme_name: gone?.scheme_name ?? s.fund, isin: gone?.isin ?? null, folio_number: null,
-              target_amount: s.value, current_amount: 0, reason: `${s.actionText} (${s.folioCount} folios)`, priority: (priority += 10), plan_type: planType };
-            items.push(it);
-            differs.set(it, { kind: "SELL_GONE", report: s.value });
-          }
+          problems.push(`Sell row "${s.fund}" covers ${s.folioCount} folios, but the CAS has ${group.length} matching folio(s).`);
           continue;
         }
-        problems.push(`Sell row "${s.fund}" covers ${s.folioCount} folios, but the CAS has ${group.length} matching folio(s).`);
+        if (!s.partial && !valueOk(s.value, total, group[0].scheme_name)) {
+          problems.push(`${group[0].scheme_name}: the report sells ${inr(s.value)} across ${group.length} folios, but the CAS holds ${inr(total)}.`);
+        }
+        alias.push({ fund: s.fund, holdings: group });
+        for (const g of group) {
+          taken.add(g);
+          items.push({ action: s.action === "SWITCH" ? "SWITCH" : "SELL", scheme_name: g.scheme_name, isin: g.isin, folio_number: g.folio_number, target_amount: s.partial ? Math.round((sold * g.current_value / total) * 100) / 100 : g.current_value, current_amount: g.current_value, reason: `${s.actionText} (${group.length} folios)`, priority: (priority += 10) });
+        }
         continue;
       }
-      if (!s.partial && !valueOk(s.value, total, group[0].scheme_name)) {
-        problems.push(`${group[0].scheme_name}: the report sells ${inr(s.value)} across ${group.length} folios, but the CAS holds ${inr(total)}.`);
+      // A full exit sells the whole holding: a unique holding of this plan type whose
+      // CAS value equals the report amount (and whose name agrees) is the strongest match.
+      const byValue = !s.partial && sameStatement
+        ? live.filter((x) => !taken.has(x) && samePlan(planType, x) && sameValue(s.value, x.current_value) && nameSimilarity(s.fund, x.scheme_name) >= 0.4
+            && (!s.folio || normFolio(x.folio_number).startsWith(normFolio(s.folio)) || normFolio(s.folio).startsWith(normFolio(x.folio_number))))
+        : [];
+      let h = byValue.length === 1 ? byValue[0] : matchHolding(s.fund, s.folio, live, taken, planType);
+      if (!h) {
+        // Same fund in more than one folio: the folio decides.
+        const byFolio = live.filter((x) => !taken.has(x) && normFolio(x.folio_number) === normFolio(s.folio) && samePlan(planType, x));
+        h = byFolio.length === 1 ? byFolio[0] : null;
       }
-      alias.push({ fund: s.fund, holdings: group });
-      for (const g of group) {
-        taken.add(g);
-        items.push({ action: s.action === "SWITCH" ? "SWITCH" : "SELL", scheme_name: g.scheme_name, isin: g.isin, folio_number: g.folio_number, target_amount: s.partial ? Math.round((sold * g.current_value / total) * 100) / 100 : g.current_value, current_amount: g.current_value, reason: `${s.actionText} (${group.length} folios)`, priority: (priority += 10) });
-      }
-      continue;
-    }
-    // A full exit sells the whole holding: a unique holding of this plan type whose
-    // CAS value equals the report amount (and whose name agrees) is the strongest match.
-    const byValue = !s.partial && sameStatement
-      ? live.filter((x) => !taken.has(x) && samePlan(planType, x) && sameValue(s.value, x.current_value) && nameSimilarity(s.fund, x.scheme_name) >= 0.4
-          && (!s.folio || normFolio(x.folio_number).startsWith(normFolio(s.folio)) || normFolio(s.folio).startsWith(normFolio(x.folio_number))))
-      : [];
-    let h = byValue.length === 1 ? byValue[0] : matchHolding(s.fund, s.folio, live, taken, planType);
-    if (!h) {
-      // Same fund in more than one folio: the folio decides.
-      const byFolio = live.filter((x) => !taken.has(x) && normFolio(x.folio_number) === normFolio(s.folio) && samePlan(planType, x));
-      h = byFolio.length === 1 ? byFolio[0] : null;
-    }
-    // Report vs a newer CAS: a fund now fully sold may look like another fund still held (same AMC);
-    // the closer name wins.
-    if (h && tolerant) {
-      const gone = goneHolding(s.fund, planType);
-      if (gone && nameSimilarity(s.fund, gone.scheme_name) > nameSimilarity(s.fund, h.scheme_name)) h = null;
-      // The report names the folio: another folio of the same fund is not this one (it may be kept).
-      else if (s.folio && h.folio_number && !normFolio(h.folio_number).startsWith(normFolio(s.folio)) && !normFolio(s.folio).startsWith(normFolio(h.folio_number))) h = null;
-    }
-    if (!h) {
-      if (tolerant) {
-        // Already sold, or the fund changed: asked.
+      // Report vs a newer CAS: a fund now fully sold may look like another fund still held (same AMC);
+      // the closer name wins.
+      if (h && tolerant) {
         const gone = goneHolding(s.fund, planType);
-        const it: PlanItemDraft = { action: s.action === "SWITCH" ? "SWITCH" : "SELL", scheme_name: gone?.scheme_name ?? s.fund, isin: gone?.isin ?? null,
-          folio_number: gone?.folio_number ?? s.folio, target_amount: s.value, current_amount: 0, reason: s.actionText || null, priority: (priority += 10), plan_type: planType };
-        items.push(it);
-        differs.set(it, { kind: "SELL_GONE", report: s.value });
+        if (gone && nameSimilarity(s.fund, gone.scheme_name) > nameSimilarity(s.fund, h.scheme_name)) h = null;
+        // The report names the folio: another folio of the same fund is not this one (it may be kept).
+        else if (s.folio && h.folio_number && !normFolio(h.folio_number).startsWith(normFolio(s.folio)) && !normFolio(s.folio).startsWith(normFolio(h.folio_number))) h = null;
+      }
+      if (!h) {
+        if (tolerant) {
+          // Already sold, or the fund changed: asked.
+          const gone = goneHolding(s.fund, planType);
+          const it: PlanItemDraft = { action: s.action === "SWITCH" ? "SWITCH" : "SELL", scheme_name: gone?.scheme_name ?? s.fund, isin: gone?.isin ?? null,
+            folio_number: gone?.folio_number ?? s.folio, target_amount: s.value, current_amount: 0, reason: s.actionText || null, priority: (priority += 10), plan_type: planType };
+          items.push(it);
+          differs.set(it, { kind: "SELL_GONE", report: s.value });
+          continue;
+        }
+        problems.push(`Sell row "${s.fund}" (folio ${s.folio ?? "—"}) does not match any fund in the CAS.`);
         continue;
       }
-      problems.push(`Sell row "${s.fund}" (folio ${s.folio ?? "—"}) does not match any fund in the CAS.`);
-      continue;
+      taken.add(h);
+      alias.push({ fund: s.fund, holdings: [h] });
+      // "Trim 33%": that share of the CAS holding (computed here, the report itself is not changed).
+      const sold = s.partial && !s.value && s.percent ? Math.round(h.current_value * s.percent) / 100 : s.value;
+      const exitDiffers = !s.partial && !valueOk(s.value, h.current_value, h.scheme_name);
+      const trimDiffers = s.partial && sold >= h.current_value;
+      if (exitDiffers && !tolerant) {
+        problems.push(`${h.scheme_name}: the report sells ${inr(s.value)} as a full exit, but the CAS holding is ${inr(h.current_value)}${sameStatement ? "" : ` (more than ${NAV_DRIFT_LIMIT * 100}% apart, too much for NAV movement)`}.`);
+      }
+      if (trimDiffers && !tolerant) {
+        problems.push(`${h.scheme_name}: the report trims ${inr(sold)}, but the CAS holding is only ${inr(h.current_value)}.`);
+      }
+      if (tolerant && (exitDiffers || trimDiffers)) {
+        // Partly done since the report (or the holding changed): the report's amount stays the target.
+        const it: PlanItemDraft = { action: s.action === "SWITCH" ? "SWITCH" : "SELL", scheme_name: h.scheme_name, isin: h.isin, folio_number: h.folio_number,
+          target_amount: s.partial ? sold : Math.max(s.value, h.current_value), current_amount: h.current_value, reason: s.actionText || null, priority: (priority += 10) };
+        items.push(it);
+        differs.set(it, { kind: "SELL_CHANGED", report: s.partial ? sold : s.value });
+        continue;
+      }
+      items.push({
+        action: s.action === "SWITCH" ? "SWITCH" : "SELL",
+        scheme_name: h.scheme_name,
+        isin: h.isin,
+        folio_number: h.folio_number,
+        // A full exit sells every unit: its value is the CAS holding, whatever the NAV did since the report.
+        target_amount: s.partial ? sold : h.current_value,
+        current_amount: h.current_value,
+        reason: s.actionText || null,
+        priority: (priority += 10),
+      });
+    } finally {
+      // A sell read only from the review ("Full exit" with no sell-table row): a person confirms it.
+      if (s.fromReview) {
+        for (const it of items.slice(before)) {
+          it.question ??= `The report's review says "${s.actionText}" for this fund, but its sell table leaves it out. Sell it (amount prefilled), or keep it?`;
+        }
+      }
     }
-    taken.add(h);
-    alias.push({ fund: s.fund, holdings: [h] });
-    // "Trim 33%": that share of the CAS holding (computed here, the report itself is not changed).
-    const sold = s.partial && !s.value && s.percent ? Math.round(h.current_value * s.percent) / 100 : s.value;
-    const exitDiffers = !s.partial && !valueOk(s.value, h.current_value, h.scheme_name);
-    const trimDiffers = s.partial && sold >= h.current_value;
-    if (exitDiffers && !tolerant) {
-      problems.push(`${h.scheme_name}: the report sells ${inr(s.value)} as a full exit, but the CAS holding is ${inr(h.current_value)}${sameStatement ? "" : ` (more than ${NAV_DRIFT_LIMIT * 100}% apart, too much for NAV movement)`}.`);
-    }
-    if (trimDiffers && !tolerant) {
-      problems.push(`${h.scheme_name}: the report trims ${inr(sold)}, but the CAS holding is only ${inr(h.current_value)}.`);
-    }
-    if (tolerant && (exitDiffers || trimDiffers)) {
-      // Partly done since the report (or the holding changed): the report's amount stays the target.
-      const it: PlanItemDraft = { action: s.action === "SWITCH" ? "SWITCH" : "SELL", scheme_name: h.scheme_name, isin: h.isin, folio_number: h.folio_number,
-        target_amount: s.partial ? sold : Math.max(s.value, h.current_value), current_amount: h.current_value, reason: s.actionText || null, priority: (priority += 10) };
-      items.push(it);
-      differs.set(it, { kind: "SELL_CHANGED", report: s.partial ? sold : s.value });
-      continue;
-    }
-    items.push({
-      action: s.action === "SWITCH" ? "SWITCH" : "SELL",
-      scheme_name: h.scheme_name,
-      isin: h.isin,
-      folio_number: h.folio_number,
-      // A full exit sells every unit: its value is the CAS holding, whatever the NAV did since the report.
-      target_amount: s.partial ? sold : h.current_value,
-      current_amount: h.current_value,
-      reason: s.actionText || null,
-      priority: (priority += 10),
-    });
   }
 
   // ---- Fund-wise review ↔ CAS: every holding has exactly one verdict. ----

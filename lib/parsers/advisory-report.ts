@@ -31,6 +31,8 @@ export interface ReportSellRow {
   folioCount?: number;
   /** "(Reg)" / "(Direct)" in the fund cell. */
   planType?: "DIRECT" | "REGULAR" | null;
+  /** Read only from the fund-wise review (the sell table leaves it out): the desk confirms it. */
+  fromReview?: boolean;
 }
 export interface ReportBuyRow {
   fund: string;
@@ -175,6 +177,8 @@ export function mapSellAction(text: string): ReportSellAction {
   if (/switch|consolidat|merge into|move (in)?to|shift (in)?to/.test(t)) return "SWITCH";
   // A deferred exit ("exit later", "redeem in 2027") is not a sell now.
   if (/\b(exit|sell|redeem|liquidate)\s+(later|after|in \d{4}|next)\b/.test(t)) return "RETAIN";
+  // A keep that mentions selling ("Hold, do not sell", "Continue – review exit in 2027") is a keep.
+  if (/^(hold|keep|retain|continue|maintain|stay invested|no change|unchanged)\b/.test(t.trim()) || /\b(do not|don't|dont|no need to|not to)\s+(sell|exit|redeem)\b/.test(t)) return "RETAIN";
   if (/full exit|\bexit|redeem|redemption|\bsell|\btrim|partial|\breduce|withdraw|liquidat|book(ing)? profits?|right[- ]?size|\bcut\b|\bprune|scale down|lighten/.test(t)) return "SELL";
   if (/retain|hold|keep|continue|stay invested|maintain|no change/.test(t)) return "RETAIN";
   return "UNKNOWN";
@@ -535,10 +539,10 @@ export function parseAdvisoryReportLines(rawLines: string[]): AdvisoryReportPars
         const s = sells.filter((x) => !claimed.has(x) && samePlan(x, r) && nameSimilarity(x.fund, r.fund) >= 0.7).find((x) => close(x.value, r.value)) ?? bestSell(r);
         if (!s && r.verdict === "EXIT" && sh >= 0) {
           // "Full exit" in the review only (the report has a sell table that leaves it out): sold in full, at its review value.
-          const added: ReportSellRow = { fund: r.fund, folio: null, actionText: r.verdictText, action: "SELL", partial: false, value: r.value, planType: r.planType, ...(r.folioCount ? { folioCount: r.folioCount } : {}) };
+          // The printed total is left as printed; the plan asks the desk to confirm this line.
+          const added: ReportSellRow = { fund: r.fund, folio: null, actionText: r.verdictText, action: "SELL", partial: false, value: r.value, planType: r.planType, fromReview: true, ...(r.folioCount ? { folioCount: r.folioCount } : {}) };
           sells.push(added);
           claimed.add(added);
-          if (sellTotal !== null) sellTotal = Math.round((sellTotal + r.value) * 100) / 100;
         } else if (!s) problems.push(`Review says ${r.verdictText} for ${r.fund} (${inr(r.value)}) but the sell table has no row for it.`);
         else {
           claimed.add(s);

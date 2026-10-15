@@ -66,7 +66,7 @@ export function ReportQuestions({ rows, clientId, planId, canAnswer }: { rows: R
                     <option value="BUY">Buy</option>
                   </Select>
                   <Input name="size" placeholder="₹ amount or 33%" aria-label="Line amount in rupees, or a percentage of the holding"
-                    defaultValue={r.report_diff ? String(Math.round(Math.max(r.report_diff.report_amount ?? 0, r.report_diff.done_amount) || 0) || "") : ""} />
+                    defaultValue={r.report_diff ? String(Math.round(Math.max(r.report_diff.report_amount ?? 0, r.report_diff.done_amount) || 0) || "") : Number(r.target_amount) > 0 ? String(Math.round(Number(r.target_amount))) : ""} />
                   <Textarea name="explanation" rows={1} required placeholder="What the report means (kept on the line)" aria-label="Explanation" className="min-h-9 py-1.5" />
                 </div>
                 {r.report_diff ? (

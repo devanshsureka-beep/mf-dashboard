@@ -48,7 +48,8 @@ export default async function BulkCallPage(props: PageProps<"/advice/bulk">) {
   const minValue = lakh(f.minValue), maxValue = lakh(f.maxValue);
   // Clients ticked on the Clients list arrive as ?ids=…: show them whatever the filters say.
   const picked = (one("ids") ?? "").split(",").filter((x) => /^[0-9a-f-]{36}$/i.test(x));
-  const matching = picked.length ? clients.filter((c) => picked.includes(c.client_id)) : clients
+  // Clients picked on the Clients list skip the other filters, but "Holds fund" still applies.
+  const matching = picked.length ? clients.filter((c) => picked.includes(c.client_id) && (!holdings || holdings.has(c.client_id))) : clients
     .filter((c) => minValue == null || (c.live_portfolio_value ?? 0) >= minValue)
     .filter((c) => maxValue == null || (c.live_portfolio_value ?? 0) <= maxValue)
     .filter((c) => !f.risk || c.risk_profile === f.risk)
@@ -59,7 +60,7 @@ export default async function BulkCallPage(props: PageProps<"/advice/bulk">) {
       : (b.live_portfolio_value ?? 0) - (a.live_portfolio_value ?? 0));
   const keep = (extra: Record<string, string>) => {
     const q = new URLSearchParams();
-    for (const [k, v] of Object.entries(sp)) if (typeof v === "string" && v && !["holds_sec", "ids"].includes(k)) q.set(k, v);
+    for (const [k, v] of Object.entries(sp)) if (typeof v === "string" && v && k !== "holds_sec") q.set(k, v);
     for (const [k, v] of Object.entries(extra)) q.set(k, v);
     return `/advice/bulk?${q.toString()}`;
   };

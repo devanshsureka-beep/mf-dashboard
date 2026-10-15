@@ -152,8 +152,10 @@ export function parseAdvisoryReportGeneric(pages: PdfPage[]): AdvisoryReportPars
         // The same fund listed in two review tables (with or without its detail line).
         const same = (x: { fund: string; planType: string | null; value?: number }) =>
           x.planType === f.planType && (nameSimilarity(x.fund, labelled(f)) >= 0.9 || (x.value !== undefined && Math.abs(x.value - value) <= 1 && nameSimilarity(x.fund, labelled(f)) >= 0.5));
+        // A keep verdict stays a keep, whatever else it mentions ("Hold, do not sell", "Continue – reduce SIP").
+        const keep = /^(hold|keep|retain|continue|no change|unchanged|maintain)\b/i.test(verdict);
         // "Full exit" / "Exit" / "Sell all" in the review: a sell now (deferred exits read as keep).
-        const action = mapSellAction(verdict);
+        const action = keep ? "RETAIN" : mapSellAction(verdict);
         if (action === "SELL" || action === "SWITCH") {
           if (!reviewSells.some((x) => same(x))) reviewSells.push({ fund: labelled(f), folio: f.folio, folioCount: f.folioCount, planType: f.planType, value, verdict, action });
           continue;
@@ -233,9 +235,8 @@ export function parseAdvisoryReportGeneric(pages: PdfPage[]): AdvisoryReportPars
     sells.push({
       fund: r.fund, folio: r.folio, folioCount: r.folioCount ?? undefined, planType: r.planType,
       actionText: percent !== null ? `Trim ${percent}%` : partial ? "Partial sell" : "Full exit",
-      action: r.action, partial, value, percent,
+      action: r.action, partial, value, percent, fromReview: true,
     });
-    if (sellTotal !== null) sellTotal += value;
   }
   if (!sells.length && !buys.length && !sips.length) throw new ReportParseError("No sell, buy or SIP table could be read from this report.");
 
