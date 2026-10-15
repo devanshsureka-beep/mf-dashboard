@@ -93,7 +93,7 @@ export function DraftView({ c, plan, items, sips, questions, securities, heldIds
   const editor = (i: PlanItemProgress) => canAdvise ? <ItemEditor i={i} clientId={clientId} planId={planId} isActive={false} securities={securities} heldIds={heldIds} label="Edit" alignRight /> : null;
 
   const lineTable = (rows: PlanItemProgress[], amountLabel: string, amount: (i: PlanItemProgress) => number | null) => (
-    <div className="overflow-x-auto">
+    <div className="overflow-x-auto lg:overflow-visible">
       <table className="w-full text-[13px]">
         <thead className="bg-slate-50 text-left text-[10.5px] font-semibold uppercase tracking-wide text-muted">
           <tr><th className="px-4 py-2">Fund</th><th className="px-2 py-2">Report says</th><th className="px-2 py-2 text-right">Holding</th><th className="px-2 py-2 text-right">{amountLabel}</th><th className="w-16 px-4 py-2" /></tr>

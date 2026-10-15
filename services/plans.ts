@@ -61,11 +61,11 @@ export async function listDraftPlans(tx: Tx, f: { advisorId?: string | null; pla
   return tx<DraftPlanRow[]>`
     select p.id as plan_id, p.plan_name, p.plan_kind, p.plan_date::text as plan_date, p.created_at, p.fresh_money::float8 as fresh_money,
            s.client_id, s.full_name as client_name, s.client_code, s.advisor_name, s.active_plan_id is not null as has_active_plan,
-           count(i.id) filter (where i.action = 'SELL')::int as sells,
-           count(i.id) filter (where i.action in ('BUY', 'SWITCH'))::int as buys,
+           count(i.id) filter (where i.action in ('SELL', 'SWITCH'))::int as sells,
+           count(i.id) filter (where i.action = 'BUY')::int as buys,
            count(i.id) filter (where i.action = 'RETAIN')::int as keeps,
-           coalesce(sum(i.target_amount) filter (where i.action = 'SELL'), 0)::float8 as sell_total,
-           coalesce(sum(i.target_amount) filter (where i.action in ('BUY', 'SWITCH')), 0)::float8 as buy_total,
+           coalesce(sum(i.target_amount) filter (where i.action in ('SELL', 'SWITCH')), 0)::float8 as sell_total,
+           coalesce(sum(i.target_amount) filter (where i.action = 'BUY'), 0)::float8 as buy_total,
            (select count(*)::int from public.sip_plan_items x where x.plan_id = p.id and x.status <> 'CANCELLED') as sip_lines,
            count(i.id) filter (where i.report_question is not null and i.report_answer is null)::int as open_questions,
            (count(i.id) filter (where i.needs_review or (i.action <> 'RETAIN' and i.security_id is null))

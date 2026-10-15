@@ -40,7 +40,9 @@ export async function getSipStatus(tx: Tx, clientId: string): Promise<SipStatusV
            t.scheme_name, t.folio_number, t.amount, t.description
     from public.portfolio_transactions t
     left join public.security_master sm on sm.id = t.security_id
-    where t.client_id = ${clientId} and coalesce(t.units, 0) <> 0
+    where t.client_id = ${clientId}
+      -- Rows without units: only the "SIP Cancelled" kind (an invalid purchase or a refund moved nothing).
+      and (coalesce(t.units, 0) <> 0 or t.description ~* '(cancel|ceas|terminat|discontinu|deactivat|revok)')
       -- Plain purchases too: many SIPs only show up as a repeating monthly "Purchase".
       and (t.transaction_type in ('SIP', 'PURCHASE') or t.description ~* '(sip|systematic)')`;
   const funds = sipStatus(txns, latest, previous);

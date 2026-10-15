@@ -119,7 +119,7 @@ export async function getInboxRunDetails(tx: Tx, runIds: string[]): Promise<Reco
     change_type: string; amount: number; date: string | null; single_trade: boolean }[]>`
     select m.id, m.run_id, m.scheme_name, m.classification, m.status, m.reviewed_at is not null as reviewed, a.action, m.change_type,
            abs(coalesce(m.transaction_amount, m.approx_amount))::float8 as amount, m.transaction_date::text as date,
-           (m.cas_transaction_id is not null and coalesce(m.transaction_amount, 0) > 0) as single_trade
+           (m.cas_transaction_id is not null and m.security_id is not null and m.transaction_date is not null and coalesce(m.transaction_amount, 0) > 0) as single_trade
     from public.reconciliation_matches m left join public.advice_items a on a.id = m.advice_item_id
     where m.run_id = any(${runIds}::uuid[]) and m.classification in ('ADVICE_MATCH', 'UNADVISED')
     order by m.transaction_date nulls last, m.scheme_name`;

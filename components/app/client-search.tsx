@@ -41,7 +41,8 @@ export function ClientSearch() {
   }, []);
 
   const term = q.trim();
-  const shown = term ? hits : [];
+  // Only hits for exactly what is typed now (Enter must not open the previous search's client).
+  const shown = term && searched === term ? hits : [];
   const go = (href: string) => {
     setOpen(false);
     setQ("");

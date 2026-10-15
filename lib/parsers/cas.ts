@@ -116,6 +116,13 @@ export const SIP_TEXT = /\bs\.?i\.?p\b|\bsip(purchase|instal)|\b(x|i|micro|nfo\s
  */
 export const SIP_CANCEL_TEXT = /^(?!.*(revers|purchase|instal|reject|\(\d+\/\d+\))).*?((\bs\.?i\.?p\b|\b(x|i)sip\b).{0,30}?\b(cancel|ceas|terminat|stopp?ed|closed|discontinu|deactivat|revok)|sip(systematic\s*)?(cancel|ceas|terminat|discontinu)|\bsys(tematic|t)?\.?.{0,30}?\b(cancel|ceas|terminat|discontinu|deactivat|revok)|ceased as per investor)/i;
 
+/**
+ * Words that make a stored purchase something other than a SIP instalment
+ * (switch, STP, SWP, redemption, dividend, merger, bonus). An older row is read
+ * as SIP only without them; public.txn_effective_type() uses the same list.
+ */
+const NOT_SIP_CONTEXT = /switch|lateral|\bstp\b|transfer|\bswp\b|withdraw|redemp|redeem|repurchase|units extinguished|dividend|idcw|\bdiv\b|merger|amalgamation|bonus/i;
+
 /** Money moved out by a switch / STP: "Switch Out", "Switch-Over Out", "Lateral Shift Out", "STP Out", "Sys. Transfer Out", "Systematic Transfer Plan Out". */
 const SWITCH_OUT_TEXT = /switch[\s-]*(over\s*)?out|lateral (shift )?out|stp[\s-]*out|transfer[\s-]*(plan[\s-]*)?out|\bsys(tematic|t)?\.?\s*transfer.{0,20}?\bout\b/;
 
@@ -154,7 +161,7 @@ export function effectiveTxnType(type: string, description: string | null, units
   const u = units === null || units === undefined ? 0 : Number(units);
   if (!description || !u) return type;
   // A SIP instalment an older reader stored as a plain purchase.
-  if (type === "PURCHASE") return classifyTransaction(description, u).type === "SIP" ? "SIP" : type;
+  if (type === "PURCHASE") return classifyTransaction(description, u).type === "SIP" && !NOT_SIP_CONTEXT.test(description) ? "SIP" : type;
   // "Systematic Transfer Plan Out" an older reader stored as a switch in.
   if (type === "SWITCH_IN") return u < 0 && SWITCH_OUT_TEXT.test(description.toLowerCase()) ? "SWITCH_OUT" : type;
   if (!["STT", "TDS", "STAMP_DUTY", "OTHER"].includes(type)) return type;

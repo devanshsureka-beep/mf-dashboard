@@ -21,3 +21,6 @@ export const NOT_SIP_WORDINGS: [string, number, string][] = [
 
 export const SIP_STOP_WORDINGS = ["SIP Cancelled", "SIPCancelled", "SIPTerminated", "SIP Discontinued", "SIP Deactivated", "Sys. Investment Ceased", "Systematic Cancellation", "SIP ceased as per investor request", "XSIP registration revoked"];
 export const NOT_SIP_STOP_WORDINGS = ["Sys. Investment (1/120)", "SIP Purchase (Reversal)", "*** Cancelled ***", "Systematic Investment Rejection (3) (4/60)"];
+
+/** Stored as PURCHASE by an older reader and still used as PURCHASE (a switch / dividend / transfer word is in them). */
+export const STORED_PURCHASE_NOT_SIP = ["Div. Reinvestment SIP", "Purchase (Transfer) SIP", "Systematic Investment Plan - Transfer of units", "Bonus SIP units", "IDCW Reinvestment Systematic"];

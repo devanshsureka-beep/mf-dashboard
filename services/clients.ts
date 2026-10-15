@@ -133,6 +133,8 @@ export type DeskClient = ClientSummary & {
 
 export async function listDeskClients(tx: Tx, f: DeskFilters = {}): Promise<DeskClient[]> {
   const q = f.q?.trim() ? `%${f.q.trim()}%` : null;
+  const words = (f.q ?? "").trim().toLowerCase().split(/\s+/).filter(Boolean).slice(0, 5);
+  const digits = (f.q ?? "").replace(/\D/g, "");
   const rows = await tx<DeskClient[]>`
     select s.*, p.premium_paid_total::float8 as premium_paid_total, p.paid_until::text as paid_until, p.premium_status, p.renewal_due,
            p.agreement_status, p.agreement_valid_to::text as agreement_valid_to,
@@ -156,7 +158,10 @@ export async function listDeskClients(tx: Tx, f: DeskFilters = {}): Promise<Desk
     left join lateral (
       select count(*) as n from public.client_notes n where n.client_id = s.client_id and n.deleted_at is null
         and n.follow_up_date <= app.today_ist() and n.follow_up_done_at is null) fu on true
-    where (${q}::text is null or s.full_name ilike ${q} or s.client_code ilike ${q} or s.email ilike ${q} or s.pan ilike ${q} or s.phone ilike ${q})
+    where (${q}::text is null or s.client_code ilike ${q} or s.email ilike ${q} or s.pan ilike ${q} or s.phone ilike ${q}
+           -- Same as the live search: every word in the name, or the phone digits.
+           or (select bool_and(s.full_name ilike '%' || w || '%') from unnest(${words}::text[]) w)
+           or (length(${digits}) >= 4 and regexp_replace(coalesce(s.phone, ''), '\D', '', 'g') like '%' || ${digits} || '%'))
       and (${f.advisorId ?? null}::uuid is null or s.advisor_id = ${f.advisorId ?? null})
       and (${f.status ?? null}::text is null or s.status = ${f.status ?? null})
       and (${f.risk ?? null}::text is null or s.risk_profile = ${f.risk ?? null})

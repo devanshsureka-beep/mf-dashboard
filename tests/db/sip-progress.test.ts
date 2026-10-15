@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { confirmSnapshot, createSnapshotFromParsed } from "@/services/portfolio";
 import { approvePlan, createDraftPlan, setSipStatus } from "@/services/plans";
+import { getSipStatus } from "@/services/sip-status";
 import { createClient } from "@/services/clients";
 import { convertBuyToSip, convertSipToLumpsum, getClientSip, getSipProgress, updateSipAmounts } from "@/services/sip";
 import { clientWithActivePlan, parsed, progress, scenario, sql, TEST_DB } from "./harness";
@@ -158,6 +159,28 @@ describeDb("SIP alongside lump sums", () => {
       const o = (await ctx.tx<{ status: string; notes: string }[]>`select status, notes from public.sip_plan_items where id = ${other.id}`)[0];
       expect(o.status).toBe("ADVISED");
       expect(o.notes).toMatch(/SIP of ₹10,000 running \(plan ₹13,000\)/);
+    });
+  });
+});
+
+describeDb("A SIP the CAS shows cancelled", () => {
+  it("is seen from the cancellation line even though that line moves no units", async () => {
+    await scenario(async (ctx) => {
+      const client = await ctx.as("advisor", (t) => createClient(t, ctx.users.advisor, { full_name: "Cancel Test", status: "ACTIVE" }));
+      const y = (await ctx.tx<{ scheme_name: string; isin: string }[]>`select scheme_name, isin from public.security_master where id = ${ctx.sec.Y}`)[0];
+      const inst = (date: string, bal: number) => ({ date, type: "SIP" as const, scheme_name: y.scheme_name, isin: y.isin, folio_number: "T1", amount: 10000, units: 100, nav: 100, balance_units: bal });
+      await ctx.as("advisor", async (t) => {
+        const pr = parsed("2026-10-10", [{ security: ctx.sec.Y, name: y.scheme_name, units: 300, nav: 100 }], [
+          inst("2026-07-05", 100), inst("2026-08-05", 200), inst("2026-09-05", 300),
+          { date: "2026-09-15", type: "OTHER", description: "SIP Cancelled", scheme_name: y.scheme_name, isin: y.isin, folio_number: "T1", amount: null, units: null, nav: null, balance_units: 300 },
+        ]);
+        pr.holdings[0].isin = y.isin;
+        const id = await createSnapshotFromParsed(t, { clientId: client.id, casDocumentId: null, parsed: pr, source: "SEED", createdBy: ctx.users.advisor.id });
+        await confirmSnapshot(t, id, "test");
+      });
+      const view = await ctx.as("advisor", (t) => getSipStatus(t, client.id));
+      const fund = view.funds.find((f) => f.isin === y.isin);
+      expect(fund?.now).toMatchObject({ state: "STOPPED", cancelledOn: "2026-09-15" });
     });
   });
 });

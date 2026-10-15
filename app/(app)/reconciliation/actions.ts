@@ -123,7 +123,12 @@ export async function decideTradeAction(matchId: string, _p: ActionResult | null
     const decision = reqStr(fd, "decision");
     const note = optStr(fd, "note");
     if (decision === "ADVISED") {
-      await actionTx((tx, actor) => recordAdvisedOffline(tx, actor, matchId, { channel: "PHONE", communicatedAt: null, note }), { roles: ["ADMIN", "ADVISOR"] });
+      const channel = reqStr(fd, "channel", "How the client was told") as Channel;
+      if (!(CHANNELS as readonly string[]).includes(channel)) throw new AppError("Choose how the client was told.");
+      const at = optStr(fd, "communicated_at");
+      const communicatedAt = at ? fromISTDateTimeLocal(at) : null;
+      if (communicatedAt && Number.isNaN(communicatedAt.getTime())) throw new AppError("Invalid call time.");
+      await actionTx((tx, actor) => recordAdvisedOffline(tx, actor, matchId, { channel, communicatedAt, note }), { roles: ["ADMIN", "ADVISOR"] });
     } else if (decision === "OWN") {
       await actionTx(async (tx, actor) => {
         const m = (await tx<{ status: string }[]>`select status from public.reconciliation_matches where id = ${matchId}`)[0];

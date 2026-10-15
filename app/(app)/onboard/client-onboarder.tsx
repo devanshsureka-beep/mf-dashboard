@@ -111,6 +111,7 @@ export function ClientOnboarder({ advisors, defaultAdvisorId, advisorRequired, c
   }
 
   async function add(list: File[]) {
+    if (reading) return; // one read at a time: a second drop waits until this one is done
     const picked = list.filter((f) => /\.pdf$/i.test(f.name) && !files.some((x) => x.name === f.name && x.size === f.size));
     if (!picked.length) return;
     const all = [...files, ...picked];
@@ -221,14 +222,14 @@ export function ClientOnboarder({ advisors, defaultAdvisorId, advisorRequired, c
       <div
         onDragOver={(e) => { e.preventDefault(); setOver(true); }}
         onDragLeave={() => setOver(false)}
-        onDrop={async (e) => { e.preventDefault(); setOver(false); if (!running) await add(await filesFromDrop(e.dataTransfer)); }}
+        onDrop={async (e) => { e.preventDefault(); setOver(false); if (!running && !reading) await add(await filesFromDrop(e.dataTransfer)); }}
         className={cn("rounded-xl border-2 border-dashed px-6 text-center transition-colors", rows.length || others.length ? "py-5" : "py-10", over ? "border-brand bg-brand-50" : "border-border bg-white")}
       >
         <div className="text-[15px] font-semibold">Drop CAS and advisory report PDFs here</div>
         <p className="mt-1 text-sm text-muted">One client or many, in any order, or a whole folder. Files are paired by client by themselves.</p>
         <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
-          <Button type="button" variant="outline" size="sm" disabled={running} onClick={() => filesInput.current?.click()}>Choose files</Button>
-          <Button type="button" variant="outline" size="sm" disabled={running} onClick={() => folderInput.current?.click()}>Choose a folder</Button>
+          <Button type="button" variant="outline" size="sm" disabled={running || reading} onClick={() => filesInput.current?.click()}>Choose files</Button>
+          <Button type="button" variant="outline" size="sm" disabled={running || reading} onClick={() => folderInput.current?.click()}>Choose a folder</Button>
           {files.length ? <button type="button" className="text-xs text-muted hover:underline" disabled={running || reading} onClick={clearAll}>Clear all</button> : null}
         </div>
         <input ref={filesInput} type="file" accept="application/pdf" multiple hidden onChange={(e) => { void add(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
@@ -395,7 +396,7 @@ function ClientRow({ r, files, infos, result, started, running, reports, open, o
   ) : row?.clientId ? <LinkButton size="sm" variant="outline" href={`/clients/${row.clientId}`}>Open client</LinkButton>
     : row && !running && c && rep ? <Button size="sm" variant="outline" onClick={onRetry} disabled={!canRetry}>Retry</Button>
     : started && !c && !result ? (
-      <span className="flex gap-1.5"><Button size="sm" variant="outline" onClick={onAddCas}>Add CAS</Button><LinkButton size="sm" variant="outline" href="/onboard/new">New MF user</LinkButton></span>
+      <span className="flex gap-1.5"><Button size="sm" variant="outline" onClick={onAddCas} disabled={running}>Add CAS</Button><LinkButton size="sm" variant="outline" href="/onboard/new">New MF user</LinkButton></span>
     ) : null;
 
   const locked = running || Boolean(result && !(result.outcome === "FAILED" || result.outcome === "NEEDS_REVIEW"));

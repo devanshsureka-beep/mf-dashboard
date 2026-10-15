@@ -14,6 +14,8 @@ import { cn } from "@/lib/utils";
 import { askCasHref } from "@/lib/ask-cas";
 import { getCasInbox, getInboxRunDetails, type InboxCheck, type InboxReading, type InboxRunDetail } from "@/services/cas-inbox";
 import { confirmMatchFromInboxAction, decideTradeAction } from "./actions";
+import { Input, Select } from "@/components/ui/form";
+import { CHANNELS } from "@/types/domain";
 import { listCasDocuments } from "@/services/portfolio";
 import { listRuns } from "@/services/reconciliation";
 import { BulkUploader } from "../cas/bulk/bulk-uploader";
@@ -181,9 +183,25 @@ export default async function CasInboxPage(props: PageProps<"/reconciliation">) 
                         <span><b>{m.scheme_name}</b> {m.change_type === "DECREASE" || m.change_type === "EXITED" ? "redeemed" : "invested"} <Money value={m.amount} />{m.date ? ` on ${formatDate(m.date)}` : ""}. No call matches it.</span>
                         <span className="flex items-center gap-1.5">
                           {canAdvise && m.single_trade ? (
-                            <ActionForm action={decideTradeAction.bind(null, m.id)}><input type="hidden" name="decision" value="ADVISED" /><SubmitButton size="sm" variant="outline">We advised it</SubmitButton></ActionForm>
+                            <details className="relative">
+                              <summary className="cursor-pointer list-none rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-medium hover:bg-slate-50 [&::-webkit-details-marker]:hidden">We advised it ▾</summary>
+                              <ActionForm action={decideTradeAction.bind(null, m.id)} className="absolute right-0 z-30 mt-1 w-72 space-y-2 rounded-lg border border-border bg-white p-3 text-xs shadow-lg">
+                                <input type="hidden" name="decision" value="ADVISED" />
+                                <p className="text-muted">Records the call given outside the dashboard and this trade as its execution.</p>
+                                <label className="block">How the client was told *
+                                  <Select name="channel" required defaultValue="" className="mt-1 h-8 text-xs">
+                                    <option value="" disabled>Choose…</option>
+                                    {CHANNELS.map((ch) => <option key={ch} value={ch}>{humanize(ch)}</option>)}
+                                  </Select>
+                                </label>
+                                <label className="block">When (empty: the trade day, 09:00)
+                                  <Input name="communicated_at" type="datetime-local" className="mt-1 h-8 text-xs" />
+                                </label>
+                                <SubmitButton size="sm" confirm="Record this trade as our call, done?">Record call</SubmitButton>
+                              </ActionForm>
+                            </details>
                           ) : null}
-                          <ActionForm action={decideTradeAction.bind(null, m.id)}><input type="hidden" name="decision" value="OWN" /><SubmitButton size="sm" variant="outline">Client&rsquo;s own</SubmitButton></ActionForm>
+                          <ActionForm action={decideTradeAction.bind(null, m.id)}><input type="hidden" name="decision" value="OWN" /><SubmitButton size="sm" variant="outline" confirm="Mark this as the client's own trade (no call)?">Client&rsquo;s own</SubmitButton></ActionForm>
                         </span>
                       </li>
                     ))}

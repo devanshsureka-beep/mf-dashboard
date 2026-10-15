@@ -1,4 +1,4 @@
-import { SIP_WORDINGS, NOT_SIP_WORDINGS, SIP_STOP_WORDINGS, NOT_SIP_STOP_WORDINGS } from "../fixtures/txn-wordings";
+import { SIP_WORDINGS, NOT_SIP_WORDINGS, SIP_STOP_WORDINGS, NOT_SIP_STOP_WORDINGS, STORED_PURCHASE_NOT_SIP } from "../fixtures/txn-wordings";
 import { describe, expect, it } from "vitest";
 import { classifyTransaction, effectiveTxnType } from "@/lib/parsers/cas";
 import { sipPointAsOf, type SipTxn } from "@/lib/domain/sip-status";
@@ -62,4 +62,8 @@ describe("Every RTA wording (CAMS, KFintech, exchanges)", () => {
   });
   it.each(SIP_STOP_WORDINGS)("%s stops the SIP", (d) => expect(classifyTransaction(d, 0).sipCancelled).toBe(true));
   it.each(NOT_SIP_STOP_WORDINGS)("%s does not stop the SIP", (d) => expect(classifyTransaction(d, 0).sipCancelled).toBe(false));
+});
+
+describe("Stored purchases that mention a switch, transfer or dividend", () => {
+  it.each(STORED_PURCHASE_NOT_SIP)("%s stays a purchase", (d) => expect(effectiveTxnType("PURCHASE", d, 10)).toBe("PURCHASE"));
 });
