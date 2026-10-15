@@ -63,3 +63,12 @@ describe("SIPs the report keeps unchanged", () => {
     expect(plan.sip_items).toEqual([]);
   });
 });
+
+describe("Report as it is: a fund the CAS does not hold", () => {
+  it("gets no Sell line (there is nothing to sell), only a note", () => {
+    const ans = { ...answer, sells: [...answer.sells, { fund: "Nippon India Gold ETF FoF", folio: "9999", folio_count: 1, plan_type: "DIRECT" as const, partial: false, value: 400000, percent: null }] };
+    const plan = buildPlanFromReport(answerToReport(ans, null), holdings, "2026-10-01", { asReported: true });
+    expect(plan.items.some((i) => /Gold/i.test(i.scheme_name))).toBe(false);
+    expect(plan.drift.join(" ")).toMatch(/Gold ETF FoF.*no Sell line/);
+  });
+});

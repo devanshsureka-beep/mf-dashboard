@@ -328,7 +328,7 @@ async function planFromDraft(
     unchanged_sips: draft.unchanged_sips ?? [],
     warnings: draft.warnings,
   });
-  const plan = await ingestAdvisoryReport(tx, payload, actor.id, { extractionSource: args.report.template === "AI_ASSISTED" ? "AI_EXTRACTION" : "IMPORT", securityIds });
+  const plan = await ingestAdvisoryReport(tx, payload, actor.id, { extractionSource: args.report.template === "AI_ASSISTED" ? "AI_EXTRACTION" : "IMPORT", securityIds, allowAsReported: true });
   if (!plan.planId) throw new AppError("The plan could not be created from the report.");
   return { planId: plan.planId, itemsNeedingReview: plan.itemsNeedingReview, warnings: plan.warnings };
 }

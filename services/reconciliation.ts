@@ -251,7 +251,8 @@ async function loadSnapshotTxns(tx: Tx, snapshotId: string, afterDate: string, n
 async function markRecurringPurchases(tx: Tx, clientId: string, txns: MatchTxn[], calls: MatchCall[]): Promise<MatchTxn[]> {
   const buys = txns.filter((t) => t.type === "PURCHASE" && (t.amount ?? 0) > 0);
   if (!buys.length) return txns;
-  const openBuy = new Set(calls.filter((c) => c.action === "BUY" && c.status !== "EXECUTED").flatMap((c) => [c.securityId, c.isin].filter(Boolean) as string[]));
+  // A Buy call still open, or done by hand but not yet seen in a CAS, may be what this purchase executes.
+  const openBuy = new Set(calls.filter((c) => c.action === "BUY" && (c.status !== "EXECUTED" || c.unverifiedExecutedAmount > 0)).flatMap((c) => [c.securityId, c.isin].filter(Boolean) as string[]));
   const history = await tx<(SipTxn & { id: string })[]>`
     select t.id, t.transaction_date::text as date, public.txn_effective_type(t.transaction_type, t.description, t.units) as type,
            coalesce(t.isin, sm.isin) as isin, t.scheme_name, t.folio_number, t.amount::float8 as amount, t.description
@@ -276,7 +277,7 @@ async function saveTxnProposals(
   for (const p of proposals) {
     if (p.kind === "SIP_CANCELLED") continue; // no units moved; handled via SIP plan items
     // A fund outside the advised portfolio (onboarded with the report as it is): noted, not a trade to decide.
-    const isOutside = p.kind === "UNADVISED" && p.securityId !== null && outside.has(p.securityId);
+    const isOutside = isOutsideTrade(p, outside);
     const sign = p.direction === "SELL" ? -1 : 1;
     const classification = p.kind === "ADVICE_MATCH" ? "ADVICE_MATCH" : p.kind === "SIP_INSTALMENT" ? "SIP_INSTALMENT" : "UNADVISED";
     const status = p.kind === "ADVICE_MATCH" ? "SUGGESTED" : "UNEXPLAINED";
@@ -332,7 +333,8 @@ async function runTransactionReconciliation(
     sip_items_completed: sipItemsCompleted,
   };
 
-  const open = proposals.some(needsPerson);
+  const outside = await outsideFunds(tx, args.clientId);
+  const open = proposals.some((p) => needsPerson(p) && !isOutsideTrade(p, outside));
   const run = await tx<{ id: string }[]>`
     insert into public.reconciliation_runs (client_id, previous_snapshot_id, current_snapshot_id, previous_value, current_value,
                                             summary, engine_version, status, completed_at, created_by)
@@ -369,7 +371,8 @@ export async function recheckRun(tx: Tx, actor: Actor | null, runId: string): Pr
       and classification in ('UNADVISED', 'SIP_INSTALMENT') and status in ('UNEXPLAINED', 'SUGGESTED')`;
 
   const { calls, switchTargets } = await loadMatchCalls(tx, run.client_id);
-  await settleSipInstalments(tx, actor, { runId });
+  // Cancelling a call recorded from a SIP instalment is an adviser's change (Operations may still re-check).
+  if (actor && actor.role !== "OPERATIONS") await settleSipInstalments(tx, actor, { runId });
   const loaded = await loadSnapshotTxns(tx, run.current_snapshot_id, run.previous_date, runId);
   const folioOf = loaded.folioOf;
   const txns = await markRecurringPurchases(tx, run.client_id, loaded.txns, calls);
@@ -380,7 +383,8 @@ export async function recheckRun(tx: Tx, actor: Actor | null, runId: string): Pr
   }
 
   await completeSipItemsFromTransactions(tx, run.client_id, proposals);
-  const needsReview = proposals.filter(needsPerson).length;
+  const outsideIds = await outsideFunds(tx, run.client_id);
+  const needsReview = proposals.filter((p) => needsPerson(p) && !isOutsideTrade(p, outsideIds)).length;
   if (needsReview > 0) {
     await setAuditReason(tx, "CAS re-checked: new transactions to review");
     await tx`update public.reconciliation_runs set status = 'OPEN', completed_at = null where id = ${runId} and status <> 'OPEN'`;
@@ -707,21 +711,6 @@ export async function recordAdvisedOffline(
 export const SIP_NOT_A_TRADE = "SIP instalment: the CAS words it as a systematic / SIP purchase, so it is not a trade to decide";
 const OFFLINE_CALL_NOTE = "Recorded after the trade";
 
-/** The CAS row is a SIP instalment (by its wording, or a monthly run of plain purchases)? */
-export async function isSipInstalmentRow(tx: Tx, matchId: string): Promise<boolean> {
-  const m = (await tx<{ client_id: string; t: MatchTxn | null }[]>`
-    select m.client_id, case when t.id is null then null else json_build_object(
-      'id', t.id, 'securityId', t.security_id, 'isin', t.isin, 'schemeName', t.scheme_name, 'date', t.transaction_date::text,
-      'type', public.txn_effective_type(t.transaction_type, t.description, t.units), 'description', t.description,
-      'amount', t.amount::float8, 'units', t.units::float8, 'nav', t.nav::float8, 'folio', t.folio_number) end as t
-    from public.reconciliation_matches m left join public.portfolio_transactions t on t.id = m.cas_transaction_id
-    where m.id = ${matchId}`)[0];
-  if (!m?.t) return false;
-  if (m.t.type === "SIP") return true;
-  const { calls } = await loadMatchCalls(tx, m.client_id);
-  return (await markRecurringPurchases(tx, m.client_id, [m.t], calls))[0].type === "SIP";
-}
-
 /**
  * Rows of SIP instalments that an older reader left as unadvised trades become
  * SIP instalments again. Where someone recorded one as "We advised it", the
@@ -786,6 +775,10 @@ export async function settleSipInstalments(
 // Funds outside the advised portfolio ("onboard with the report as it is")
 // -----------------------------------------------------------------------------
 export const OUTSIDE_ADVISED = "Outside the advised portfolio: the report this client was onboarded with does not cover this fund";
+
+/** A trade no call explains, in a fund outside the advised portfolio: noted, never a decision. */
+export const isOutsideTrade = (p: { kind: string; securityId: string | null }, outside: Set<string>) =>
+  p.kind === "UNADVISED" && p.securityId !== null && outside.has(p.securityId);
 
 /** Security ids of the CAS funds the client's active / draft plan leaves outside the advised portfolio. */
 export async function outsideFunds(tx: Tx, clientId: string): Promise<Set<string>> {

@@ -425,6 +425,8 @@ export async function ingestAdvisoryReport(
     extractionSource?: "AI_EXTRACTION" | "IMPORT";
     /** Securities already resolved by the caller, keyed by lower-cased scheme name. */
     securityIds?: Record<string, string>;
+    /** Only onboarding (with its reason and role checks) may store "taken as the report says"; integrations never. */
+    allowAsReported?: boolean;
   } = {},
 ): Promise<{ planId: string | null; clientId: string; itemsNeedingReview: number; warnings: string[] }> {
   const client = await tx<{ id: string; created_by: string | null }[]>`
@@ -460,7 +462,7 @@ export async function ingestAdvisoryReport(
             ${payload.plan.starting_portfolio_value ?? snapshot[0]?.total_current_value ?? null},
             ${payload.document_id ?? null}, ${opts.extractionSource ?? "AI_EXTRACTION"}, ${tx.json(JSON.parse(JSON.stringify(payload)))}, ${createdBy},
             ${payload.plan.plan_kind ?? "FULL"}, ${payload.plan.fresh_money ?? null},
-            ${payload.plan.as_reported ? tx.json(JSON.parse(JSON.stringify(payload.plan.as_reported))) : null})
+            ${payload.plan.as_reported && opts.allowAsReported ? tx.json(JSON.parse(JSON.stringify(payload.plan.as_reported))) : null})
     returning id`;
   const planId = plan[0].id;
 

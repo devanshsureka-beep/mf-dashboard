@@ -68,7 +68,8 @@ export async function getSipStatus(tx: Tx, clientId: string): Promise<SipStatusV
     join public.advisory_plans p on p.id = i.plan_id and p.status = 'ACTIVE'
     join public.security_master sm on sm.id = i.security_id
     where i.client_id = ${clientId} and i.status <> 'CANCELLED' and sm.isin is not null
-      and i.reason ~* '(sip|systematic)[^;]{0,40}(continu|running|as is|as it is|unchanged|no change)|(continu|unchanged|no change in)[^;]{0,20}(sip|systematic)'`;
+      and i.reason ~* '(sip|systematic)[^;]{0,40}(\\mcontinu|\\mrunning\\M|\\mas is\\M|\\munchanged|\\mno change)|(\\mcontinu|\\munchanged|\\mno change in)[^;]{0,20}(sip|systematic)'
+      and i.reason !~* '(discontinu|\\mstop|\\mceas|\\mcancel|\\mterminat)'`;
   const fromNotes = keepNotes.map((k) => {
     const m = /(?:sip|systematic)[^0-9₹]{0,20}(?:₹|rs\.?\s*)?([\d,]+(?:\.\d+)?)/i.exec(k.reason);
     const amount = m ? Number(m[1].replace(/,/g, "")) : null;
@@ -78,7 +79,9 @@ export async function getSipStatus(tx: Tx, clientId: string): Promise<SipStatusV
   const fromTable = await tx<{ isin: string | null; scheme_name: string; amount: number }[]>`
     select u->>'isin' as isin, u->>'scheme_name' as scheme_name, (u->>'amount')::float8 as amount
     from public.advisory_plans p cross join lateral jsonb_array_elements(coalesce(p.extraction_payload->'unchanged_sips', '[]'::jsonb)) u
-    where p.client_id = ${clientId} and p.status = 'ACTIVE'`;
+    -- An additional-investment report is merged into the active plan: its unchanged SIPs count too.
+    where p.client_id = ${clientId} and (p.status = 'ACTIVE' or (p.status = 'MERGED' and p.merged_into_plan_id in (
+      select a.id from public.advisory_plans a where a.client_id = ${clientId} and a.status = 'ACTIVE')))`;
   const continuing: SipStatusView["continuing"] = [];
   for (const c of [...fromTable, ...fromNotes]) {
     const isin = c.isin ?? null;

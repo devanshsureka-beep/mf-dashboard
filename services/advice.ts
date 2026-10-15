@@ -317,7 +317,8 @@ export async function closeAdvice(tx: Tx, adviceItemId: string, status: "CANCELL
   const item = await getAdviceItem(tx, adviceItemId);
   if (!item.is_open) throw new AppError(`Call is already ${item.status}.`);
   await setAuditReason(tx, reason);
-  await tx`update public.advice_items set status = ${status}, status_reason = ${reason} where id = ${adviceItemId}`;
+  const res = await tx`update public.advice_items set status = ${status}, status_reason = ${reason} where id = ${adviceItemId}`;
+  if (res.count === 0) throw new AppError("This call cannot be closed with your access.", "FORBIDDEN");
   await syncOutsideLine(tx, item.plan_item_id);
 }
 

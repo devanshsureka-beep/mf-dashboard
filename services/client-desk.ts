@@ -4,6 +4,7 @@
  * CAS taken after it). Amounts come from the metrics views; nothing here
  * recomputes target / advised / executed / pending.
  */
+import { fundKey, instalments, type SipTxn } from "@/lib/domain/sip-status";
 import type { Tx } from "@/lib/db/tx";
 import { getPortfolioViews, planLineFor, type PlanLine } from "@/services/portfolio-views";
 
@@ -343,16 +344,23 @@ export async function getTranches(tx: Tx, clientId: string): Promise<{ tranches:
            coalesce(v.invested_amount, 0)::float8 as invested, coalesce(v.instalments, 0)::int as instalments,
            v.last_instalment_date::text as "lastInstalment"
     from public.sip_plan_items s
-    join public.advisory_plans p on p.id = s.plan_id and p.status not in ('DRAFT', 'CANCELLED')
+    -- A merged additional plan's lines live on in the active plan (counted once, there); a replaced
+    -- plan's never-advised lines were never advice.
+    join public.advisory_plans p on p.id = s.plan_id and p.status in ('ACTIVE', 'COMPLETED', 'REPLACED')
     left join public.v_sip_item_progress v on v.sip_item_id = s.id
-    where s.client_id = ${clientId} and s.status <> 'CANCELLED'
+    where s.client_id = ${clientId} and s.status <> 'CANCELLED' and (p.status = 'ACTIVE' or s.status <> 'PLANNED')
     order by coalesce(s.advised_at, p.approved_at, s.created_at) desc, s.scheme_name`;
-  // SIP instalments the CAS files show (SIP-worded purchases count too).
-  const sipTxns = await tx<{ date: string; amount: number }[]>`
-    select t.transaction_date::text as date, abs(t.amount)::float8 as amount
-    from public.portfolio_transactions t
+  // SIP instalments the CAS files show: SIP-worded purchases, and plain "Purchase" lines repeating every
+  // month (the same rule as the SIP tab and the CAS matching).
+  const buyRows = await tx<SipTxn[]>`
+    select t.transaction_date::text as date, public.txn_effective_type(t.transaction_type, t.description, t.units) as type,
+           coalesce(t.isin, sm.isin) as isin, t.scheme_name, t.folio_number, abs(t.amount)::float8 as amount, t.description
+    from public.portfolio_transactions t left join public.security_master sm on sm.id = t.security_id
     where t.client_id = ${clientId} and coalesce(t.units, 0) <> 0 and coalesce(t.amount, 0) <> 0
-      and public.txn_effective_type(t.transaction_type, t.description, t.units) = 'SIP'`;
+      and t.transaction_type in ('PURCHASE', 'SIP')`;
+  const byFund = new Map<string, SipTxn[]>();
+  for (const r of buyRows) byFund.set(fundKey(r), [...(byFund.get(fundKey(r)) ?? []), r]);
+  const sipTxns = [...byFund.values()].flatMap((rows) => instalments(rows)).map((r) => ({ date: r.date, amount: r.amount ?? 0 }));
 
   // Tranche n (n ≥ 1) runs from CAS n-1 up to (not including) the date of CAS n.
   const trancheOf = (d: string) => {

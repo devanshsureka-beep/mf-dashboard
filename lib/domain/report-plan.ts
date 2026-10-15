@@ -322,6 +322,11 @@ export function buildPlanFromReport(
               items.push(it);
               differs.set(it, { kind: "SELL_CHANGED", report: null });
             }
+            if (!group.length && asReported) {
+              // Report as it is: nothing of this fund is held, so there is nothing to sell.
+              drift.push(`${s.fund}: the report sells it, but the CAS holds none of it: no Sell line.`);
+              continue;
+            }
             if (!group.length) {
               const gone = goneHolding(s.fund, planType);
               const it: PlanItemDraft = { action: s.action === "SWITCH" ? "SWITCH" : "SELL", scheme_name: gone?.scheme_name ?? s.fund, isin: gone?.isin ?? null, folio_number: null,
@@ -363,6 +368,10 @@ export function buildPlanFromReport(
         if (gone && nameSimilarity(s.fund, gone.scheme_name) > nameSimilarity(s.fund, h.scheme_name)) h = null;
         // The report names the folio: another folio of the same fund is not this one (it may be kept).
         else if (s.folio && h.folio_number && !normFolio(h.folio_number).startsWith(normFolio(s.folio)) && !normFolio(s.folio).startsWith(normFolio(h.folio_number))) h = null;
+      }
+      if (!h && asReported) {
+        drift.push(`${s.fund}${s.folio ? ` (folio ${s.folio})` : ""}: the report sells it, but the CAS does not hold it: no Sell line.`);
+        continue;
       }
       if (!h) {
         if (tolerant) {

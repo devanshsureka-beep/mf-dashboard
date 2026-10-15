@@ -75,7 +75,10 @@ export async function recheckAllSipsAction(_p: ActionResult | null): Promise<Act
       // Each client on its own savepoint: one failing client does not undo the others.
       for (const c of clients) lines += await syncSipLinesQuietly(tx, c.client_id);
       // SIP instalments an older reader left as trades (or that were recorded as calls) become instalments again.
-      const settled = await settleSipInstalments(tx, actor);
+      // In its own savepoint: a failure here never undoes the SIP lines updated above.
+      const settled = await (tx as unknown as { savepoint: <T>(cb: (sp: typeof tx) => Promise<T>) => Promise<T> })
+        .savepoint((sp) => settleSipInstalments(sp, actor))
+        .catch(() => ({ reclassified: 0, callsCancelled: 0 }));
       return { clients: clients.length, lines, settled };
     }, { roles: ["ADMIN"] });
     revalidatePath("/clients");
