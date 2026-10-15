@@ -4,12 +4,14 @@ import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/form";
 import { PageHeader } from "@/components/app/page-header";
 import { Money } from "@/components/app/money";
-import { IssueAdviceForm } from "@/components/app/issue-advice-form";
+import { IssueAdviceForm, type RunningSip } from "@/components/app/issue-advice-form";
 import { ADVISORY_ROLES, pageData } from "@/lib/server";
 import { getClientSummary, listAdvisors, listClientSummaries } from "@/services/clients";
 import { getAdvisablePlanItems } from "@/services/plans";
 import { getHoldings } from "@/services/portfolio";
+import { getSipStatus, type SipStatusView } from "@/services/sip-status";
 import { issueAdviceAction, searchFundsAction } from "../actions";
+import type { HoldingRow } from "@/types/domain";
 
 export const metadata = { title: "Issue call" };
 
@@ -42,10 +44,11 @@ export default async function NewAdvicePage(props: PageProps<"/advice/new">) {
     );
   }
 
-  const { c, items, holdings, advisors, actor } = await pageData(async (tx) => {
+  const { c, items, holdings, advisors, sipSeen, actor } = await pageData(async (tx) => {
     const c = await getClientSummary(tx, clientId);
     return {
       c,
+      sipSeen: await getSipStatus(tx, clientId),
       items: await getAdvisablePlanItems(tx, clientId),
       holdings: c.latest_snapshot_id ? await getHoldings(tx, c.latest_snapshot_id) : [],
       advisors: await listAdvisors(tx),
@@ -78,6 +81,8 @@ export default async function NewAdvicePage(props: PageProps<"/advice/new">) {
         }))}
         holdings={holdings.filter((h) => h.security_id).map((h) => ({ security_id: h.security_id!, scheme_name: h.scheme_name, units: h.units, nav: h.latest_nav, folio: h.folio_number }))}
         searchFunds={searchFundsAction}
+        // SIPs the latest CAS shows running: "Full portfolio redemption" offers a Stop SIP line for each.
+        runningSips={c.active_plan_id ? runningSips(sipSeen, holdings) : []}
         advisors={actor.role === "ADMIN" ? advisors.filter((a) => a.role === "ADVISOR") : undefined}
       />
     </>
@@ -96,4 +101,17 @@ function fullExitUnits(
   const inFolio = i.folio_number ? same.filter((h) => norm(h.folio_number) === norm(i.folio_number)) : same;
   const units = (inFolio.length ? inFolio : same).reduce((t, h) => t + Number(h.units), 0);
   return units > 0 ? Math.round(units * 10000) / 10000 : null;
+}
+
+/** One line per fund the latest CAS shows a SIP running in (a fund's folios added together). */
+function runningSips(sip: SipStatusView, holdings: HoldingRow[]): RunningSip[] {
+  const out = new Map<string, RunningSip>();
+  for (const f of sip.funds) {
+    if (f.now.state !== "ACTIVE" || !f.now.amount) continue;
+    const h = holdings.find((x) => x.security_id && f.isin && x.isin === f.isin);
+    if (!h?.security_id) continue;
+    const prev = out.get(h.security_id);
+    out.set(h.security_id, { security_id: h.security_id, scheme_name: h.scheme_name, amount: (prev?.amount ?? 0) + f.now.amount });
+  }
+  return [...out.values()];
 }

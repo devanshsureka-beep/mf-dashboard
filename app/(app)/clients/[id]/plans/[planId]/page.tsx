@@ -11,6 +11,8 @@ import { ActionBadge, StatusBadge } from "@/components/app/status-badge";
 import { TransitionSummary } from "@/components/app/transition-summary";
 import { SecuritySelect } from "@/components/app/security-select";
 import { SipTable } from "@/components/app/sip-table";
+import { UnchangedSips } from "@/components/app/sip-status-card";
+import { getSipStatus } from "@/services/sip-status";
 import { EmptyState } from "@/components/app/page-header";
 import { formatDate, formatDateTime, humanize } from "@/lib/format";
 import { pageData } from "@/lib/server";
@@ -35,7 +37,7 @@ export const metadata = { title: "Portfolio plan" };
 export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[planId]">) {
   const { id, planId } = await props.params;
   const sp = await props.searchParams;
-  const { c, plan, items: allItems, sips, sipProgress, securities, heldIds, tranches, migrateNotes, questions, actor } = await pageData(async (tx) => {
+  const { c, plan, items: allItems, sips, sipProgress, sipSeen, securities, heldIds, tranches, migrateNotes, questions, actor } = await pageData(async (tx) => {
     const c = await getClientSummary(tx, id);
     const plan = await getPlan(tx, planId);
     const holdings = c.latest_snapshot_id ? await getHoldings(tx, c.latest_snapshot_id) : [];
@@ -44,6 +46,8 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
       items: await getPlanItems(tx, planId),
       sips: await getSipItems(tx, planId),
       sipProgress: await getSipProgress(tx, planId),
+      // SIPs the report keeps as they are (shown on the active plan, with what the CAS says).
+      sipSeen: plan.status === "ACTIVE" ? await getSipStatus(tx, id) : null,
       tranches: await getTranches(tx, planId),
       migrateNotes: await countMigrateNotes(tx, planId),
       questions: await listReportQuestions(tx, planId),
@@ -191,6 +195,7 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
 
       <Card className="mt-4">
         <CardHeader><CardTitle>SIP lines · {sips.length}</CardTitle><span className="text-xs text-muted">Target SIP <Money value={plan.target_sip_value} full />/month</span></CardHeader>
+        {sipSeen?.continuing.length ? <UnchangedSips sip={sipSeen} className="border-b border-border px-4 py-3" /> : null}
         {sips.length ? (
           <SipTable
             rows={sips}

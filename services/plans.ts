@@ -399,6 +399,36 @@ export async function deleteDraftSipItem(tx: Tx, sipId: string): Promise<void> {
   if (res.count === 0) throw new AppError("Only SIP items of a DRAFT plan can be deleted.");
 }
 
+/**
+ * Full portfolio redemption, SIP side: a STOP line per running SIP on the active plan, marked advised.
+ * Reuses an open STOP line for the same fund (e.g. one the report already planned) instead of adding another.
+ * Returns how many lines were advised now.
+ */
+export async function adviseSipStops(
+  tx: Tx,
+  actor: Actor,
+  clientId: string,
+  stops: { security_id: string; scheme_name: string; amount: number }[],
+  note: string,
+): Promise<number> {
+  if (!stops.length) return 0;
+  const planId = await getActivePlanId(tx, clientId);
+  if (!planId) throw new AppError("This client has no active plan to record the SIP stops on.");
+  let advised = 0;
+  for (const s of stops) {
+    const open = await tx<{ id: string; status: string }[]>`
+      select id, status from public.sip_plan_items
+      where plan_id = ${planId} and security_id = ${s.security_id} and action = 'STOP' and status in ('PLANNED', 'ADVISED', 'COMPLETED')
+      order by case status when 'PLANNED' then 0 when 'ADVISED' then 1 else 2 end limit 1`;
+    if (open[0] && open[0].status !== "PLANNED") continue; // already advised or done
+    const id = open[0]?.id ?? await addSipItem(tx, actor, planId,
+      { security_id: s.security_id, scheme_name: s.scheme_name, action: "STOP", old_amount: s.amount }, "Full portfolio redemption: stop the SIP");
+    await setSipStatus(tx, id, "ADVISED", note);
+    advised++;
+  }
+  return advised;
+}
+
 export async function setSipStatus(
   tx: Tx,
   sipId: string,

@@ -35,7 +35,9 @@ export async function getSipStatus(tx: Tx, clientId: string): Promise<SipStatusV
     group by snapshot_date order by snapshot_date desc limit 2`;
   const latest = snaps[0]?.snapshot_date ?? null;
   const previous = snaps[1]?.snapshot_date ?? null;
-  if (!latest) return { latestCasDate: null, previousCasDate: null, funds: [], plan: [], continuing: [] };
+  // SIPs the report keeps as they are: shown even before the first CAS.
+  const continuing = await continuingSips(tx, clientId);
+  if (!latest) return { latestCasDate: null, previousCasDate: null, funds: [], plan: [], continuing };
 
   const txns = await tx<SipTxn[]>`
     select t.transaction_date::text as date, public.txn_effective_type(t.transaction_type, t.description, t.units) as type, coalesce(t.isin, sm.isin) as isin,
@@ -62,6 +64,11 @@ export async function getSipStatus(tx: Tx, clientId: string): Promise<SipStatusV
     const now = matches.find((m) => m.now.state === "ACTIVE")?.now ?? matches[0]?.now ?? null;
     return { ...p, met: planSipMet(p, now), now };
   });
+  return { latestCasDate: latest, previousCasDate: previous, funds, plan, continuing };
+}
+
+/** SIPs the active plan keeps unchanged: the report's own SIP table, plus plan lines whose note says the SIP continues. */
+async function continuingSips(tx: Tx, clientId: string): Promise<SipStatusView["continuing"]> {
   const keepNotes = await tx<{ isin: string; scheme_name: string; reason: string }[]>`
     select sm.isin, i.scheme_name, i.reason
     from public.advisory_plan_items i
@@ -88,7 +95,7 @@ export async function getSipStatus(tx: Tx, clientId: string): Promise<SipStatusV
     if (continuing.some((x) => (isin && x.isin === isin) || (!isin && x.scheme_name === c.scheme_name))) continue;
     continuing.push({ isin, scheme_name: c.scheme_name, amount: c.amount });
   }
-  return { latestCasDate: latest, previousCasDate: previous, funds, plan, continuing };
+  return continuing;
 }
 
 /**

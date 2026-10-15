@@ -9,6 +9,7 @@ import { fromISTDateTimeLocal } from "@/lib/format";
 import { actionTx, ADVISORY_ROLES } from "@/lib/server";
 import { resolveFundRef, searchFunds, type FundOption } from "@/services/fund-search";
 import { closeAdvice, issueAdvice, reviseAdvice } from "@/services/advice";
+import { adviseSipStops } from "@/services/plans";
 import { correctAdvice, correctExecution } from "@/services/corrections";
 import { addNote } from "@/services/notes";
 import { CHANNELS, type Channel } from "@/types/domain";
@@ -23,6 +24,13 @@ const itemSchema = z.object({
   advised_units: z.coerce.number().positive().nullable().optional(),
   reference_price: z.coerce.number().positive().nullable().optional(),
   valid_until: z.iso.date().nullable().optional(),
+});
+
+/** A running SIP to stop (full portfolio redemption): a STOP line on the active plan, advised with the calls. */
+const sipStopSchema = z.object({
+  security_id: z.uuid(),
+  scheme_name: z.string().trim().min(1).max(300),
+  amount: z.coerce.number().positive(),
 });
 
 function channel(fd: FormData): Channel {
@@ -46,26 +54,38 @@ export async function issueAdviceAction(clientId: string, _p: ActionResult | nul
     } catch {
       throw new AppError("Could not read the calls.");
     }
-    const parsed = z.array(itemSchema).min(1, "Add at least one call").safeParse(raw);
+    let rawStops: unknown;
+    try {
+      rawStops = JSON.parse(str(fd, "sip_stops") || "[]");
+    } catch {
+      throw new AppError("Could not read the SIP stops.");
+    }
+    const stops = z.array(sipStopSchema).max(100).safeParse(rawStops);
+    if (!stops.success) throw new AppError("Could not read the SIP stops.");
+    const parsed = z.array(itemSchema).min(stops.data.length ? 0 : 1, "Add at least one call").safeParse(raw);
     if (!parsed.success) throw new AppError(parsed.error.issues[0].message);
     const out = await actionTx(async (tx, actor) => {
       const items = [];
       for (const i of parsed.data) items.push({ ...i, security_id: await resolveFundRef(tx, i.security_id, actor.id) });
-      return issueAdvice(tx, actor, {
+      const communicatedAt = when(fd);
+      const batch = items.length ? await issueAdvice(tx, actor, {
         clientId,
         advisorId: optStr(fd, "advisor_id"),
-        communicatedAt: when(fd),
+        communicatedAt,
         channel: channel(fd),
         notes: optStr(fd, "notes"),
         items,
-      });
+      }) : null;
+      // The SIP side, kept apart from Buy / Sell: a STOP line per SIP, advised now; the next CAS ticks it done.
+      await adviseSipStops(tx, actor, clientId, stops.data, `Advised with the full portfolio redemption (${channel(fd).toLowerCase().replace("_", " ")})`);
+      return batch;
     }, { roles: ADVISORY_ROLES });
-    batchId = out.batchId;
+    batchId = out?.batchId ?? "";
   });
   if (!res.ok) return res;
   revalidatePath("/advice");
   revalidatePath(`/clients/${clientId}`);
-  redirect(`/advice?client=${clientId}&issued=${batchId}`);
+  redirect(batchId ? `/advice?client=${clientId}&issued=${batchId}` : `/clients/${clientId}?tab=sip`);
 }
 
 export async function reviseAdviceAction(itemId: string, _p: ActionResult | null, fd: FormData): Promise<ActionResult> {

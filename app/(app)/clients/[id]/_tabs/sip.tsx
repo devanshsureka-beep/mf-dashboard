@@ -131,9 +131,11 @@ export async function SipTab({ client: c, actor }: { client: ClientSummary; acto
         )}
       </section>
 
+      {/* SIPs the report retains as they are: no call to give, but each should keep running. */}
+      {d.seen.continuing.length ? <UnchangedSips sip={d.seen} className="rounded-xl border border-violet-200 bg-surface px-4 py-3" /> : null}
+
       <details className="rounded-xl border border-border bg-surface">
         <summary className="cursor-pointer select-none px-4 py-2.5 text-sm font-semibold">SIPs seen in CAS · every instalment{d.recent.length ? ` · ${d.recent.length}` : ""}</summary>
-        {d.seen.continuing.length ? <div className="border-t border-border p-3"><UnchangedSips sip={d.seen} /></div> : null}
         {d.seen.latestCasDate ? <div className="border-t border-border p-3"><SipStatusCard sip={d.seen} /></div> : null}
         {d.recent.length ? (
           <div className="max-h-96 overflow-y-auto border-t border-border">
