@@ -1,3 +1,4 @@
+import { SIP_CANCEL_TEXT } from "@/lib/parsers/cas";
 /**
  * Transaction-level reconciliation (pure, unit-tested).
  *
@@ -87,7 +88,7 @@ export function txnKind(t: Pick<MatchTxn, "type" | "description">): TxnKind {
   if (t.type === "REDEMPTION" || t.type === "SWITCH_OUT") return "SELL";
   if (t.type === "PURCHASE" || t.type === "SWITCH_IN") return "BUY";
   if (t.type === "SIP") return "SIP";
-  if (t.type === "OTHER" && /sip\s*cancel/i.test(t.description ?? "")) return "SIP_CANCELLED";
+  if (t.type === "OTHER" && SIP_CANCEL_TEXT.test(t.description ?? "")) return "SIP_CANCELLED";
   return "IGNORE";
 }
 

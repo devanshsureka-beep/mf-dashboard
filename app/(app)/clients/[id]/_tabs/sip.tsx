@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
+import { recheckSipAction } from "../actions";
 import { ActionForm, SubmitButton } from "@/components/app/action-form";
 import { Money } from "@/components/app/money";
 import { SipStatusCard } from "@/components/app/sip-status-card";
@@ -71,7 +72,14 @@ export async function SipTab({ client: c, actor }: { client: ClientSummary; acto
       <section className="overflow-hidden rounded-xl border border-border bg-surface">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-2.5">
           <h3 className="text-sm font-semibold">SIPs in the plan · {lines.length}</h3>
-          {c.active_plan_id ? <Link className="text-xs text-brand hover:underline" href={`/clients/${c.client_id}/plans/${c.active_plan_id}`}>Change amounts / move lump sum ↔ SIP</Link> : null}
+          <div className="flex flex-wrap items-center gap-3">
+            {canAdvise && lines.some((l) => l.status === "PLANNED" || l.status === "ADVISED") ? (
+              <ActionForm action={recheckSipAction.bind(null, c.client_id)} className="flex items-center gap-2">
+                <SubmitButton size="sm" variant="outline">Re-check from CAS</SubmitButton>
+              </ActionForm>
+            ) : null}
+            {c.active_plan_id ? <Link className="text-xs text-brand hover:underline" href={`/clients/${c.client_id}/plans/${c.active_plan_id}`}>Change amounts / move lump sum ↔ SIP</Link> : null}
+          </div>
         </div>
         {lines.length === 0 ? <p className="px-4 py-3 text-sm text-muted">{c.active_plan_id ? "The active plan has no SIP lines." : "No active plan."}</p> : (
           <Table className="text-[13px]">

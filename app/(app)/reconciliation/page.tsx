@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ActionForm, SubmitButton } from "@/components/app/action-form";
+import { recheckAllSipsAction } from "../clients/[id]/actions";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { Money } from "@/components/app/money";
 import { StatusBadge } from "@/components/app/status-badge";
@@ -37,7 +39,7 @@ function Item({ accent, children }: { accent?: string; children: React.ReactNode
 }
 
 export default async function CasInboxPage() {
-  const { inbox, runs, docs } = await pageData(async (tx) => ({
+  const { inbox, runs, docs, actor } = await pageData(async (tx) => ({
     inbox: await getCasInbox(tx),
     runs: await listRuns(tx),
     docs: await listCasDocuments(tx),
@@ -57,6 +59,13 @@ export default async function CasInboxPage() {
       ) : null}
 
       <BulkUploader />
+
+      {actor.role === "ADMIN" ? (
+        <ActionForm action={recheckAllSipsAction} className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-border bg-white px-4 py-2.5 text-sm">
+          <span className="text-muted">SIP lines of every active plan: tick those the CAS already shows started, changed or stopped since the report.</span>
+          <SubmitButton size="sm" variant="outline">Re-check all SIPs from CAS</SubmitButton>
+        </ActionForm>
+      ) : null}
 
       <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <Column n={1} title="Reading" count={inbox.reading.length} tone="text-indigo-700" empty="Nothing being read.">

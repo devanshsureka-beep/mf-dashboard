@@ -1,3 +1,4 @@
+import { syncSipLinesFromCas } from "@/services/sip-status";
 import type { Actor, Tx } from "@/lib/db/tx";
 import { setAuditReason } from "@/lib/db/tx";
 import { AppError } from "@/lib/errors";
@@ -205,6 +206,7 @@ export async function approvePlan(
     select plan_kind, fresh_money, plan_name, plan_date::text from public.advisory_plans where id = ${planId}`;
   if (meta[0]?.plan_kind === "ADDITIONAL" && current) {
     await mergeAdditionalPlan(tx, actor, { planId, activePlanId: current, clientId: plan.client_id, ...meta[0] }, reason, approvedAt);
+    await syncSipLinesFromCas(tx, plan.client_id);
     return "MERGED";
   }
   if (current) {
@@ -222,6 +224,8 @@ export async function approvePlan(
     select id from public.advisory_plan_items
     where plan_id = ${planId} and status = 'OPEN' and report_diff ? 'done_answer' and not report_diff ? 'done_call_id'`;
   for (const d of doneLines) await recordDoneBeforeOnboarding(tx, actor, d.id);
+  // SIP starts / changes / stops the client already made since the report, shown in the CAS.
+  await syncSipLinesFromCas(tx, plan.client_id);
   // Fresh money the plan invests counts in money left: a tranche with no plan to join,
   // or a new investor's first plan (no CAS yet, everything bought with new money).
   const m = meta[0];

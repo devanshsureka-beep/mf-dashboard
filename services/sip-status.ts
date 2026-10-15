@@ -2,8 +2,8 @@
  * SIP status of a client: previous CAS vs latest CAS, plus whether each SIP
  * change in the active plan shows up in the CAS.
  */
-import type { Tx } from "@/lib/db/tx";
-import { planSipMet, sipStatus, type SipFundStatus, type SipTxn } from "@/lib/domain/sip-status";
+import { setAuditReason, type Tx } from "@/lib/db/tx";
+import { planSipMet, sipStatus, type SipFundStatus, type SipPoint, type SipTxn } from "@/lib/domain/sip-status";
 
 export interface PlanSipCheck {
   id: string;
@@ -14,6 +14,8 @@ export interface PlanSipCheck {
   new_amount: number | null;
   status: string;
   met: boolean;
+  /** The fund's SIP in the latest CAS (the folio that is running, if any). */
+  now: SipPoint | null;
 }
 
 export interface SipStatusView {
@@ -42,7 +44,7 @@ export async function getSipStatus(tx: Tx, clientId: string): Promise<SipStatusV
       and (t.transaction_type in ('SIP', 'PURCHASE') or t.description ~* '(sip|systematic)')`;
   const funds = sipStatus(txns, latest, previous);
 
-  const planned = await tx<(Omit<PlanSipCheck, "met">)[]>`
+  const planned = await tx<(Omit<PlanSipCheck, "met" | "now">)[]>`
     select s.id, s.action, s.scheme_name, sm.isin, s.old_amount, s.new_amount, s.status
     from public.sip_plan_items s
     join public.advisory_plans p on p.id = s.plan_id and p.status = 'ACTIVE'
@@ -53,7 +55,46 @@ export async function getSipStatus(tx: Tx, clientId: string): Promise<SipStatusV
     // A plan SIP may sit in any folio of the fund: take the folio that is running, if any.
     const matches = funds.filter((f) => p.isin && f.isin === p.isin);
     const now = matches.find((m) => m.now.state === "ACTIVE")?.now ?? matches[0]?.now ?? null;
-    return { ...p, met: planSipMet(p, now) };
+    return { ...p, met: planSipMet(p, now), now };
   });
   return { latestCasDate: latest, previousCasDate: previous, funds, plan };
+}
+
+/**
+ * Tick off the active plan's SIP lines the latest CAS shows done, with evidence
+ * from on or after the report date (a client often acts on the report before
+ * the plan is approved, and both CAS may already be in):
+ *   START / CHANGE: the SIP runs at the planned amount, last instalment on or after the report date;
+ *   STOP: a CAS taken after the report shows no running SIP in that fund.
+ * Idempotent; run when a CAS is confirmed, when a plan is approved, and on demand.
+ */
+export async function syncSipLinesFromCas(tx: Tx, clientId: string): Promise<number> {
+  const open = await tx<{ id: string; action: string; report_date: string | null }[]>`
+    select s.id, s.action, p.plan_date::text as report_date
+    from public.sip_plan_items s join public.advisory_plans p on p.id = s.plan_id and p.status = 'ACTIVE'
+    where s.client_id = ${clientId} and s.status in ('PLANNED', 'ADVISED') and s.security_id is not null`;
+  if (!open.length) return 0;
+  const view = await getSipStatus(tx, clientId);
+  const latest = view.latestCasDate;
+  if (!latest) return 0;
+  let done = 0;
+  for (const line of open) {
+    const p = view.plan.find((x) => x.id === line.id);
+    if (!p?.met) continue;
+    const from = line.report_date ?? "0000-00-00";
+    const evidence = p.action === "STOP"
+      ? latest > from
+      : Boolean(p.now?.lastInstalment && p.now.lastInstalment >= from);
+    if (!evidence) continue;
+    const note = p.action === "STOP"
+      ? `Verified from CAS of ${latest}: no SIP running${p.now?.cancelledOn ? ` (cancelled ${p.now.cancelledOn})` : ""}`
+      : `Verified from CAS of ${latest}: SIP of ₹${(p.now?.amount ?? 0).toLocaleString("en-IN")} running, last instalment ${p.now?.lastInstalment}`;
+    await setAuditReason(tx, `SIP ${p.action.toLowerCase()} seen in CAS`);
+    const rows = await tx`
+      update public.sip_plan_items set status = 'COMPLETED', completed_at = coalesce(completed_at, now()),
+        notes = coalesce(notes || E'\n', '') || ${note}
+      where id = ${line.id} and status in ('PLANNED', 'ADVISED') returning id`;
+    done += rows.length;
+  }
+  return done;
 }

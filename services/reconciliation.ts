@@ -372,7 +372,9 @@ async function completeSipItemsFromTransactions(tx: Tx, clientId: string, propos
   const sipEvents = proposals.filter((p) => (p.kind === "SIP_INSTALMENT" || p.kind === "SIP_CANCELLED") && p.securityId);
   if (sipEvents.length === 0) return 0;
   const items = await tx<{ id: string; security_id: string; action: "START" | "STOP" | "CHANGE"; new_amount: number | null; since: Date | null }[]>`
-    select s.id, s.security_id, s.action, s.new_amount, coalesce(s.advised_at, p.approved_at) as since
+    select s.id, s.security_id, s.action, s.new_amount,
+           -- From the report date when that is earlier: clients often act on the report before approval.
+           least(coalesce(s.advised_at, p.approved_at), p.plan_date::timestamptz) as since
     from public.sip_plan_items s
     join public.advisory_plans p on p.id = s.plan_id
     where s.client_id = ${clientId} and p.status = 'ACTIVE' and s.status in ('PLANNED', 'ADVISED')

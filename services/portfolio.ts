@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Tx } from "@/lib/db/tx";
+import { syncSipLinesFromCas } from "@/services/sip-status";
 import { CAS_STORED_NAME } from "@/lib/cas/password";
 import { effectiveTxnType } from "@/lib/parsers/cas";
 import { AppError } from "@/lib/errors";
@@ -320,6 +321,8 @@ export async function confirmSnapshot(
     where client_id = ${snap.client_id} and review_status = 'CONFIRMED' and id <> ${snapshotId}
       and (snapshot_date, created_at) < (${snap.snapshot_date}::date, ${snap.created_at})
     order by snapshot_date desc, created_at desc limit 1`;
+  // The plan's SIP lines this CAS shows done (started, changed, stopped).
+  await syncSipLinesFromCas(tx, snap.client_id);
   return { previousSnapshotId: prev[0]?.id ?? null, isBaseline };
 }
 
