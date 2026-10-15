@@ -3,6 +3,7 @@
  * change in the active plan shows up in the CAS.
  */
 import { setAuditReason, type Tx } from "@/lib/db/tx";
+import { logServerError } from "@/lib/errors";
 import { planSipMet, sipStatus, type SipFundStatus, type SipPoint, type SipTxn } from "@/lib/domain/sip-status";
 
 export interface PlanSipCheck {
@@ -69,8 +70,8 @@ export async function getSipStatus(tx: Tx, clientId: string): Promise<SipStatusV
  * Idempotent; run when a CAS is confirmed, when a plan is approved, and on demand.
  */
 export async function syncSipLinesFromCas(tx: Tx, clientId: string): Promise<number> {
-  const open = await tx<{ id: string; action: string; report_date: string | null }[]>`
-    select s.id, s.action, p.plan_date::text as report_date
+  const open = await tx<{ id: string; action: string; status: string; report_date: string | null }[]>`
+    select s.id, s.action, s.status, p.plan_date::text as report_date
     from public.sip_plan_items s join public.advisory_plans p on p.id = s.plan_id and p.status = 'ACTIVE'
     where s.client_id = ${clientId} and s.status in ('PLANNED', 'ADVISED') and s.security_id is not null`;
   if (!open.length) return 0;
@@ -80,8 +81,19 @@ export async function syncSipLinesFromCas(tx: Tx, clientId: string): Promise<num
   let done = 0;
   for (const line of open) {
     const p = view.plan.find((x) => x.id === line.id);
-    if (!p?.met) continue;
+    if (!p) continue;
     const from = line.report_date ?? "0000-00-00";
+    // A SIP started in the fund since the report, at another amount: the call was given (advised), not done as planned.
+    if (!p.met && p.action !== "STOP" && line.status === "PLANNED" && p.now?.state === "ACTIVE" && p.now.lastInstalment && p.now.lastInstalment >= from) {
+      await setAuditReason(tx, "SIP seen in CAS at another amount");
+      const rows = await tx`
+        update public.sip_plan_items set status = 'ADVISED', advised_at = coalesce(advised_at, now()),
+          notes = coalesce(notes || E'\n', '') || ${`CAS of ${latest}: SIP of ₹${(p.now.amount ?? 0).toLocaleString("en-IN")} running (plan ₹${(p.new_amount ?? 0).toLocaleString("en-IN")})`}
+        where id = ${line.id} and status = 'PLANNED' returning id`;
+      done += rows.length;
+      continue;
+    }
+    if (!p.met) continue;
     const evidence = p.action === "STOP"
       ? latest > from
       : Boolean(p.now?.lastInstalment && p.now.lastInstalment >= from);
@@ -97,4 +109,16 @@ export async function syncSipLinesFromCas(tx: Tx, clientId: string): Promise<num
     done += rows.length;
   }
   return done;
+}
+
+/**
+ * The same check when a client's page opens, so lines follow the CAS without
+ * anyone clicking. Runs in a savepoint: a failure is logged and never breaks the page.
+ */
+export async function syncSipLinesQuietly(tx: Tx, clientId: string): Promise<void> {
+  try {
+    await (tx as unknown as { savepoint: (cb: (sp: Tx) => Promise<unknown>) => Promise<unknown> }).savepoint((sp) => syncSipLinesFromCas(sp, clientId));
+  } catch (e) {
+    logServerError("sip-sync", e);
+  }
 }

@@ -121,4 +121,42 @@ describeDb("SIP alongside lump sums", () => {
       expect(await ctx.as("advisor", (t) => getClientSip(t, p.clientId))).toMatchObject({ sip_monthly_started: 20000, sips_stopped: 1 });
     });
   });
+
+  it("onboarded from a newer CAS (its only CAS): SIPs started since the report are done, a SIP not paid for months is stopped", async () => {
+    await scenario(async (ctx) => {
+      const client = await ctx.as("advisor", (t) => createClient(t, ctx.users.advisor, { full_name: "Newer CAS Client", status: "ACTIVE" }));
+      const [x, y, z] = await Promise.all([ctx.sec.X, ctx.sec.Y, ctx.sec.Z].map(async (id) => (await ctx.tx<{ scheme_name: string; isin: string }[]>`select scheme_name, isin from public.security_master where id = ${id}`)[0]));
+      // The only CAS (12-Oct): a ₹9,000 SIP in Y since 06-Oct; the ₹5,000 SIP in X last paid 10-Jul.
+      const base = await ctx.as("advisor", async (t) => {
+        const pr = parsed("2026-10-12", [{ security: ctx.sec.X, name: x.scheme_name, units: 100, nav: 150 }, { security: ctx.sec.Y, name: y.scheme_name, units: 45, nav: 200 }, { security: ctx.sec.Z, name: z.scheme_name, units: 100, nav: 100 }], [
+          { date: "2026-10-06", type: "PURCHASE", description: "Net Systematic Purchase Instalment No - 1 via Online", scheme_name: z.scheme_name, isin: z.isin, folio_number: "T3", amount: 9999.5, units: 100, nav: 100, balance_units: 100 },
+          { date: "2026-06-10", type: "SIP", description: "Systematic Investment (1)", scheme_name: x.scheme_name, isin: x.isin, folio_number: "T1", amount: 4999.75, units: 33, nav: 150, balance_units: 67 },
+          { date: "2026-07-10", type: "SIP", description: "Systematic Investment (1)", scheme_name: x.scheme_name, isin: x.isin, folio_number: "T1", amount: 4999.75, units: 33, nav: 150, balance_units: 100 },
+          { date: "2026-09-24", type: "PURCHASE", description: "Purchase", scheme_name: y.scheme_name, isin: y.isin, folio_number: "T2", amount: 0.5 * 0 + 199990, units: 1000, nav: 200, balance_units: 1000 },
+          { date: "2026-10-06", type: "SIP", description: "Systematic Investment Existing Folio with SIP (1)", scheme_name: y.scheme_name, isin: y.isin, folio_number: "T2", amount: 8999.55, units: 45, nav: 200, balance_units: 1045 },
+        ]);
+        pr.holdings[0].isin = x.isin; pr.holdings[1].isin = y.isin; pr.holdings[2].isin = z.isin;
+        const id = await createSnapshotFromParsed(t, { clientId: client.id, casDocumentId: null, parsed: pr, source: "SEED", createdBy: ctx.users.advisor.id });
+        await confirmSnapshot(t, id, "onboarding CAS");
+        return id;
+      });
+      const planId = await ctx.as("advisor", (t) => createDraftPlan(t, ctx.users.advisor, { clientId: client.id, planName: "Report of 20-Sep", fromSnapshotId: base }));
+      await ctx.as("advisor", (t) => t`update public.advisory_plans set plan_date = '2026-09-20' where id = ${planId}`, "report date");
+      const [start] = await ctx.as("advisor", (t) => t<{ id: string }[]>`
+        insert into public.sip_plan_items (client_id, plan_id, security_id, scheme_name, action, new_amount) values (${client.id}, ${planId}, ${ctx.sec.Y}, 'Y', 'START', 9000) returning id`, "test");
+      const [stop] = await ctx.as("advisor", (t) => t<{ id: string }[]>`
+        insert into public.sip_plan_items (client_id, plan_id, security_id, scheme_name, action, old_amount) values (${client.id}, ${planId}, ${ctx.sec.X}, 'X', 'STOP', 5000) returning id`, "test");
+      const [other] = await ctx.as("advisor", (t) => t<{ id: string }[]>`
+        insert into public.sip_plan_items (client_id, plan_id, security_id, scheme_name, action, new_amount) values (${client.id}, ${planId}, ${ctx.sec.Z}, 'Z', 'START', 13000) returning id`, "test");
+      await ctx.as("advisor", (t) => t`update public.advisory_plan_items set needs_review = false where plan_id = ${planId}`, "test");
+      await ctx.as("advisor", (t) => t`update public.sip_plan_items set needs_review = false where plan_id = ${planId}`, "test");
+      await ctx.as("advisor", (t) => approvePlan(t, ctx.users.advisor, planId, "approved"));
+      const st = await ctx.tx<{ id: string; status: string }[]>`select id, status from public.sip_plan_items where id in (${start.id}, ${stop.id})`;
+      expect(Object.fromEntries(st.map((r) => [r.id === start.id ? "start" : "stop", r.status]))).toEqual({ start: "COMPLETED", stop: "COMPLETED" });
+      // Started at ₹10,000 instead of the planned ₹13,000: advised, not done.
+      const o = (await ctx.tx<{ status: string; notes: string }[]>`select status, notes from public.sip_plan_items where id = ${other.id}`)[0];
+      expect(o.status).toBe("ADVISED");
+      expect(o.notes).toMatch(/SIP of ₹10,000 running \(plan ₹13,000\)/);
+    });
+  });
 });

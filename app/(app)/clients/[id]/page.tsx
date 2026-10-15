@@ -4,6 +4,7 @@ import { Money } from "@/components/app/money";
 import { StatusBadge } from "@/components/app/status-badge";
 import { DropMenu, MenuHeading, MenuItem } from "@/components/app/drop-menu";
 import { getClientSip, type ClientSip } from "@/services/sip";
+import { syncSipLinesQuietly } from "@/services/sip-status";
 import { getClientAlerts, getPremium } from "@/services/client-record";
 import { formatDate, formatINRCompact, humanize } from "@/lib/format";
 import { pageData } from "@/lib/server";
@@ -133,6 +134,8 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
   const tab: Tab = (TABS as readonly string[]).includes(raw) ? (raw as Tab) : LEGACY[raw] ?? "portfolio";
   const str = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : null);
   const { c, bank, extra, unchecked, sip, premium, alerts, casCount, actor } = await pageData(async (tx) => ({
+    // SIP lines the CAS already shows done (started / changed / stopped since the report) are ticked first.
+    synced: await syncSipLinesQuietly(tx, id),
     c: await getClientSummary(tx, id),
     extra: (await tx<RebalanceExtra[]>`
       select off_plan_sell_advised::float8 as off_plan_sell_advised, off_plan_sell_executed::float8 as off_plan_sell_executed, off_plan_sell_pending::float8 as off_plan_sell_pending,

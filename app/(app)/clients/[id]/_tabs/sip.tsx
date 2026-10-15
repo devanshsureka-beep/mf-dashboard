@@ -101,6 +101,17 @@ export async function SipTab({ client: c, actor }: { client: ClientSummary; acto
                     <TD>
                       <span className={cn("rounded-full px-2 py-0.5 text-[11.5px] font-semibold", st.tone)}>{st.label}</span>
                       {l.status === "COMPLETED" && l.completed_at ? <span className="ml-1.5 text-[11px] text-muted">{formatDate(l.completed_at)}</span> : null}
+                      {(() => {
+                        // What the latest CAS shows for this fund, whatever the line's status.
+                        const seen = d.seen.plan.find((p) => p.id === l.id);
+                        // Without the fund's ISIN the CAS cannot be matched to this line: say nothing.
+                        if (!d.seen.latestCasDate || !seen?.isin) return null;
+                        const now = seen.now;
+                        const text = !now || now.state === "NONE" ? "No SIP in this fund in the CAS"
+                          : now.state === "ACTIVE" ? `CAS: ₹${(now.amount ?? 0).toLocaleString("en-IN")}/mo running, last ${formatDate(now.lastInstalment)}${l.action !== "STOP" && l.new_amount && Math.abs((now.amount ?? 0) - Number(l.new_amount)) > Math.max(50, Number(l.new_amount) * 0.01) ? ` · plan ₹${Number(l.new_amount).toLocaleString("en-IN")}` : ""}`
+                          : `CAS: no SIP running${now.lastInstalment ? `, last ${formatDate(now.lastInstalment)}` : ""}`;
+                        return <div className="mt-1 text-[11px] text-muted">{text}</div>;
+                      })()}
                     </TD>
                     {canAdvise ? (
                       <TD className="text-right">
