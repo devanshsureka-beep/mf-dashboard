@@ -131,7 +131,7 @@ export function classifyTransaction(desc: string, units: number | null = null): 
   const sipCancelled = SIP_CANCEL_TEXT.test(d);
   const tax = /stamp duty/.test(d) ? "STAMP_DUTY" : /\bstt\b/.test(d) ? "STT" : /\btds\b/.test(d) ? "TDS" : null;
   // Reversals, cancellations, rejections, invalid entries and refunds are never a new trade, whatever they mention.
-  if (/cancel|revers(al|ed)|rejection|rejected|invalid|refund/.test(d)) return { type: "OTHER", sipCancelled };
+  if (/cancel|revers(e|al|ed)|reject|invalid|refund/.test(d)) return { type: "OTHER", sipCancelled };
   if (tax) {
     // A tax line moves no units. A row with units is the trade itself, its
     // description only mentions the tax (e.g. "Redemption - STT Paid").

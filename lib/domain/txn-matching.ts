@@ -55,6 +55,8 @@ export interface MatchTxn {
   units: number | null; // signed as in the CAS
   nav: number | null;
   folio?: string | null;
+  /** One of a run of same-amount monthly purchases (a SIP the CAS calls "Purchase"). */
+  recurring?: boolean;
 }
 
 /** Where an advised SWITCH moves the money (from its plan line). */
@@ -197,7 +199,8 @@ export function matchTransactions(calls: MatchCall[], txns: MatchTxn[], switchTa
       const lag = daysBetween(istDate(c.call.communicatedAt), t.date);
       const full = take >= expected * (1 - TOLERANCE);
       const confidence: TxnProposal["confidence"] = split ? "MEDIUM" : full ? "HIGH" : "HIGH";
-      const auto = lag <= AUTO_CONFIRM_MAX_LAG_DAYS;
+      // A purchase in a monthly same-amount run may be a SIP instalment, not this call: a person decides.
+      const auto = lag <= AUTO_CONFIRM_MAX_LAG_DAYS && !t.recurring;
       const hadManual = c.call.unverifiedExecutedAmount > 0 || c.call.unverifiedExecutedUnits > 0;
       out.push({
         ...base, callId: c.call.id, kind: "ADVICE_MATCH", direction: wantSell ? "SELL" : "BUY",
@@ -210,7 +213,8 @@ export function matchTransactions(calls: MatchCall[], txns: MatchTxn[], switchTa
           full ? "" : "— partial execution of the call",
           split ? "— one transaction covering several calls, allocated oldest first" : "",
           hadManual ? "— verifies an execution recorded earlier" : "",
-          auto ? "" : `— more than ${AUTO_CONFIRM_MAX_LAG_DAYS} days after the call, please review`,
+          t.recurring ? "— same amount as a monthly run of purchases: may be a SIP instalment, please check" : "",
+          auto || t.recurring ? "" : `— more than ${AUTO_CONFIRM_MAX_LAG_DAYS} days after the call, please review`,
         ].filter(Boolean).join(" "),
       });
     }

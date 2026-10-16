@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { classifyTransaction, normaliseLine, parseCasLines, parseNumber, toCasParseResult, CasParseError } from "@/lib/parsers/cas";
-import { mapSellAction, parseAdvisoryReportLines, parseAmount, sameInvestor, ReportParseError } from "@/lib/parsers/advisory-report";
+import { isPartialSell, mapSellAction, parseAdvisoryReportLines, parseAmount, sameInvestor, ReportParseError } from "@/lib/parsers/advisory-report";
 import { casParseResultSchema } from "@/lib/integrations/contracts";
 
 const casLines = readFileSync("tests/fixtures/cas-kfin-cams.sample.txt", "utf8").split("\n");
@@ -132,12 +132,21 @@ describe("Univest advisory report parser", () => {
 
   it("maps action wording and compares investor names", () => {
     expect(mapSellAction("Full exit")).toBe("SELL");
+    // "Exit 100%" sells everything; "Trim 33%" or "Exit 10%" sells part.
+    expect(isPartialSell("Exit 100%")).toBe(false);
+    expect(isPartialSell("100% Exit")).toBe(false);
+    expect(isPartialSell("Full exit")).toBe(false);
+    expect(isPartialSell("Trim 33%")).toBe(true);
+    expect(isPartialSell("Exit 10%")).toBe(true);
+    expect(isPartialSell("Book profits ₹50,000")).toBe(true);
     expect(mapSellAction("Switch to Direct")).toBe("SWITCH");
     expect(mapSellAction("Retain")).toBe("RETAIN");
     expect(mapSellAction("??")).toBe("UNKNOWN");
     expect(mapSellAction("Trim, oldest units first")).toBe("SELL");
     expect(sameInvestor("Ravi Kumar Test", "RAVI KUMAR TEST")).toBe(true);
     expect(sameInvestor("Sunita Rao", "Ravi Kumar Test")).toBe(false);
+    // Initials only are not enough to say it is the same person.
+    expect(sameInvestor("A K", "Rahul Bhatia")).toBe(false);
   });
 });
 

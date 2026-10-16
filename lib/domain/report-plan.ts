@@ -317,8 +317,10 @@ export function buildPlanFromReport(
             // a sell; the rest is one line for the fund, asked about.
             for (const g of group) {
               taken.add(g);
+              // A trim stays a trim (its share of the amount, never more than the folio); a full exit sells the folio.
+              const share = s.partial ? Math.min(g.current_value, Math.round((sold * g.current_value / total) * 100) / 100) : g.current_value;
               const it: PlanItemDraft = { action: s.action === "SWITCH" ? "SWITCH" : "SELL", scheme_name: g.scheme_name, isin: g.isin, folio_number: g.folio_number,
-                target_amount: g.current_value, current_amount: g.current_value, reason: `${s.actionText} (${s.folioCount} folios in the report)`, priority: (priority += 10) };
+                target_amount: share, current_amount: g.current_value, reason: `${s.actionText} (${s.folioCount} folios in the report)`, priority: (priority += 10) };
               items.push(it);
               differs.set(it, { kind: "SELL_CHANGED", report: null });
             }
@@ -342,11 +344,21 @@ export function buildPlanFromReport(
         if (!s.partial && !valueOk(s.value, total, group[0].scheme_name)) {
           problems.push(`${group[0].scheme_name}: the report sells ${inr(s.value)} across ${group.length} folios, but the CAS holds ${inr(total)}.`);
         }
-        alias.push({ fund: s.fund, holdings: group });
-        for (const g of group) {
-          taken.add(g);
-          items.push({ action: s.action === "SWITCH" ? "SWITCH" : "SELL", scheme_name: g.scheme_name, isin: g.isin, folio_number: g.folio_number, target_amount: s.partial ? Math.round((sold * g.current_value / total) * 100) / 100 : g.current_value, current_amount: g.current_value, reason: `${s.actionText} (${group.length} folios)`, priority: (priority += 10) });
+        if (s.partial && sold > total + 0.5 && !tolerant) {
+          problems.push(`${group[0].scheme_name}: the report trims ${inr(sold)} across ${group.length} folios, but the CAS holds only ${inr(total)}.`);
         }
+        alias.push({ fund: s.fund, holdings: group });
+        // A trim is shared across the folios by value (never more than held); the last folio takes the rounding.
+        const trim = Math.min(sold, total);
+        let given = 0;
+        group.forEach((g, i) => {
+          taken.add(g);
+          const share = !s.partial ? g.current_value
+            : i === group.length - 1 ? Math.round((trim - given) * 100) / 100
+            : Math.round((trim * g.current_value / total) * 100) / 100;
+          given += share;
+          items.push({ action: s.action === "SWITCH" ? "SWITCH" : "SELL", scheme_name: g.scheme_name, isin: g.isin, folio_number: g.folio_number, target_amount: share, current_amount: g.current_value, reason: `${s.actionText} (${group.length} folios)`, priority: (priority += 10) });
+        });
         continue;
       }
       // A full exit sells the whole holding: a unique holding of this plan type whose
@@ -783,6 +795,15 @@ export function buildPlanFromReport(
       problems.push(`The report invests ${inr(report.freshMoney)} of fresh money, but its buys minus sells come to ${inr(needed)}.`);
     }
     if (!buys && !items.length && !sip_items.length) problems.push("The additional-investment report has no buy, sell or SIP line.");
+  }
+
+  // A Buy / Sell line needs an amount ("—" in the report, or a % of a fund no longer held): say so, add no line.
+  for (const it of [...items]) {
+    if ((it.action === "BUY" || it.action === "SELL" || it.action === "SWITCH") && !(Number(it.target_amount) > 0)) {
+      items.splice(items.indexOf(it), 1);
+      const msg = `${it.action === "BUY" ? "Buy" : "Sell"} of ${it.scheme_name}: the report gives no amount, so it is not a plan line.`;
+      if (asReported) drift.push(msg); else problems.push(msg);
+    }
   }
 
   const notes = [

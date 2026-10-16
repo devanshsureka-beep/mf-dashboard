@@ -61,6 +61,29 @@ const norm = (f: string | null) => (f ?? "").split("/")[0].replace(/[^0-9a-z]/gi
 export const fundKey = (t: { isin: string | null; scheme_name: string; folio_number: string | null }) =>
   `${t.isin ?? t.scheme_name.toLowerCase()}|${norm(t.folio_number)}`;
 
+/** A rejection, reversal or bounce: takes back the instalment it refers to. */
+const BOUNCE = /reject|revers|bounce|return/i;
+
+/**
+ * Purchases a rejection / reversal / bounce of the same amount (to ₹50) took back within 15 days: each takes
+ * back the latest purchase before it in the same fund. Same rule as v_sip_instalments in the database.
+ */
+export function bouncedPurchases<T extends { date: string; amount: number | null; units?: number | null; description: string | null }>(
+  rows: T[], sameFund: (a: T, b: T) => boolean,
+): Set<T> {
+  const out = new Set<T>();
+  const backs = rows.filter((r) => ((r.amount ?? 0) < 0 || (r.units ?? 0) < 0) && BOUNCE.test(r.description ?? ""));
+  for (const b of backs.sort((x, y) => x.date.localeCompare(y.date))) {
+    const amt = roundSip(Math.abs(b.amount ?? 0));
+    const hit = rows
+      .filter((p) => !out.has(p) && (p.amount ?? 0) > 0 && (p.units == null || p.units > 0) && sameFund(p, b)
+        && roundSip(p.amount!) === amt && p.date <= b.date && daysBetween(p.date, b.date) <= 15)
+      .sort((x, y) => y.date.localeCompare(x.date))[0];
+    if (hit) out.add(hit);
+  }
+  return out;
+}
+
 /** Monthly runs: same rounded amount, 20-40 days apart. */
 export const MIN_RUN = 3;
 
@@ -71,7 +94,9 @@ export const MIN_RUN = 3;
  * about a month apart is treated as a SIP.
  */
 export function instalments(txns: SipTxn[]): SipTxn[] {
-  const buys = txns.filter(isPurchase).sort((a, b) => a.date.localeCompare(b.date));
+  // A bounced instalment (rejected / reversed within 15 days) invested nothing.
+  const gone = bouncedPurchases(txns, (a, b) => fundKey(a) === fundKey(b));
+  const buys = txns.filter((t) => isPurchase(t) && !gone.has(t)).sort((a, b) => a.date.localeCompare(b.date));
   const keep = new Set<SipTxn>(buys.filter(isExplicit));
   const byAmount = new Map<number, SipTxn[]>();
   for (const b of buys) {
@@ -155,7 +180,8 @@ export interface PlannedSip { action: "START" | "STOP" | "CHANGE"; isin: string 
 
 /** Does the CAS show the plan's SIP change done? */
 export function planSipMet(plan: PlannedSip, now: SipPoint | null): boolean {
-  if (plan.action === "STOP") return !now || now.state !== "ACTIVE";
+  // A stop is shown done only when the CAS shows this fund's SIP and it is not running (no SIP seen proves nothing).
+  if (plan.action === "STOP") return now != null && now.state !== "ACTIVE";
   if (!now || now.state !== "ACTIVE") return false;
   return plan.new_amount == null || Math.abs((now.amount ?? 0) - plan.new_amount) <= Math.max(50, plan.new_amount * 0.05);
 }

@@ -191,6 +191,10 @@ export async function onboardBulkPairAction(fd: FormData): Promise<BulkOnboardRo
 
     // 2) Claude for what did not reconcile (points still open go back to Claude);
     //    every answer passes the same CAS tie-out.
+    // A CAS older than the report is never taken "as it is": the plan would sit on holdings that already changed.
+    if (problems.some(isStaleCasProblem)) {
+      return fail("NEEDS_REVIEW", "The CAS is older than the one the report was made from. Upload the client's newer CAS with this report.", { problems });
+    }
     if (problems.length) {
       if (!reportAiConfigured() && asReason && report) accepted = problems;
       else if (!reportAiConfigured()) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { planSipMet, sipPointAsOf, sipStatus, type SipTxn } from "@/lib/domain/sip-status";
+import { instalments, planSipMet, sipPointAsOf, sipStatus, type SipTxn } from "@/lib/domain/sip-status";
 
 const sip = (isin: string, date: string, amount: number, folio = "F1"): SipTxn => ({
   date, type: "SIP", isin, scheme_name: `Fund ${isin}`, folio_number: folio, amount, description: "SIP Purchase - Instalment",
@@ -77,5 +77,20 @@ describe("SIP status from CAS transactions", () => {
     expect(planSipMet({ action: "CHANGE", isin: "X", new_amount: 10000, old_amount: 16500 }, active)).toBe(false);
     expect(planSipMet({ action: "STOP", isin: "X", new_amount: null, old_amount: 10000 }, stopped)).toBe(true);
     expect(planSipMet({ action: "START", isin: "X", new_amount: 7000, old_amount: null }, null)).toBe(false);
+  });
+});
+
+describe("bounced instalments", () => {
+  const row = (date: string, amount: number, description: string, type = "SIP"): SipTxn =>
+    ({ date, type, isin: "INF000000001", scheme_name: "Fund A", folio_number: "1", amount, description });
+  it("a rejection of the same amount within 15 days takes back the instalment before it", () => {
+    const txns = [
+      row("2026-07-05", 5000, "SIP Purchase"), row("2026-08-05", 5000, "SIP Purchase"),
+      row("2026-08-09", -5000, "Systematic Investment Rejection", "OTHER"), row("2026-09-05", 5000, "SIP Purchase"),
+    ];
+    expect(instalments(txns).map((t) => t.date)).toEqual(["2026-07-05", "2026-09-05"]);
+  });
+  it("a STOP line is done only when the CAS shows the fund's SIP not running (nothing seen proves nothing)", () => {
+    expect(planSipMet({ action: "STOP", isin: "X", new_amount: null, old_amount: 5000 }, null)).toBe(false);
   });
 });

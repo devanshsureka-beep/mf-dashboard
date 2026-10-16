@@ -332,7 +332,7 @@ export function parseAdvisoryReportLines(rawLines: string[]): AdvisoryReportPars
           planType: planTypeOf(c[0]),
           actionText,
           action,
-          partial: /trim|partial|reduce|part of|book(ing)? profits?|right[- ]?size|lighten|₹|\d\s*%/i.test(actionText) && !/full/i.test(actionText),
+          partial: isPartialSell(actionText),
           value: money(c[vIdx])!,
         });
       } else if (sells.length && c.length === 1 && !/^(Why|Values|Total|All|Later)/i.test(c[0]) && c[0].length < 60 && !c[0].includes("₹")) {
@@ -616,12 +616,20 @@ export function parseAdvisoryReportLines(rawLines: string[]): AdvisoryReportPars
   };
 }
 
+/** A sell verdict that sells part of the holding ("Trim 33%", "Book profits ₹50,000"); "Exit 100%" / "Full exit" sell it all. */
+export function isPartialSell(actionText: string): boolean {
+  return /trim|partial|reduce|part of|book(ing)? profits?|right[- ]?size|lighten|₹|\d\s*%/i.test(actionText)
+    && !/full|(^|[^\d.])100\s*%|exit\s+all|all\s+units/i.test(actionText);
+}
+
 /** Loose person-name comparison (report name vs CAS holder name). */
 export function sameInvestor(a: string | null, b: string | null): boolean {
   if (!a || !b) return false;
   const tok = (s: string) => new Set(s.toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/).filter((t) => t.length > 1));
   const ta = tok(a);
   const tb = tok(b);
+  // Initials only ("A K") or no letters: not enough to say it is the same person.
+  if (!ta.size || !tb.size) return false;
   let common = 0;
   for (const t of ta) if (tb.has(t)) common++;
   return common >= Math.min(2, ta.size, tb.size);

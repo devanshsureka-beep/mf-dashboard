@@ -20,4 +20,15 @@ describeDb("txn_effective_type() in the database = effectiveTxnType() in the app
       expect(`${type} ${d} → ${row.t}`).toBe(`${type} ${d} → ${effectiveTxnType(type, d, u)}`);
     }
   });
+  it("and for every stored type, tax and unknown rows included (they are read again from the description)", async () => {
+    const words = [...SIP_WORDINGS, ...STORED_PURCHASE_NOT_SIP, ...NOT_SIP_WORDINGS.map(([d]) => d),
+      "Redemption", "Redemption less STT", "Purchase", "SIP Purchase - Stamp Duty", "Systematic Investment - Stamp duty",
+      "Switch In", "Switch Out", "Reverse SIP Purchase", "SIP Purchase Rejects", "SIP purchase (reversed)", "Dividend Reinvestment", "Bonus units"];
+    for (const type of ["OTHER", "STT", "TDS", "STAMP_DUTY", "SIP", "PURCHASE", "SWITCH_IN", "REDEMPTION"]) {
+      for (const d of words) for (const u of [10, -10]) {
+        const [row] = await sql!<{ t: string }[]>`select public.txn_effective_type(${type}, ${d}, ${u}) as t`;
+        expect(`${type} ${d} ${u} → ${row.t}`).toBe(`${type} ${d} ${u} → ${effectiveTxnType(type, d, u)}`);
+      }
+    }
+  });
 });

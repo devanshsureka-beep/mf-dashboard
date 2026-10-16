@@ -291,6 +291,7 @@ export async function reviseAdvice(tx: Tx, actor: Actor, input: ReviseInput): Pr
   await tx`
     update public.advice_items set status = 'REVISED', status_reason = ${input.reason}
     where id = ${orig.id}`;
+  await dropPendingMatches(tx, orig.id, "The call was revised: re-check the CAS against the new call");
 
   const batch = await tx<{ id: string; batch_code: string }[]>`
     insert into public.advice_batches (client_id, advisor_id, plan_id, communicated_at, communication_channel, notes, created_by)
@@ -319,7 +320,27 @@ export async function closeAdvice(tx: Tx, adviceItemId: string, status: "CANCELL
   await setAuditReason(tx, reason);
   const res = await tx`update public.advice_items set status = ${status}, status_reason = ${reason} where id = ${adviceItemId}`;
   if (res.count === 0) throw new AppError("This call cannot be closed with your access.", "FORBIDDEN");
+  await dropPendingMatches(tx, adviceItemId, `The call was ${status.toLowerCase()}`);
   await syncOutsideLine(tx, item.plan_item_id);
+}
+
+/**
+ * CAS matches still waiting for a decision on a call that is closed or revised can no longer be
+ * confirmed: they are turned down (with the reason), and a run left with nothing to decide closes.
+ */
+async function dropPendingMatches(tx: Tx, adviceItemId: string, why: string): Promise<void> {
+  const runs = await tx<{ run_id: string }[]>`
+    update public.reconciliation_matches set status = 'REJECTED', resolution_note = ${why}, resolved_at = now()
+    where advice_item_id = ${adviceItemId} and status = 'SUGGESTED'
+    returning run_id`;
+  for (const runId of new Set(runs.map((r) => r.run_id))) {
+    await tx`
+      update public.reconciliation_runs r set status = 'COMPLETED', completed_at = now()
+      where r.id = ${runId} and r.status = 'OPEN'
+        and not exists (
+          select 1 from public.reconciliation_matches x
+          where x.run_id = r.id and (x.status = 'SUGGESTED' or (x.status = 'UNEXPLAINED' and x.reviewed_at is null)))`;
+  }
 }
 
 // -----------------------------------------------------------------------------

@@ -11,7 +11,7 @@ import {
 import { matchTransactions, istDate, type MatchCall, type MatchTxn, type SwitchTarget, type TxnProposal } from "@/lib/domain/txn-matching";
 import type { Channel, ReconciliationMatchRow, ReconciliationRunRow } from "@/types/domain";
 import { effectiveTxnType } from "@/lib/parsers/cas";
-import { fundKey, instalments, type SipTxn } from "@/lib/domain/sip-status";
+import { bouncedPurchases } from "@/lib/domain/sip-status";
 import { closeAdvice } from "./advice";
 import { voidExecution } from "./executions";
 import { issueAdvice } from "./advice";
@@ -196,7 +196,10 @@ async function loadMatchCalls(tx: Tx, clientId: string): Promise<{ calls: MatchC
     advisedUnits: a.advised_units === null ? null : Number(a.advised_units),
     executedAmount: Number(a.executed_amount) + Number(a.suggested_amount),
     executedUnits: Number(a.executed_units) + Number(a.suggested_units),
-    unverifiedExecutedAmount: Number(a.unverified_amount), unverifiedExecutedUnits: Number(a.unverified_units),
+    // A call already done by hand: its hand-recorded part, less what pending suggestions already claim (an open call
+    // has them in executed above). Otherwise one hand-recorded execution could be verified by two CAS trades.
+    unverifiedExecutedAmount: a.status === "EXECUTED" ? Math.max(Number(a.unverified_amount) - Number(a.suggested_amount), 0) : Number(a.unverified_amount),
+    unverifiedExecutedUnits: a.status === "EXECUTED" ? Math.max(Number(a.unverified_units) - Number(a.suggested_units), 0) : Number(a.unverified_units),
     communicatedAt: new Date(a.communicated_at), folio: a.folio_number,
   }));
 
@@ -232,12 +235,15 @@ async function loadSnapshotTxns(tx: Tx, snapshotId: string, afterDate: string, n
       and (${notInRunId}::uuid is null or not exists (
         select 1 from public.reconciliation_matches m where m.run_id = ${notInRunId} and m.cas_transaction_id = t.id))
     order by t.transaction_date, t.created_at`;
-  const txns: MatchTxn[] = txnRows.map((t) => ({
+  const all: MatchTxn[] = txnRows.map((t) => ({
     id: t.id, securityId: t.security_id, isin: t.isin, schemeName: t.scheme_name, date: t.transaction_date,
     type: effectiveTxnType(t.transaction_type, t.description, t.units), description: t.description,
     amount: t.amount === null ? null : Number(t.amount), units: t.units === null ? null : Number(t.units),
     nav: t.nav === null ? null : Number(t.nav), folio: t.folio_number,
   }));
+  // A purchase the same CAS shows rejected / reversed within 15 days executed nothing: never matched to a call.
+  const gone = bouncedPurchases(all, (a, b) => (a.securityId ?? a.isin) === (b.securityId ?? b.isin) && (a.folio ?? "") === (b.folio ?? ""));
+  const txns = all.filter((t) => !gone.has(t));
   return { txns, folioOf: new Map(txnRows.map((t) => [t.id, t.folio_number])) };
 }
 
@@ -253,17 +259,14 @@ async function markRecurringPurchases(tx: Tx, clientId: string, txns: MatchTxn[]
   if (!buys.length) return txns;
   // A Buy call still open, or done by hand but not yet seen in a CAS, may be what this purchase executes.
   const openBuy = new Set(calls.filter((c) => c.action === "BUY" && (c.status !== "EXECUTED" || c.unverifiedExecutedAmount > 0)).flatMap((c) => [c.securityId, c.isin].filter(Boolean) as string[]));
-  const history = await tx<(SipTxn & { id: string })[]>`
-    select t.id, t.transaction_date::text as date, public.txn_effective_type(t.transaction_type, t.description, t.units) as type,
-           coalesce(t.isin, sm.isin) as isin, t.scheme_name, t.folio_number, t.amount::float8 as amount, t.description
-    from public.portfolio_transactions t left join public.security_master sm on sm.id = t.security_id
-    where t.client_id = ${clientId} and t.transaction_type in ('PURCHASE', 'SIP') and coalesce(t.units, 0) <> 0`;
-  const byFund = new Map<string, (SipTxn & { id: string })[]>();
-  for (const h of history) byFund.set(fundKey(h), [...(byFund.get(fundKey(h)) ?? []), h]);
-  const inRun = new Set<string>();
-  for (const series of byFund.values()) for (const i of instalments(series)) inRun.add((i as SipTxn & { id: string }).id);
-  return txns.map((t) => (t.type === "PURCHASE" && inRun.has(t.id) && !openBuy.has(t.securityId ?? "") && !openBuy.has(t.isin ?? "")
-    ? { ...t, type: "SIP" } : t));
+  // The SIP instalments of the client's whole history (one rule: v_sip_instalments).
+  const inRun = new Set((await tx<{ id: string }[]>`
+    select transaction_id as id from public.v_sip_instalments where client_id = ${clientId}`).map((r) => r.id));
+  // In a run and no Buy call open on the fund: a SIP instalment. With a Buy call open it may be either: matched,
+  // but never confirmed without a person.
+  return txns.map((t) => (t.type !== "PURCHASE" || !inRun.has(t.id) ? t
+    : !openBuy.has(t.securityId ?? "") && !openBuy.has(t.isin ?? "") ? { ...t, type: "SIP" }
+    : { ...t, recurring: true }));
 }
 
 const needsPerson = (p: TxnProposal) => (p.kind === "ADVICE_MATCH" && !p.autoConfirm) || p.kind === "UNADVISED";
@@ -525,6 +528,11 @@ export async function resolveMatch(
   if (decision === "CONFIRM" || decision === "PARTIAL") {
     if (m.status !== "SUGGESTED") throw new AppError(`Match is already ${m.status}.`);
     if (!m.advice_item_id) throw new AppError("Only advice matches can be confirmed.");
+    // A cancelled, expired or revised call takes no more executions.
+    const call = (await tx<{ status: string }[]>`select status from public.advice_items where id = ${m.advice_item_id}`)[0];
+    if (!call || !["ISSUED", "PARTIALLY_EXECUTED", "EXECUTED"].includes(call.status)) {
+      throw new AppError(`This call is ${call ? call.status.toLowerCase() : "gone"}: reject the match, or mark the trade as the client's own.`);
+    }
     const nav = Number(m.reference_nav ?? 0);
     const fromTxn = m.cas_transaction_id !== null;
     const units = decision === "PARTIAL" ? Number(opts.units) : Number(m.allocated_units ?? Math.abs(m.detected_change));
@@ -557,6 +565,10 @@ export async function resolveMatch(
 
     // 2) The rest becomes a new CAS_VERIFIED execution.
     const remainingAmount = round2(amount - covered);
+    if (call.status === "EXECUTED" && remainingAmount > Math.max(1, amount * 0.01)) {
+      // Already fully done: only hand-recorded executions are left to verify, never a second execution.
+      throw new AppError("This call is already fully executed: this trade is more than the part still to verify. Reject the match, or mark it as the client's own.");
+    }
     if (remainingAmount > Math.max(1, amount * 0.01)) {
       const lastTxn = fromTxn ? [{ d: m.transaction_date }] : await tx<{ d: string | null }[]>`
         select max(t.transaction_date)::text as d

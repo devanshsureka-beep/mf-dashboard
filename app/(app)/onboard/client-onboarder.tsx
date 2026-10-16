@@ -16,7 +16,7 @@ const KIND_LABEL: Record<Kind, string> = { AUTO: "Auto-detect", FULL: "Full reba
 
 type Result = BulkOnboardRow | { outcome: "QUEUED" | "WORKING" };
 /** One client: a CAS and its report (either may be missing). */
-interface Row { key: string; cas: number | null; report: number | null; kind: Kind; fresh: string; skip: boolean; onlyTwo: boolean }
+interface Row { key: string; cas: number | null; report: number | null; kind: Kind; fresh: string; skip: boolean; onlyTwo: boolean; manual?: boolean }
 
 const done = (r: Result | undefined) => r?.outcome === "ONBOARDED" || r?.outcome === "ALREADY";
 const busy = (r: Result | undefined) => r?.outcome === "QUEUED" || r?.outcome === "WORKING";
@@ -81,13 +81,22 @@ export function ClientOnboarder({ advisors, defaultAdvisorId, advisorRequired, c
   const [over, setOver] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
   const filesInput = useRef<HTMLInputElement>(null);
+  // The latest files and readings, and whether a read is running, for drops that come in quick succession
+  // (state in a render is stale until the next render; a second drop must not reuse it).
+  const readLock = useRef(false);
+  const filesNow = useRef<File[]>([]);
+  const infosNow = useRef<(BulkFileInfo | null)[]>([]);
   const folderInput = useRef<HTMLInputElement>(null);
 
   /** Pair CAS with reports by the names inside them; two lone files pair with each other. */
   function buildRows(all: (BulkFileInfo | null)[], prev: Row[]): Row[] {
+    // A report picked by hand for a CAS stays with it (and out of the automatic pairing).
+    const manual = prev.filter((r) => r.manual && r.cas !== null && r.report !== null && all[r.cas]?.kind === "CAS" && all[r.report]?.kind === "REPORT");
+    const fixedCas = new Set(manual.map((r) => r.cas));
+    const fixedReports = new Set(manual.map((r) => r.report));
     const ids = (k: BulkFileInfo["kind"]) => all.flatMap((x, i) => (x?.kind === k ? [i] : []));
-    const cas = ids("CAS");
-    const reports = ids("REPORT");
+    const cas = ids("CAS").filter((i) => !fixedCas.has(i));
+    const reports = ids("REPORT").filter((i) => !fixedReports.has(i));
     const p = pairDocuments(
       cas.map((i) => ({ id: String(i), investorName: all[i]!.name, fileName: all[i]!.fileName })),
       reports.map((i) => ({ id: String(i), clientName: all[i]!.name, fileName: all[i]!.fileName })),
@@ -103,6 +112,7 @@ export function ClientOnboarder({ advisors, defaultAdvisorId, advisorRequired, c
     }
     const keep = (key: string) => prev.find((r) => r.key === key);
     return [
+      ...manual,
       ...pairs.map((x) => {
         const key = `c${x.cas}`;
         const old = keep(key);
@@ -112,16 +122,32 @@ export function ClientOnboarder({ advisors, defaultAdvisorId, advisorRequired, c
     ];
   }
 
+  /** Drops and picks: one read at a time; files dropped while one runs wait their turn (never dropped, never mixed). */
+  const waiting = useRef<Promise<File[]>[]>([]);
+  async function addFrom(get: () => File[] | Promise<File[]>) {
+    // The files are taken now (a drop's data is only readable during the drop), read in turn.
+    waiting.current.push(Promise.resolve(get()));
+    if (readLock.current) return;
+    readLock.current = true;
+    try {
+      while (waiting.current.length) await add(await waiting.current.shift()!);
+    } finally {
+      readLock.current = false;
+    }
+  }
+
   async function add(list: File[]) {
-    if (reading) return; // one read at a time: a second drop waits until this one is done
-    const picked = list.filter((f) => /\.pdf$/i.test(f.name) && !files.some((x) => x.name === f.name && x.size === f.size));
+    const before = filesNow.current;
+    const picked = list.filter((f) => /\.pdf$/i.test(f.name) && !before.some((x) => x.name === f.name && x.size === f.size));
     if (!picked.length) return;
-    const all = [...files, ...picked];
-    const got: (BulkFileInfo | null)[] = [...infos, ...picked.map(() => null)];
+    const all = [...before, ...picked];
+    const got: (BulkFileInfo | null)[] = [...infosNow.current, ...picked.map(() => null)];
+    filesNow.current = all;
+    infosNow.current = got;
     setFiles(all);
     setInfos([...got]);
     setReading(true);
-    await pool(picked.map((_, k) => files.length + k), 3, async (i) => {
+    await pool(picked.map((_, k) => before.length + k), 3, async (i) => {
       const fd = new FormData();
       fd.set("file", all[i]);
       if (password) fd.set("password", password);
@@ -133,15 +159,19 @@ export function ClientOnboarder({ advisors, defaultAdvisorId, advisorRequired, c
       }
       setInfos([...got]);
     });
+    infosNow.current = got;
     setRows((prev) => buildRows(got, prev));
     setReading(false);
   }
 
   /** Locked files again, now with the typed password. */
   async function rereadLocked() {
-    const locked = infos.flatMap((x, i) => (x?.kind === "LOCKED" ? [i] : []));
+    if (readLock.current) return;
+    const locked = infosNow.current.flatMap((x, i) => (x?.kind === "LOCKED" ? [i] : []));
     if (!locked.length) return;
-    const got = [...infos];
+    readLock.current = true;
+    const got = [...infosNow.current];
+    const files = filesNow.current;
     setReading(true);
     await pool(locked, 3, async (i) => {
       const fd = new FormData();
@@ -155,11 +185,15 @@ export function ClientOnboarder({ advisors, defaultAdvisorId, advisorRequired, c
       }
       setInfos([...got]);
     });
+    infosNow.current = got;
     setRows((prev) => buildRows(got, prev));
     setReading(false);
+    readLock.current = false;
   }
 
   function clearAll() {
+    filesNow.current = [];
+    infosNow.current = [];
     setFiles([]);
     setInfos([]);
     setRows([]);
@@ -225,7 +259,7 @@ export function ClientOnboarder({ advisors, defaultAdvisorId, advisorRequired, c
       <div
         onDragOver={(e) => { e.preventDefault(); setOver(true); }}
         onDragLeave={() => setOver(false)}
-        onDrop={async (e) => { e.preventDefault(); setOver(false); if (!running && !reading) await add(await filesFromDrop(e.dataTransfer)); }}
+        onDrop={(e) => { e.preventDefault(); setOver(false); if (!running) void addFrom(() => filesFromDrop(e.dataTransfer)); }}
         className={cn("rounded-xl border-2 border-dashed px-6 text-center transition-colors", rows.length || others.length ? "py-5" : "py-10", over ? "border-brand bg-brand-50" : "border-border bg-white")}
       >
         <div className="text-[15px] font-semibold">Drop CAS and advisory report PDFs here</div>
@@ -235,8 +269,8 @@ export function ClientOnboarder({ advisors, defaultAdvisorId, advisorRequired, c
           <Button type="button" variant="outline" size="sm" disabled={running || reading} onClick={() => folderInput.current?.click()}>Choose a folder</Button>
           {files.length ? <button type="button" className="text-xs text-muted hover:underline" disabled={running || reading} onClick={clearAll}>Clear all</button> : null}
         </div>
-        <input ref={filesInput} type="file" accept="application/pdf" multiple hidden onChange={(e) => { void add(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
-        <input ref={folderInput} type="file" multiple hidden {...({ webkitdirectory: "", directory: "" } as Record<string, string>)} onChange={(e) => { void add(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
+        <input ref={filesInput} type="file" accept="application/pdf" multiple hidden onChange={(e) => { const list = Array.from(e.target.files ?? []); e.target.value = ""; void addFrom(() => list); }} />
+        <input ref={folderInput} type="file" multiple hidden {...({ webkitdirectory: "", directory: "" } as Record<string, string>)} onChange={(e) => { const list = Array.from(e.target.files ?? []); e.target.value = ""; void addFrom(() => list); }} />
         {reading ? <p className="mt-3 text-xs font-medium text-indigo-700">Reading {readCount} of {files.length} file(s)…</p> : null}
       </div>
 
@@ -458,7 +492,7 @@ function ClientRow({ r, files, infos, result, started, running, reports, open, o
         <div className="mt-3 grid gap-3 rounded-lg bg-slate-50 p-3 sm:grid-cols-4">
           <label className="block sm:col-span-2">
             <span className="mb-1 block text-[11px] font-medium text-muted">Report for this CAS</span>
-            <Select value={r.report ?? ""} disabled={locked || r.cas === null} onChange={(e) => onPatch({ report: e.target.value === "" ? null : Number(e.target.value), onlyTwo: false })} className="text-xs">
+            <Select value={r.report ?? ""} disabled={locked || r.cas === null} onChange={(e) => onPatch({ report: e.target.value === "" ? null : Number(e.target.value), onlyTwo: false, manual: e.target.value !== "" })} className="text-xs">
               <option value="">— no report —</option>
               {reports.map((i) => <option key={i} value={i}>{infos[i]!.name ? `${infos[i]!.name} · ` : ""}{files[i].name}</option>)}
             </Select>

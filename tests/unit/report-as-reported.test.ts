@@ -72,3 +72,37 @@ describe("Report as it is: a fund the CAS does not hold", () => {
     expect(plan.drift.join(" ")).toMatch(/Gold ETF FoF.*no Sell line/);
   });
 });
+
+describe("Trims over several folios, and lines without an amount", () => {
+  const axis = (folio: string, v: number): PlanHolding => ({ scheme_name: "Axis Bluechip Fund - Direct Plan Growth", isin: "INF846K01DP8", folio_number: folio, current_value: v, plan_type: "DIRECT" });
+  const trim = (value: number, folios: number): ReportAiAnswer => ({
+    ...answer, portfolio_value: 300000,
+    sells: [{ fund: "Axis Bluechip Fund", folio: null, folio_count: folios, plan_type: "DIRECT", partial: true, value, percent: null }],
+    sell_total: value, buys: [], buy_total: 0, holds: [],
+  });
+
+  it("as it is, with a different folio count: a trim stays a trim, shared by value", () => {
+    // The report says "x2 folios"; the CAS has 3 of ₹1L each. ₹50,000 is trimmed, not ₹3L.
+    const plan = buildPlanFromReport(answerToReport(trim(50000, 2), null), [axis("1", 100000), axis("2", 100000), axis("3", 100000)], "2026-10-01", { asReported: true });
+    const sells = plan.items.filter((i) => i.action === "SELL");
+    expect(sells).toHaveLength(3);
+    expect(sells.reduce((t, i) => t + i.target_amount, 0)).toBeCloseTo(50000, 0);
+  });
+
+  it("a trim bigger than the folios hold is a problem; the shares add up exactly", () => {
+    const over = buildPlanFromReport(answerToReport(trim(500000, 3), null), [axis("1", 100000), axis("2", 100000), axis("3", 100000)], "2026-10-01");
+    expect(over.problems.some((p) => /trims .* across 3 folios/.test(p))).toBe(true);
+    const ok = buildPlanFromReport(answerToReport(trim(100000, 3), null), [axis("1", 100000), axis("2", 100000), axis("3", 100000)], "2026-10-01");
+    expect(ok.items.filter((i) => i.action === "SELL").reduce((t, i) => t + i.target_amount, 0)).toBe(100000);
+  });
+
+  it("a Buy with no amount is never a plan line (the database would refuse it)", () => {
+    const a: ReportAiAnswer = { ...answer, sells: [], sell_total: 0, holds: [], buys: [{ fund: "Parag Parikh Flexi Cap Fund", plan_type: "DIRECT", amount: 0, kind: "NEW", amc: "PPFAS", category: "Flexi Cap" }], buy_total: 0 };
+    const strict = buildPlanFromReport(answerToReport(a, null), holdings, "2026-10-01");
+    expect(strict.items.some((i) => i.action === "BUY")).toBe(false);
+    expect(strict.problems.some((p) => /no amount/.test(p))).toBe(true);
+    const asIs = buildPlanFromReport(answerToReport(a, null), holdings, "2026-10-01", { asReported: true });
+    expect(asIs.items.some((i) => i.action === "BUY")).toBe(false);
+    expect(asIs.drift.some((p) => /no amount/.test(p))).toBe(true);
+  });
+});

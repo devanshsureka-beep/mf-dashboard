@@ -27,6 +27,15 @@ describe("transaction-level matching (CAS proves execution)", () => {
     expect(out[0]).toMatchObject({ callId: "b1", lagDays: 1, autoConfirm: true, allocatedAmount: 199990 });
   });
 
+  it("a purchase in a monthly same-amount run is matched but never auto-confirmed (it may be a SIP instalment)", () => {
+    const [p] = matchTransactions(
+      [call({ id: "b2", action: "BUY", advisedAmount: 600000 })],
+      [txn({ id: "t9", type: "PURCHASE", amount: 5000, units: 20.1, nav: 248.7, date: "2026-09-25", recurring: true })],
+    );
+    expect(p).toMatchObject({ kind: "ADVICE_MATCH", callId: "b2", autoConfirm: false });
+    expect(p.note).toMatch(/SIP instalment/);
+  });
+
   it("never matches a transaction dated before the call, nor the wrong direction or fund", () => {
     const calls = [call({ id: "s1", action: "SELL", communicatedAt: at("2026-09-25") })];
     expect(matchTransactions(calls, [txn({ id: "early", date: "2026-09-24" })])[0].kind).toBe("UNADVISED");

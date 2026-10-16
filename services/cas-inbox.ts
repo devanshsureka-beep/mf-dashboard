@@ -41,6 +41,8 @@ export async function getCasInbox(tx: Tx) {
     from public.reconciliation_runs r join public.clients c on c.id = r.client_id
     join public.portfolio_snapshots cs on cs.id = r.current_snapshot_id
     join public.reconciliation_matches m on m.run_id = r.id and m.classification = 'ADVICE_MATCH' and m.status = 'SUGGESTED'
+    -- Only calls that can still take the trade (a cancelled or revised call's suggestion is not a decision to make).
+    join public.advice_items a on a.id = m.advice_item_id and a.status in ('ISSUED', 'PARTIALLY_EXECUTED', 'EXECUTED')
     where r.status <> 'CANCELLED'
     group by r.id, r.client_id, c.full_name, c.client_code, cs.snapshot_date
     order by cs.snapshot_date desc`;
@@ -48,7 +50,7 @@ export async function getCasInbox(tx: Tx) {
   const unadvised = await tx<InboxUnadvised[]>`
     select r.id as run_id, r.client_id, c.full_name as client_name, c.client_code, cs.snapshot_date::text as snapshot_date,
            count(m.id) filter (where m.classification = 'UNADVISED' and m.status in ('UNEXPLAINED', 'SUGGESTED') and m.reviewed_at is null)::int as trades,
-           coalesce(sum(abs(coalesce(m.transaction_amount, m.approx_amount))) filter (where m.classification = 'UNADVISED' and m.status in ('UNEXPLAINED', 'SUGGESTED') and m.reviewed_at is null), 0)::float8 as amount,
+           coalesce(sum(abs(coalesce(m.approx_amount, m.transaction_amount))) filter (where m.classification = 'UNADVISED' and m.status in ('UNEXPLAINED', 'SUGGESTED') and m.reviewed_at is null), 0)::float8 as amount,
            count(m.id) filter (where m.classification = 'ADVICE_MATCH' and m.status in ('CONFIRMED', 'PARTIAL'))::int as matched
     from public.reconciliation_runs r join public.clients c on c.id = r.client_id
     join public.portfolio_snapshots cs on cs.id = r.current_snapshot_id
@@ -60,7 +62,9 @@ export async function getCasInbox(tx: Tx) {
 
   // Confirmed CAS of the last 30 days with nothing left to review.
   const done = await tx<InboxDone[]>`
-    select s.client_id, c.full_name as client_name, s.snapshot_date::text as snapshot_date, r.id as run_id,
+    select * from (
+    select distinct on (s.id) s.client_id, c.full_name as client_name, s.snapshot_date::text as snapshot_date, r.id as run_id,
+           coalesce(s.reviewed_at, s.created_at) as done_at,
            (select count(*)::int from public.reconciliation_matches m where m.run_id = r.id and m.classification = 'ADVICE_MATCH' and m.status in ('CONFIRMED', 'PARTIAL')) as verified,
            (select count(*)::int from public.reconciliation_matches m where m.run_id = r.id and m.classification = 'UNADVISED' and (m.reviewed_at is not null or m.status not in ('UNEXPLAINED', 'SUGGESTED'))) as unadvised_reviewed
     from public.portfolio_snapshots s join public.clients c on c.id = s.client_id
@@ -68,7 +72,11 @@ export async function getCasInbox(tx: Tx) {
     where s.review_status = 'CONFIRMED' and coalesce(s.reviewed_at, s.created_at) > now() - interval '30 days'
       and not exists (select 1 from public.reconciliation_matches m where m.run_id = r.id and m.classification = 'UNADVISED'
                       and m.status in ('UNEXPLAINED', 'SUGGESTED') and m.reviewed_at is null)
-    order by coalesce(s.reviewed_at, s.created_at) desc limit 30`;
+      and not exists (select 1 from public.reconciliation_matches m join public.advice_items a on a.id = m.advice_item_id
+                      where m.run_id = r.id and m.classification = 'ADVICE_MATCH' and m.status = 'SUGGESTED'
+                        and a.status in ('ISSUED', 'PARTIALLY_EXECUTED', 'EXECUTED'))
+    order by s.id, r.created_at desc nulls last
+    ) d order by d.done_at desc limit 30`;
 
   // Advice no CAS has shown yet, or no CAS for 30+ days.
   const collect = await tx<InboxCollect[]>`
@@ -118,8 +126,8 @@ export async function getInboxRunDetails(tx: Tx, runIds: string[]): Promise<Reco
   const rows = await tx<{ id: string; run_id: string; scheme_name: string; classification: string; status: string; reviewed: boolean; action: string | null;
     change_type: string; amount: number; date: string | null; single_trade: boolean }[]>`
     select m.id, m.run_id, m.scheme_name, m.classification,
-           case when a.status = 'CANCELLED' then 'REJECTED' else m.status end as status, m.reviewed_at is not null as reviewed, a.action, m.change_type,
-           abs(coalesce(m.transaction_amount, m.approx_amount))::float8 as amount, m.transaction_date::text as date,
+           case when a.status in ('CANCELLED', 'EXPIRED', 'REVISED') and m.status = 'SUGGESTED' then 'REJECTED' else m.status end as status, m.reviewed_at is not null as reviewed, a.action, m.change_type,
+           abs(coalesce(m.approx_amount, m.transaction_amount))::float8 as amount, m.transaction_date::text as date,
            (m.cas_transaction_id is not null and m.security_id is not null and m.transaction_date is not null and coalesce(m.transaction_amount, 0) > 0) as single_trade
     from public.reconciliation_matches m left join public.advice_items a on a.id = m.advice_item_id
     where m.run_id = any(${runIds}::uuid[]) and m.classification in ('ADVICE_MATCH', 'UNADVISED')

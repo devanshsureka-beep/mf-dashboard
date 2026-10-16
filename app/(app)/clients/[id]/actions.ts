@@ -4,7 +4,7 @@ import { settleSipInstalments } from "@/services/reconciliation";
 
 import { revalidatePath } from "next/cache";
 import { optStr, reqStr, runAction, type ActionResult } from "@/lib/actions";
-import { AppError } from "@/lib/errors";
+import { AppError, logServerError } from "@/lib/errors";
 import { actionTx } from "@/lib/server";
 import { linkCallsToPlan } from "@/services/advice";
 import { addNote, completeFollowUp } from "@/services/notes";
@@ -78,11 +78,15 @@ export async function recheckAllSipsAction(_p: ActionResult | null): Promise<Act
       // In its own savepoint: a failure here never undoes the SIP lines updated above.
       const settled = await (tx as unknown as { savepoint: <T>(cb: (sp: typeof tx) => Promise<T>) => Promise<T> })
         .savepoint((sp) => settleSipInstalments(sp, actor))
-        .catch(() => ({ reclassified: 0, callsCancelled: 0 }));
+        .catch((e: unknown) => {
+          logServerError("recheckAllSips.settle", e);
+          return { reclassified: 0, callsCancelled: 0, failed: true as const };
+        });
       return { clients: clients.length, lines, settled };
     }, { roles: ["ADMIN"] });
     revalidatePath("/clients");
     revalidatePath("/reconciliation");
+    if ("failed" in r.settled) return `Checked ${r.clients} client(s) with open SIP lines: ${r.lines} line(s) updated from the CAS. Re-reading SIP instalments shown as trades failed; it is logged. Try again later.`;
     return `Checked ${r.clients} client(s) with open SIP lines: ${r.lines} line(s) updated from the CAS. ${r.settled.reclassified} SIP instalment(s) no longer shown as trades${r.settled.callsCancelled ? `, ${r.settled.callsCancelled} call(s) recorded from them cancelled` : ""}.`;
   });
 }
