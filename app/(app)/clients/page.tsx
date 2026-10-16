@@ -37,6 +37,14 @@ const VIEWS: { key: string; label: string; params: Record<string, string | undef
   { key: "agreement", label: "No agreement", params: { agreement: "missing" }, match: (f) => f.agreement === "missing", count: (c) => c.agreement_status !== "VALID" },
 ];
 
+const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** The months clients were onboarded in, newest first, with how many. */
+function months(rows: Desk[]): { key: string; label: string; n: number }[] {
+  const by = new Map<string, number>();
+  for (const c of rows) { const k = String(c.onboarding_date).slice(0, 7); by.set(k, (by.get(k) ?? 0) + 1); }
+  return [...by.entries()].sort((a, b) => b[0].localeCompare(a[0])).map(([k, n]) => ({ key: k, label: `${MON[Number(k.slice(5, 7)) - 1]} ${k.slice(0, 4)}`, n }));
+}
+
 const sumOf = (rows: Desk[], f: (c: Desk) => number) => rows.reduce((t, c) => t + f(c), 0);
 const nextTrancheOf = (c: Desk) => Boolean(c.active_plan_id) && c.pending_total < 0.5 && c.remaining_to_advise >= 0.5;
 /** The six stage tiles, each a saved view with its money and what is getting old. */
@@ -58,14 +66,18 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
     risk: (RISK_PROFILES as readonly string[]).includes(one("risk") ?? "") ? one("risk") : undefined,
     plan: one("plan") as DeskFilters["plan"], premium: one("premium") as DeskFilters["premium"],
     agreement: one("agreement") as DeskFilters["agreement"], attention: one("attention") as DeskFilters["attention"],
-    minValue: lakh(one("min")), maxValue: lakh(one("max")), sort: (one("sort") as DeskFilters["sort"]) ?? "action",
+    minValue: lakh(one("min")), maxValue: lakh(one("max")),
+    month: /^\d{4}-(0[1-9]|1[0-2])$/.test(one("month") ?? "") ? one("month") : null, sort: (one("sort") as DeskFilters["sort"]) ?? "action",
   };
   const showDeleted = one("deleted") === "1";
   const draftView = f.plan === "draft";
-  const { clients, all, advisors, deleted, drafts, actor } = await pageData(async (tx, a) => ({
+  // The tiles count within the search, advisor, risk and month picked; only the view itself is left out.
+  const base: DeskFilters = { ...f, attention: undefined, plan: undefined, premium: undefined, agreement: undefined };
+  const { clients, all, everyone, advisors, deleted, drafts, actor } = await pageData(async (tx, a) => ({
     clients: await listDeskClients(tx, f),
     drafts: draftView ? await listDraftPlans(tx, { advisorId: f.advisorId }) : [],
-    all: await listDeskClients(tx, {}),
+    all: await listDeskClients(tx, base),
+    everyone: f.month ? await listDeskClients(tx, { ...base, month: null }) : null,
     advisors: await listAdvisors(tx),
     deleted: a.role === "ADMIN" ? await listDeletedClients(tx) : [],
   }));
@@ -144,6 +156,10 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
           <option value="">Any risk</option>
           {RISK_PROFILES.map((r) => <option key={r} value={r}>{humanize(r)}</option>)}
         </AutoSelect>
+        <AutoSelect name="month" defaultValue={f.month ?? ""} className="h-9 w-44" aria-label="Onboarded in">
+          <option value="">Onboarded: any month</option>
+          {months(everyone ?? all).map((m) => <option key={m.key} value={m.key}>{m.label} · {m.n}</option>)}
+        </AutoSelect>
         <AutoSelect name="sort" defaultValue={f.sort} className="h-9 w-48" aria-label="Sort">
           <option value="action">Needs action first</option><option value="left">Most left to advise</option><option value="value">Value (high first)</option>
           <option value="pending">Waiting (high first)</option><option value="name">Name</option><option value="onboarded">Newest onboarded</option>
@@ -191,6 +207,7 @@ function toRow(c: Row): ListRow {
   if (c.agreement_status !== "VALID") todos.push({ text: c.agreement_status === "EXPIRED" ? "Renew agreement" : "Upload agreement", tone: "grey", href: `/clients/${c.client_id}?tab=file` });
   return {
     id: c.client_id, name: c.full_name, code: c.client_code, tag, todos, casToCheck: c.cas_to_review > 0, openCalls: c.open_calls,
+    month: MON[Number(c.onboarding_date.slice(5, 7)) - 1] ?? "", pendingCas: c.pending_cas_date,
     advisor: c.advisor_name ?? "—", risk: c.risk_profile ? humanize(c.risk_profile) : "—",
     valueToday: c.live_portfolio_value == null && inBank < 0.5 ? null : (c.live_portfolio_value ?? 0) + inBank,
     inFunds: c.live_portfolio_value, inBank,
