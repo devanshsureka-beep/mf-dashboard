@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assetClass, groupBook, insights, shortCategory, slices, type BookHolding } from "@/lib/domain/book";
+import { amcName, assetClass, groupBook, insights, shortCategory, slices, type BookHolding } from "@/lib/domain/book";
 
 const h = (over: Partial<BookHolding>): BookHolding => ({
   client_id: "c1", client_name: "Demo One", advisor_name: "Adv A", risk_profile: "MODERATE", security_id: null,
@@ -15,6 +15,27 @@ describe("book", () => {
     expect(assetClass("Fund of Funds Scheme (Overseas)", "Demo US Equity FoF")).toBe("International");
     expect(assetClass(null, "Demo Nifty 50 Index Fund")).toBe("Equity");
     expect(shortCategory("Equity Scheme - Small Cap Fund", "X")).toBe("Small Cap");
+    // The AMFI type decides; the name only for types that say nothing.
+    expect(assetClass("Other Scheme - Index Funds", "Demo Bharat Bond ETF FOF April 2030")).toBe("Debt");
+    expect(assetClass("Other Scheme - Other  ETFs", "Demo Liquid BeES")).toBe("Debt");
+    expect(assetClass("Equity Scheme - Sectoral/ Thematic", "Demo Magnum Global Fund")).toBe("Equity");
+    expect(assetClass("Index Funds - Debt Funds", "Demo SDL Index")).toBe("Debt");
+    expect(assetClass("Exchange Traded Funds (ETFs) - Silver ETF", "Demo Silver")).toBe("Gold & silver");
+    expect(assetClass(null, "Demo US Technology Equity FoF")).toBe("International");
+    expect(assetClass(null, "Demo Midcap 150 Fund")).toBe("Equity");
+    expect(assetClass(null, "Demo Infrastructure Fund")).toBe("Equity");
+    expect(assetClass(null, "Demo Passive Multi-Asset FoF")).toBe("Hybrid");
+    expect(shortCategory(null)).toBe("Uncategorised");
+    expect(shortCategory("Equity Scheme - Sectoral/ Thematic")).toBe(shortCategory("Equity Scheme - Sectoral / Thematic"));
+    expect(shortCategory("Equity Schemes - ELSS- Tax Saver Fund")).toBe("ELSS");
+  });
+
+  it("one AMC under one name", () => {
+    expect(amcName("HDFC Mutual Fund")).toBe(amcName("HDFC"));
+    expect(amcName("MOTILAL OSWAL MUTUAL FUND")).toBe("Motilal Oswal");
+    expect(amcName("Aditya Birla SL")).toBe(amcName("Aditya Birla Sun Life Mutual Fund"));
+    expect(amcName("Quant MF")).toBe("Quant");
+    expect(amcName(null)).toBe("Unknown AMC");
   });
 
   it("slices fold the tail into Other and add up to the book", () => {

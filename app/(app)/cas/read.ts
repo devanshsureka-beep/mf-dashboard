@@ -48,7 +48,12 @@ export async function readClientCas(args: {
         if (!args.client || !casMatchesClient(parsed.investor, args.client)) {
           throw new CasIdentityError(`This CAS is for ${parsed.investor.name ?? "another investor"} (PAN ${maskPan(pan)}); its mobile number and name do not both match this client.`);
         }
-        await claimPan(tx, args.clientId, pan);
+        // Another client (perhaps one this user cannot see) may hold the PAN: then it is not this client's CAS.
+        try {
+          await claimPan(tx, args.clientId, pan);
+        } catch {
+          throw new CasIdentityError(`This CAS is for PAN ${maskPan(pan)}, which another client already has.`);
+        }
       }
     }
     return ingestParsedCas(tx, actor, {

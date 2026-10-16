@@ -37,13 +37,15 @@ export async function getBookTrend(tx: Tx, advisorId: string | null, liveNow: nu
       from public.portfolio_snapshots p join public.v_client_summary s on s.client_id = p.client_id
       where p.review_status = 'CONFIRMED' and (${advisorId}::uuid is null or s.advisor_id = ${advisorId})
     )
-    select to_char(mo.m_start, 'YYYY-MM') as month,
-           coalesce((select sum(v)::float8 from (
-             select distinct on (x.client_id) x.total_current_value as v from snaps x
-             where x.snapshot_date <= (mo.m_start + interval '1 month - 1 day')::date
-             order by x.client_id, x.snapshot_date desc, x.created_at desc) l), 0) as value,
-           (select count(distinct x.client_id)::int from snaps x where x.snapshot_date <= (mo.m_start + interval '1 month - 1 day')::date) as clients
-    from months mo order by mo.m_start`;
+    select to_char(mo.m_start, 'YYYY-MM') as month, coalesce(sum(l.v), 0)::float8 as value,
+           -- Clients holding something then (a new investor's empty start does not count).
+           count(*) filter (where l.v > 0)::int as clients
+    from months mo
+    left join lateral (
+      select distinct on (x.client_id) x.total_current_value as v from snaps x
+      where x.snapshot_date <= (mo.m_start + interval '1 month - 1 day')::date
+      order by x.client_id, x.snapshot_date desc, x.created_at desc) l on true
+    group by mo.m_start order by mo.m_start`;
   const thisMonth = (await tx<{ m: string }[]>`select to_char(app.today_ist(), 'YYYY-MM') as m`)[0].m;
   return [...rows, { month: thisMonth, value: liveNow, clients: clientsNow }];
 }

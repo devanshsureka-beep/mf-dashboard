@@ -104,6 +104,12 @@ export async function uploadAsService(path: string, f: PreparedFile): Promise<vo
   if (error && !/exists|duplicate/i.test(error.message)) throw new AppError(`Storage upload failed: ${error.message}`);
 }
 
+/** Remove a stored file no document points to (a CAS refused after it was uploaded). */
+export async function removeUnreferencedAsService(path: string, referenced: boolean): Promise<void> {
+  if (referenced) return;
+  await createSupabaseAdminClient().storage.from(BUCKET).remove([path]);
+}
+
 /** Read a stored file with the USER's session (storage RLS applies). */
 export async function downloadAsUser(path: string): Promise<Uint8Array> {
   const supabase = await createSupabaseServerClient();

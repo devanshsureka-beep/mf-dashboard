@@ -9,6 +9,7 @@ const label = (m: string) => `${MON[Number(m.slice(5, 7)) - 1]} ${m.slice(0, 4)}
 /** Money in funds by month: one line, a crosshair and a tooltip on hover (or focus) of any month. */
 export function BookTrend({ points }: { points: { month: string; value: number; clients: number }[] }) {
   const [at, setAt] = useState<number | null>(null);
+  if (!points.some((p) => p.value > 0)) return <p className="py-8 text-center text-sm text-muted">No confirmed CAS yet: the line starts with the first one.</p>;
   const W = 640, H = 220, L = 56, R = 12, T = 12, B = 26;
   const vals = points.map((p) => p.value);
   const max = Math.max(...vals, 1);
@@ -27,7 +28,7 @@ export function BookTrend({ points }: { points: { month: string; value: number; 
 
   return (
     <div className="relative" onMouseLeave={() => setAt(null)}>
-      <svg role="img" aria-label={`Money in funds by month, ${label(points[0].month)} to ${label(points[points.length - 1].month)}: ${formatINRCompact(points[Math.max(0, first)]?.value ?? 0)} to ${formatINRCompact(points[points.length - 1].value)}`}
+      <svg role="group" aria-label={`Money in funds by month, ${label(points[0].month)} to ${label(points[points.length - 1].month)}: ${formatINRCompact(points[Math.max(0, first)]?.value ?? 0)} to ${formatINRCompact(points[points.length - 1].value)}`}
         viewBox={`0 0 ${W} ${H}`} className="h-auto w-full">
         {ticks.map((t) => (
           <g key={t}>
@@ -46,12 +47,12 @@ export function BookTrend({ points }: { points: { month: string; value: number; 
         ) : <circle cx={x(points.length - 1)} cy={y(points[points.length - 1].value)} r={4} fill="#2a78d6" />}
         {points.map((p, i) => (
           <rect key={p.month} x={x(i) - (W - L - R) / (2 * Math.max(1, points.length - 1))} y={T} width={(W - L - R) / Math.max(1, points.length - 1)} height={H - T - B}
-            fill="transparent" tabIndex={0} aria-label={`${label(p.month)}: ${formatINRCompact(p.value)}`}
+            fill="transparent" tabIndex={0} role="button" aria-label={`${label(p.month)}: ${formatINRCompact(p.value)} in funds, ${p.clients} client${p.clients === 1 ? "" : "s"}`}
             onMouseEnter={() => setAt(i)} onFocus={() => setAt(i)} onBlur={() => setAt(null)} />
         ))}
       </svg>
       {cur != null && points[cur].value > 0 ? (
-        <div className="pointer-events-none absolute top-1 rounded-md bg-ink px-2.5 py-1.5 text-xs leading-snug text-white shadow"
+        <div aria-live="polite" className="pointer-events-none absolute top-1 rounded-md bg-ink px-2.5 py-1.5 text-xs leading-snug text-white shadow"
           style={{ left: `${Math.min(70, (x(cur) / W) * 100)}%` }}>
           <b>{label(points[cur].month)}{cur === points.length - 1 ? " · today" : ""}</b>
           <div>{formatINRCompact(points[cur].value)} in funds · {points[cur].clients} client{points[cur].clients === 1 ? "" : "s"}</div>

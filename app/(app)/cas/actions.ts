@@ -7,7 +7,7 @@ import { AppError } from "@/lib/errors";
 import { casParseResultSchema, CAS_SOURCES } from "@/lib/integrations/contracts";
 import { n8nConfigured, notify, triggerCasParse } from "@/lib/integrations/n8n";
 import { actionTx } from "@/lib/server";
-import { downloadAsUser, objectPath, signedUrlForService, uploadAsUser, fileFromForm } from "@/lib/storage";
+import { downloadAsUser, objectPath, removeUnreferencedAsService, signedUrlForService, uploadAsUser, fileFromForm } from "@/lib/storage";
 import { getClientSummary } from "@/services/clients";
 import {
   confirmSnapshot, findDuplicateDocument, ingestCasParseResult, registerCasDocument, rejectSnapshot, setCasStatus,
@@ -66,8 +66,14 @@ export async function uploadCasAction(clientId: string, _p: ActionResult | null,
       casId = out.casDocumentId;
       return;
     } catch (e) {
-      // Someone else's CAS is refused outright, never kept on this client for another reader.
-      if (!(e instanceof AppError) || e instanceof CasIdentityError) throw e;
+      // Someone else's CAS is refused outright, never kept on this client for another reader
+      // (nor its file, unless a document of this client already points to it).
+      if (e instanceof CasIdentityError) {
+        const referenced = await actionTx(async (tx) => (await tx`select 1 from public.documents where file_path = ${path} limit 1`).length > 0);
+        await removeUnreferencedAsService(path, referenced);
+        throw e;
+      }
+      if (!(e instanceof AppError)) throw e;
       readError = e.message;
     }
 

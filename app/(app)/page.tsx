@@ -8,11 +8,13 @@ import { PAGES } from "@/lib/brand";
 import { formatDate, formatINRCompact } from "@/lib/format";
 import { pageData } from "@/lib/server";
 import { cn } from "@/lib/utils";
-import { assetClass, GROUP_BYS, groupBook, insights, shortCategory, slices, type GroupBy, type GroupNode } from "@/lib/domain/book";
+import { amcName, assetClass, GROUP_BYS, groupBook, insights, shortCategory, slices, type GroupBy, type GroupNode } from "@/lib/domain/book";
 import { listDeskClients } from "@/services/clients";
-import { listDueFollowUps } from "@/services/notes";
 import { listDraftPlans } from "@/services/plans";
 import { getBookHoldings, getBookTrend } from "@/services/book";
+import { listWaiting } from "@/services/waiting";
+import { askCasHref } from "@/lib/ask-cas";
+import { ActionBadge } from "@/components/app/status-badge";
 
 export const metadata = { title: PAGES.overview };
 
@@ -90,7 +92,7 @@ export default async function Today(props: PageProps<"/">) {
   const alloc: Alloc = ALLOCS.some((a) => a.key === sp.alloc) ? (sp.alloc as Alloc) : "class";
   const by: GroupBy = GROUP_BYS.some((g) => g.key === sp.by) ? (sp.by as GroupBy) : "category";
   const day = todayIst();
-  const { all, sip, followUps, casStats, draftPlans, holdings, trend, actor } = await pageData(async (tx, a) => {
+  const { all, sip, calls, openCalls, casStats, draftPlans, holdings, trend, actor } = await pageData(async (tx, a) => {
     const adv = mine ? a.id : null;
     const all = await listDeskClients(tx, mine ? { advisorId: a.id } : {});
     const live = all.reduce((t, c) => t + (c.live_portfolio_value ?? 0), 0);
@@ -101,7 +103,8 @@ export default async function Today(props: PageProps<"/">) {
         select coalesce(sum(v.sip_monthly_target), 0)::float8 as target, coalesce(sum(v.sip_monthly_started), 0)::float8 as started
         from public.v_client_sip v join public.v_client_summary s on s.client_id = v.client_id
         where (${adv}::uuid is null or s.advisor_id = ${adv})`)[0],
-      followUps: await listDueFollowUps(tx, 5),
+      calls: await listWaiting(tx, { advisorId: adv, limit: 5 }),
+      openCalls: Number((await tx<{ n: number }[]>`select count(*)::int as n from public.v_pending_executions where (${adv}::uuid is null or advisor_id = ${adv})`)[0]?.n ?? 0),
       // What the CAS uploads of the last 30 days did on their own, and what they left for a person.
       casStats: (await tx<{ done: number; confirm: number }[]>`
         select count(*) filter (where m.status in ('CONFIRMED', 'PARTIAL') and coalesce(m.resolved_at, r.created_at) > now() - interval '30 days')::int as done,
@@ -110,7 +113,7 @@ export default async function Today(props: PageProps<"/">) {
         join public.v_client_summary s on s.client_id = m.client_id
         where m.classification = 'ADVICE_MATCH' and r.status <> 'CANCELLED' and (${adv}::uuid is null or s.advisor_id = ${adv})`)[0] ?? { done: 0, confirm: 0 },
       holdings: await getBookHoldings(tx, adv),
-      trend: await getBookTrend(tx, adv, live, all.filter((c) => c.live_portfolio_value != null).length),
+      trend: await getBookTrend(tx, adv, live, all.filter((c) => (c.live_portfolio_value ?? 0) > 0).length),
     };
   });
 
@@ -119,7 +122,11 @@ export default async function Today(props: PageProps<"/">) {
   const toCheck = all.filter((c) => c.cas_to_review > 0);
   const unadvised = all.filter((c) => c.unadvised_to_review > 0);
   const nextTranche = all.filter((c) => c.active_plan_id && c.pending_total < 0.5 && c.remaining_to_advise >= 0.5);
-  const quiet = nextTranche.filter((c) => c.last_call_days == null || c.last_call_days > 14);
+  const quiet = nextTranche.filter((c) => c.last_call_days == null || c.last_call_days > 30);
+  const followUps = all.filter((c) => c.follow_ups_due > 0);
+  const adv = mine ? actor.id : null;
+  /** A link that keeps "My clients" on the page it opens. */
+  const withAdv = (u: string) => (adv ? `${u}${u.includes("?") ? "&" : "?"}advisor=${adv}` : u);
   const drafts = draftPlans;
   const draftQuestions = drafts.filter((d) => d.open_questions || d.needs_review).length;
   const oldestDraft = Math.max(-1, ...all.filter((c) => c.has_draft_plan).map((c) => c.draft_days ?? 0));
@@ -129,12 +136,14 @@ export default async function Today(props: PageProps<"/">) {
   const inFunds = sum((c) => c.live_portfolio_value ?? 0);
   const left = sum((c) => (c.active_plan_id ? c.remaining_to_advise : 0));
   const casOpen = toCheck.length + unadvised.length + casStats.confirm;
-  const kinds = [casOpen, drafts.length, nextTranche.length, awaiting.length, followUps.length].filter(Boolean).length;
+  // What this user can act on: Operations do not approve plans or advise.
+  const kinds = (canAdvise ? [casOpen, drafts.length, nextTranche.length, awaiting.length, followUps.length] : [casOpen, awaiting.length, followUps.length]).filter(Boolean).length;
+  const premiumGap = all.filter((c) => c.premium_status !== "ACTIVE" || c.renewal_due);
   const firstTrend = trend.find((p) => p.value > 0);
   const total = holdings.reduce((t, h) => t + h.value, 0);
-  const allocation = slices(holdings, alloc === "class" ? (h) => assetClass(h.category, h.scheme_name) : alloc === "category" ? (h) => shortCategory(h.category, h.scheme_name) : (h) => h.amc ?? "Unknown AMC", 8);
-  const watch = insights(holdings, { inBank: sum((c) => c.in_bank), inBankClients: inBankClients.length });
-  const groups = groupBook(holdings, by);
+  const allocation = slices(holdings, alloc === "class" ? (h) => assetClass(h.category, h.scheme_name) : alloc === "category" ? (h) => shortCategory(h.category, h.scheme_name) : (h) => amcName(h.amc), 8);
+  const watch = insights(holdings, { inBank: sum((c) => c.in_bank), inBankClients: inBankClients.length, canAdvise, advisorId: adv });
+  const groups = groupBook(holdings, by, { fundLinks: canAdvise });
   const sellsLeft = all.filter((c) => c.active_plan_id && c.yet_to_advise_sell >= 0.5).sort((a, b) => b.yet_to_advise_sell - a.yet_to_advise_sell);
   const href = (patch: Record<string, string | null>) => {
     const p = new URLSearchParams();
@@ -175,12 +184,12 @@ export default async function Today(props: PageProps<"/">) {
       <section aria-label={mine ? "Your clients" : "The book"} className="mb-4">
         <h2 className="mb-2 text-sm font-semibold">{mine ? "Your clients" : "The book"}</h2>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-          <Kpi label="Clients" value={all.length} hint={`${all.filter((c) => c.active_plan_id).length} with an active plan`} href="/clients" />
+          <Kpi label="Clients" value={all.length} hint={`${all.filter((c) => c.active_plan_id).length} with an active plan`} href={withAdv("/clients")} />
           <Kpi label="In funds" value={<Money value={inFunds} />} hint="units × today's NAV" href="#book" />
-          <Kpi label="Left to advise" value={<Money value={left} />} tone="text-brand-700" hint="all open tranches" href="/clients?attention=tranche" />
-          <Kpi label="Waiting for clients" value={<Money value={sum((c) => c.pending_total)} />} tone={awaiting.length ? "text-amber-700" : "text-emerald-700"} hint={`advised, not done · ${awaiting.length} client(s)`} href="/executions/pending" />
-          <Kpi label="In bank" value={<Money value={sum((c) => c.in_bank)} />} hint="sold, not bought back" href="/advice/find?list=cash" />
-          <Kpi label="Plans to approve" value={drafts.length} tone={drafts.length ? "text-amber-700" : undefined} hint="drafts waiting" href="/clients?plan=draft" />
+          <Kpi label="Left to advise" value={<Money value={left} />} tone="text-brand-700" hint="all open tranches" href={withAdv("/clients?plan=active&sort=left")} />
+          <Kpi label="Waiting for clients" value={<Money value={sum((c) => c.pending_total)} />} tone={awaiting.length ? "text-amber-700" : "text-emerald-700"} hint={`advised, not done · ${awaiting.length} client(s)`} href={withAdv("/executions/pending")} />
+          <Kpi label="In bank" value={<Money value={sum((c) => c.in_bank)} />} hint="sold, not bought back" href={canAdvise ? withAdv("/advice/find?list=cash&waiting=show") : withAdv("/clients?sort=value")} />
+          <Kpi label="Plans to approve" value={drafts.length} tone={drafts.length ? "text-amber-700" : undefined} hint="drafts waiting" href={withAdv("/clients?plan=draft")} />
         </div>
       </section>
 
@@ -189,29 +198,45 @@ export default async function Today(props: PageProps<"/">) {
           <section aria-label="Today's work" className="space-y-2.5 rounded-xl border border-border bg-surface p-4">
             <div className="flex items-baseline justify-between"><h2 className="text-[15px] font-semibold">Today&rsquo;s work</h2><span className="text-xs text-muted">in the order to do it</span></div>
             {casOpen ? <Work review n={casOpen} title={PAGES.casInbox} href="/reconciliation" cta="Open inbox"
-              sub={<>{toCheck.length} CAS to check · {casStats.confirm} call(s) to confirm · {unadvised.length} with trades to decide</>} /> : null}
-            {awaiting.length ? <Work review n={awaiting.length} title="Waiting for clients" href="/executions/pending" cta="See calls"
-              sub={<><Money value={sum((c) => c.pending_total)} /> advised, not in a CAS yet</>} /> : null}
-            {drafts.length ? <Work n={drafts.length} title="Drafts to approve" href="/clients?plan=draft" cta="Review"
+              sub={<>{toCheck.length} CAS to check · {casStats.confirm} call(s) to confirm · {unadvised.length} with trades to decide · {casStats.done} trade(s) marked done in 30 days</>} /> : null}
+            {awaiting.length ? <Work review n={awaiting.length} title="Waiting for clients" href={withAdv("/executions/pending")} cta="See calls"
+              sub={<>{openCalls} call(s) · <Money value={sum((c) => c.pending_total)} /> advised, not in a CAS yet</>} /> : null}
+            {calls.length ? (
+              <ul className="-mt-1 divide-y divide-border rounded-lg bg-white text-[12.5px] ring-1 ring-amber-200">
+                {calls.map((c) => (
+                  <li key={c.advice_item_id} className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.6fr)_70px_auto] items-center gap-2 px-3 py-1.5">
+                    <Link href={`/clients/${c.client_id}?tab=tranches`} className="truncate font-medium hover:underline">{c.client_name}</Link>
+                    <span className="truncate"><ActionBadge action={c.action} /> {c.scheme_name}</span>
+                    <span className={cn("text-right", c.age_days > 3 ? "font-semibold text-red-700" : "text-muted")}>{c.age_days} day(s)</span>
+                    {c.cas_after ? <span className="text-right text-[11px] text-muted">not in CAS yet</span>
+                      : <a href={askCasHref({ client_id: c.client_id, full_name: c.client_name, phone: c.phone })} target="_blank" rel="noreferrer" className="text-right font-medium text-brand hover:underline">Ask for CAS</a>}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {drafts.length ? <Work n={drafts.length} title="Drafts to approve" href={withAdv("/clients?plan=draft")} cta={canAdvise ? "Review" : "See"}
               sub={<>{drafts.length - draftQuestions} ready · {draftQuestions} with questions{oldestDraft >= 0 ? ` · oldest ${oldestDraft} day(s)` : ""}</>} /> : null}
-            {nextTranche.length ? <Work n={nextTranche.length} title="Next tranche to advise" href={canAdvise ? "/advice/find?list=all" : "/clients?attention=tranche"} cta={canAdvise ? "Start round" : "See clients"}
-              sub={<><Money value={nextTranche.reduce((s, c) => s + c.remaining_to_advise, 0)} /> left · {quiet.length} quiet over 14 days</>} /> : null}
-            {followUps.length ? <Work n={followUps.length} title="Follow-ups due" href="/clients?attention=follow_up" cta="Open"
-              sub={followUps.slice(0, 3).map((n) => n.client_name).join(", ")} /> : null}
+            {nextTranche.length ? <Work n={nextTranche.length} title="Next tranche to advise" href={withAdv("/clients?attention=tranche")} cta={canAdvise ? "Advise" : "See clients"}
+              sub={<><Money value={nextTranche.reduce((s, c) => s + c.remaining_to_advise, 0)} /> left · {quiet.length} with no call for 30+ days</>} /> : null}
+            {followUps.length ? <Work n={followUps.reduce((t, c) => t + c.follow_ups_due, 0)} title="Follow-ups due" href={withAdv("/clients?attention=follow_up")} cta="Open"
+              sub={followUps.slice(0, 3).map((c) => c.full_name).join(", ")} /> : null}
             <p className="px-1 text-xs text-emerald-700">
               {[!casOpen && "CAS inbox", !awaiting.length && "waiting on clients", !drafts.length && "drafts", !followUps.length && "follow-ups"].filter(Boolean).length
                 ? `All clear: ${[!casOpen && "CAS inbox", !awaiting.length && "waiting on clients", !drafts.length && "drafts", !followUps.length && "follow-ups"].filter(Boolean).join(", ")}`
                 : null}
             </p>
-            {noAgreement.length || all.some((c) => c.renewal_due) ? (
-              <Link href="/clients?agreement=missing" className="block px-1 text-xs text-muted hover:underline">
-                Admin: {noAgreement.length} without an agreement · {all.filter((c) => c.renewal_due).length} renewal(s) due →
-              </Link>
+            {noAgreement.length || premiumGap.length ? (
+              <span className="block px-1 text-xs text-muted">
+                Admin: <Link href={withAdv("/clients?agreement=missing")} className="hover:underline">{noAgreement.length} without an agreement</Link>
+                {" · "}<Link href={withAdv("/clients?premium=unpaid")} className="hover:underline">{all.filter((c) => c.premium_status === "UNPAID").length} premium not recorded</Link>
+                {" · "}<Link href={withAdv("/clients?premium=renewal_due")} className="hover:underline">{all.filter((c) => c.renewal_due).length} renewal(s) due</Link>
+                {" · "}<Link href={withAdv("/clients?premium=expired")} className="hover:underline">{all.filter((c) => c.premium_status === "EXPIRED").length} expired</Link>
+              </span>
             ) : null}
           </section>
 
           <section aria-label="Rebalancing" className="space-y-3.5 rounded-xl border border-border bg-surface p-4">
-            <div className="flex items-baseline justify-between"><h2 className="text-[15px] font-semibold">Rebalancing across all plans</h2><Link href="/advice" className="text-xs text-brand hover:underline">by client →</Link></div>
+            <div className="flex items-baseline justify-between"><h2 className="text-[15px] font-semibold">Rebalancing across all plans</h2><Link href={withAdv("/advice")} className="text-xs text-brand hover:underline">by client →</Link></div>
             <Bar label="Sell" color="text-red-700" done={sum((c) => c.executed_sell)} target={sum((c) => c.target_sell)}
               note={sellsLeft.length ? <>Most left: {sellsLeft.slice(0, 3).map((c) => <Link key={c.client_id} href={`/clients/${c.client_id}?tab=tranches`} className="hover:underline">{c.full_name} {formatINRCompact(c.yet_to_advise_sell)}</Link>).reduce<React.ReactNode[]>((acc, el, i) => (i ? [...acc, ", ", el] : [el]), [])}</> : "No sells left to advise"} />
             <Bar label="Buy" color="text-blue-700" done={sum((c) => c.executed_buy)} target={sum((c) => c.target_buy)}
@@ -242,7 +267,7 @@ export default async function Today(props: PageProps<"/">) {
 
       {watch.length ? (
         <section aria-label="Worth a look" className="mt-4 rounded-xl border border-border bg-surface p-4">
-          <div className="flex items-baseline justify-between"><h2 className="text-[15px] font-semibold">Worth a look</h2><span className="text-xs text-muted">risks in the book no plan covers yet</span></div>
+          <div className="flex items-baseline justify-between"><h2 className="text-[15px] font-semibold">Worth a look</h2><span className="text-xs text-muted">from the funds clients hold today</span></div>
           <ul className="mt-1">
             {watch.map((w) => (
               <li key={w.title} className="grid grid-cols-[6px_minmax(0,1fr)_auto] items-center gap-3 border-t border-border py-3 first:border-t-0">

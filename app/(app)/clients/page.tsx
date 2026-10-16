@@ -1,4 +1,5 @@
 import { HubTabs } from "@/components/app/hub-tabs";
+import { maskPan } from "@/lib/domain/cas-review";
 import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/form";
@@ -73,14 +74,20 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
   const draftView = f.plan === "draft";
   // The tiles count within the search, advisor, risk and month picked; only the view itself is left out.
   const base: DeskFilters = { ...f, attention: undefined, plan: undefined, premium: undefined, agreement: undefined };
-  const { clients, all, everyone, advisors, deleted, drafts, actor } = await pageData(async (tx, a) => ({
-    clients: await listDeskClients(tx, f),
-    drafts: draftView ? await listDraftPlans(tx, { advisorId: f.advisorId }) : [],
-    all: await listDeskClients(tx, base),
-    everyone: f.month ? await listDeskClients(tx, { ...base, month: null }) : null,
-    advisors: await listAdvisors(tx),
-    deleted: a.role === "ADMIN" ? await listDeletedClients(tx) : [],
-  }));
+  const { clients, all, everyone, advisors, deleted, drafts, actor } = await pageData(async (tx, a) => {
+    const canAdvise = a.role !== "OPERATIONS";
+    const clients = await listDeskClients(tx, { ...f, canAdvise });
+    // The Drafts view lists the drafts of exactly the clients its tile counts (same search and filters).
+    const ids = new Set(clients.map((c) => c.client_id));
+    return {
+      clients,
+      drafts: draftView ? (await listDraftPlans(tx, { advisorId: f.advisorId })).filter((d) => ids.has(d.client_id)) : [],
+      all: await listDeskClients(tx, { ...base, canAdvise }),
+      everyone: f.month ? await listDeskClients(tx, { ...base, month: null, canAdvise }) : null,
+      advisors: await listAdvisors(tx),
+      deleted: a.role === "ADMIN" ? await listDeletedClients(tx) : [],
+    };
+  });
   const isAdmin = actor.role === "ADMIN";
   if (isAdmin && showDeleted) return <DeletedClients rows={deleted} />;
 
@@ -173,7 +180,7 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
       {draftView ? (
         <>
           <p className="mb-2 text-xs text-muted">Each draft opens its plan: answer its questions, check the lines, approve. Nothing counts until it is approved.</p>
-          <DraftList rows={drafts.filter((d) => !f.q || `${d.client_name} ${d.client_code}`.toLowerCase().includes(f.q.toLowerCase()))} />
+          <DraftList rows={drafts} />
         </>
       ) : <ClientList
         rows={clients.map((c) => toRow(c, actor.role !== "OPERATIONS"))}
@@ -219,7 +226,7 @@ function toRow(c: Row, canAdvise: boolean): ListRow {
     premiumNote: c.paid_until ? `${c.premium_status === "EXPIRED" ? "Expired" : "Paid till"} ${formatDate(c.paid_until)}` : c.premium_status === "UNPAID" ? "Not recorded" : "No period",
     premiumTone: c.premium_status === "ACTIVE" ? (c.renewal_due ? "amber" : "green") : "red",
     agreementGap: c.agreement_status !== "VALID" ? `no agreement${c.agreement_status === "EXPIRED" ? " (expired)" : ""}` : null,
-    latestCas: c.latest_cas_date, since: c.onboarding_date,
+    latestCas: c.real_cas_date, since: c.onboarding_date,
   };
 }
 
@@ -244,7 +251,7 @@ function DeletedClients({ rows }: { rows: Awaited<ReturnType<typeof listDeletedC
                   <tr key={r.id}>
                     <td className="py-2 pl-3"><input type="checkbox" name="ids" value={r.id} aria-label={`Select ${r.full_name}`} /></td>
                     <td className="px-3 py-2 font-medium">{r.full_name}<div className="font-mono text-[11px] text-muted">{r.client_code}</div></td>
-                    <td className="px-2 py-2 font-mono text-xs">{r.pan ?? "—"}</td>
+                    <td className="px-2 py-2 font-mono text-xs">{r.pan ? maskPan(r.pan) : "—"}</td>
                     <td className="whitespace-nowrap px-2 py-2 text-xs">{formatDate(r.deleted_at)}</td>
                     <td className="px-2 py-2 text-xs">{r.deleted_by_name ?? "—"}</td>
                     <td className="px-2 py-2 text-xs">{r.deleted_reason ?? "—"}</td>

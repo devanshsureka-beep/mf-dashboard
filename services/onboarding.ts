@@ -396,7 +396,7 @@ export async function createNewInvestor(
   const existing = pan ? await findClientByPan(tx, pan)
     : (await tx<{ id: string; client_code: string; full_name: string }[]>`
         select id, client_code, full_name from public.clients
-        where deleted_at is null and pan is null and right(regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g'), 10) = ${phone}
+        where deleted_at is null and right(regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g'), 10) = ${phone}
         order by created_at`).find((c) => sameInvestor(c.full_name, name)) ?? null;
   if (existing) {
     // An earlier attempt that stopped after creating the client (no plan, no CAS yet): carry on with it.

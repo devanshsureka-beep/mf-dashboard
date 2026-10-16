@@ -15,7 +15,8 @@ export function AllocationDonut({ slices, total }: { slices: Slice[]; total: num
       <svg role="img" aria-label={`Allocation: ${slices.map((s) => `${s.label} ${Math.round(s.share * 100)}%`).join(", ")}`} viewBox="0 0 180 180" className="mx-auto h-44 w-44">
         <g transform="rotate(-90 90 90)">
           {slices.map((s, i) => {
-            const len = Math.max(0, s.share * c - (slices.length > 1 ? 2 : 0));
+            // A 2px gap between slices, but every slice stays visible (at least 2px).
+            const len = Math.max(2, s.share * c - (slices.length > 1 && s.share * c > 6 ? 2 : 0));
             return (
               <circle key={s.label} cx={90} cy={90} r={r} fill="none" stroke={color(s, i)} strokeWidth={w}
                 strokeDasharray={`${len} ${c - len}`} strokeDashoffset={-starts[i]}>

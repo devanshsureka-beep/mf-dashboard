@@ -21,25 +21,68 @@ export interface BookHolding {
 export type AssetClass = "Equity" | "Debt" | "Hybrid" | "Gold & silver" | "International" | "Other";
 export const ASSET_CLASSES: AssetClass[] = ["Equity", "Debt", "Hybrid", "Gold & silver", "International", "Other"];
 
-/** The asset class of a fund, from its AMFI category (and its name when the category says little). */
-export function assetClass(category: string | null, schemeName: string): AssetClass {
-  const c = (category ?? "").toLowerCase();
-  const n = schemeName.toLowerCase();
-  if (/\b(gold|silver|precious)\b/.test(n) || /\bgold\b/.test(c)) return "Gold & silver";
-  if (/overseas|international/.test(c) || /\b(international|global|overseas|world|nasdaq|us equity|s&p 500|greater china|japan|emerging market)/.test(n)) return "International";
-  if (/hybrid|balanced|arbitrage|multi asset|asset allocation|equity savings/.test(c) || /\b(balanced advantage|arbitrage|multi asset|equity savings|hybrid)\b/.test(n)) return "Hybrid";
-  if (/debt|gilt|income|liquid|money market|overnight|bond|duration|credit|banking and psu|floater|fmp|fixed maturity/.test(c)) return "Debt";
-  if (/equity|elss|index|etf|large|mid|small|flexi|focused|value|contra|sector|thematic|dividend yield|children|retirement|solution|life cycle|growth/.test(c)) return "Equity";
-  if (/\b(liquid|overnight|gilt|bond|debt|money market|duration|corporate)\b/.test(n)) return "Debt";
-  if (/\b(cap|equity|elss|tax saver|index|nifty|sensex|flexi|focused|value|contra)\b/.test(n)) return "Equity";
+const GOLD = /\b(gold|silver|precious metals?)\b/i;
+const INTL = /\b(international|overseas|nasdaq|s&p 500|us (technology|equity|bluechip|specific)|greater china|japan|taiwan|hang seng|emerging markets?|world|global (innovation|technology|equity|advantage|emerging))\b/i;
+const DEBT = /\b(liquid|overnight|gilt|g-?sec|sdl|bonds?|debt|money market|duration|corporate|credit risk|banking (and|&) psu|bharat bond|crisil|ibx|target maturity|floater|fixed maturity|fmp|income)\b/i;
+const HYBRID = /\b(balanced advantage|arbitrage|multi[- ]asset|equity savings|hybrid|asset allocation|balanced)\b/i;
+const EQUITY = /(cap|equity|elss|tax ?saver|index|nifty|sensex|flexi|focused|value|contra|infrastructure|digital|technology|banking|financial|pharma|health|consumption|momentum|dividend|tiger|manufacturing|psu|sector|thematic|opportunit|bluechip|growth|innovation|esg|quant|business cycle)/i;
+
+/** A fund's class from its name alone (when its category says nothing about it). */
+function classFromName(n: string): AssetClass {
+  if (GOLD.test(n)) return "Gold & silver";
+  if (INTL.test(n)) return "International";
+  if (DEBT.test(n)) return "Debt";
+  if (HYBRID.test(n)) return "Hybrid";
+  if (EQUITY.test(n)) return "Equity";
   return "Other";
 }
 
-/** "Equity Scheme - Small Cap Fund" → "Small Cap". */
-export function shortCategory(category: string | null, schemeName: string): string {
-  if (!category) return assetClass(null, schemeName);
-  const tail = category.includes(" - ") ? category.split(" - ").slice(1).join(" - ") : category;
-  return tail.replace(/\s*\bfunds?\b\s*/gi, " ").replace(/\s+/g, " ").trim() || category;
+/**
+ * The asset class of a fund: from the AMFI scheme type first ("Debt Scheme - …", "Index Funds -
+ * Debt Funds", "Exchange Traded Funds (ETFs) - Gold ETF"); its name decides only for the types
+ * that say nothing (ETFs, index funds, fund of funds, "Other Scheme"), or when there is no category.
+ */
+export function assetClass(category: string | null, schemeName: string): AssetClass {
+  const c = (category ?? "").trim();
+  if (!c) return classFromName(schemeName);
+  const [type, tail = ""] = c.split(/\s+-\s+/, 2);
+  const t = type.toLowerCase(), k = tail.toLowerCase();
+  if (/gold|silver/.test(k)) return "Gold & silver";
+  if (/overseas/.test(c.toLowerCase())) return "International";
+  if (/^equity schemes?$|^elss$|^growth$/.test(t)) return "Equity";
+  if (/^debt schemes?$|^income|^gilt$/.test(t)) return "Debt";
+  if (/^hybrid schemes?$/.test(t)) return "Hybrid";
+  if (/^solution oriented|^children|^life cycle/.test(t)) return "Hybrid";
+  // Types that do not say what they hold: the tail, else the name.
+  if (/\bdebt\b/.test(k)) return "Debt";
+  if (/\bhybrid\b/.test(k)) return "Hybrid";
+  if (/\bequity\b/.test(k)) return "Equity";
+  return classFromName(schemeName);
+}
+
+/** "Equity Scheme - Small Cap Fund" → "Small Cap"; no category → "Uncategorised". */
+export function shortCategory(category: string | null, _schemeName?: string): string {
+  if (!category?.trim()) return "Uncategorised";
+  const tail = category.includes(" - ") ? category.split(/\s+-\s+/).slice(1).join(" - ") : category;
+  if (/elss|tax saver/i.test(tail)) return "ELSS";
+  return tail.replace(/\s*\/\s*/g, " / ").replace(/\s*\bfunds?\b\s*/gi, " ").replace(/\s+/g, " ").trim() || category.trim();
+}
+
+const AMC_ALIAS: Record<string, string> = {
+  "aditya birla sl": "Aditya Birla Sun Life", "aditya birla sun life": "Aditya Birla Sun Life",
+  "parag parikh": "PPFAS", ppfas: "PPFAS", "icici prudential": "ICICI Prudential", "icici": "ICICI Prudential",
+  "nippon india": "Nippon India", nippon: "Nippon India", "mirae asset": "Mirae Asset", mirae: "Mirae Asset",
+  "motilal oswal": "Motilal Oswal", "franklin templeton": "Franklin Templeton", "canara robeco": "Canara Robeco",
+};
+
+/** One name per AMC: "HDFC Mutual Fund", "HDFC" and "HDFC MF" are all "HDFC". */
+export function amcName(amc: string | null): string {
+  const raw = (amc ?? "").replace(/\b(mutual fund|asset management( company)?|amc|mf|ltd|limited|fund house)\b\.?/gi, " ").replace(/\s+/g, " ").trim();
+  if (!raw) return "Unknown AMC";
+  const key = raw.toLowerCase();
+  if (AMC_ALIAS[key]) return AMC_ALIAS[key];
+  // ALL CAPS words of more than 4 letters read better title-cased ("MOTILAL OSWAL" → "Motilal Oswal").
+  return raw.split(" ").map((w) => (w.length > 4 && w === w.toUpperCase() ? w[0] + w.slice(1).toLowerCase() : w)).join(" ");
 }
 
 export const isRegular = (h: Pick<BookHolding, "plan_type" | "scheme_name">) =>
@@ -74,7 +117,8 @@ export interface Insight {
 }
 
 /** Risks in the book worth a look. Only what the rows show; nothing is said when it is not true. */
-export function insights(rows: readonly BookHolding[], opts: { inBank: number; inBankClients: number }): Insight[] {
+export function insights(rows: readonly BookHolding[], opts: { inBank: number; inBankClients: number; canAdvise?: boolean; advisorId?: string | null }): Insight[] {
+  const adv = opts.advisorId ? `&advisor=${opts.advisorId}` : "";
   const out: Insight[] = [];
   const total = rows.reduce((t, h) => t + h.value, 0);
   if (total <= 0) return out;
@@ -115,7 +159,7 @@ export function insights(rows: readonly BookHolding[], opts: { inBank: number; i
       title: `Top 3 funds are ${Math.round(topShare * 100)}% of the whole book`,
       detail: top.map((f) => `${f.name.replace(/\s*-\s*(direct|regular).*$/i, "")} ${Math.round((f.value / total) * 100)}%`).join(" · "),
       clients: [],
-      href: top[0].security_id ? `/advice/find?fund=${top[0].security_id}` : undefined,
+      href: opts.canAdvise !== false && top[0].security_id ? `/advice/find?fund=${top[0].security_id}` : undefined,
     });
   }
 
@@ -125,7 +169,7 @@ export function insights(rows: readonly BookHolding[], opts: { inBank: number; i
       title: `₹${Math.round(opts.inBank).toLocaleString("en-IN")} sold and sitting in bank`,
       detail: `${opts.inBankClients} client${opts.inBankClients === 1 ? "" : "s"} sold and have not bought back yet`,
       clients: [],
-      href: "/advice/find?list=cash",
+      href: opts.canAdvise !== false ? `/advice/find?list=cash&waiting=show${adv}` : undefined,
     });
   }
 
@@ -155,11 +199,12 @@ export interface GroupNode { key: string; label: string; value: number; share: n
 const fundLabel = (h: BookHolding) => h.scheme_name;
 
 /** The holdings as a tree (two or three levels), largest first at each level. */
-export function groupBook(rows: readonly BookHolding[], by: GroupBy): GroupNode[] {
+export function groupBook(rows: readonly BookHolding[], by: GroupBy, opts: { fundLinks?: boolean } = {}): GroupNode[] {
+  const fundLevel = (h: BookHolding) => ({ ...fundLevelOf(h), href: opts.fundLinks === false ? undefined : fundLevelOf(h).href });
   const total = rows.reduce((t, h) => t + h.value, 0) || 1;
   const levels: ((h: BookHolding) => { key: string; label: string; href?: string })[] =
     by === "category" ? [(h) => ({ key: shortCategory(h.category, h.scheme_name), label: shortCategory(h.category, h.scheme_name) }), fundLevel, clientLevel]
-    : by === "amc" ? [(h) => ({ key: h.amc ?? "Unknown AMC", label: h.amc ?? "Unknown AMC" }), fundLevel, clientLevel]
+    : by === "amc" ? [(h) => ({ key: amcName(h.amc), label: amcName(h.amc) }), fundLevel, clientLevel]
     : by === "advisor" ? [(h) => ({ key: h.advisor_name ?? "No advisor", label: h.advisor_name ?? "No advisor" }), clientLevel, fundLevel]
     : [clientLevel, fundLevel];
   const build = (list: readonly BookHolding[], depth: number): GroupNode[] => {
@@ -179,7 +224,7 @@ export function groupBook(rows: readonly BookHolding[], by: GroupBy): GroupNode[
   return build(rows, 0);
 }
 
-function fundLevel(h: BookHolding) {
+function fundLevelOf(h: BookHolding) {
   return { key: h.security_id ?? h.scheme_name.toLowerCase(), label: fundLabel(h), href: h.security_id ? `/advice/find?fund=${h.security_id}` : undefined };
 }
 function clientLevel(h: BookHolding) {

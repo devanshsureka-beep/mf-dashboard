@@ -105,6 +105,8 @@ export interface DeskFilters {
   maxValue?: number | null;
   /** Report (onboarding) month: the client's first advisory report, "2026-10". */
   month?: string | null;
+  /** Operations: drafts and next tranches are not their work, so they do not count as an action. */
+  canAdvise?: boolean;
   sort?: "name" | "value" | "pending" | "onboarded" | "renewal" | "code" | "action" | "left";
 }
 
@@ -131,6 +133,8 @@ export type DeskClient = ClientSummary & {
   last_call_days: number | null;
   /** Date of the newest CAS still waiting to be checked. */
   pending_cas_date: string | null;
+  /** Date of the latest confirmed CAS (a new investor's empty start is not one). */
+  real_cas_date: string | null;
   /** The date of the client's first advisory report (their first plan), else the onboarding date. */
   report_date: string;
   /** Confirmed CAS from onboarding on: CAS n closes tranche n, so the open tranche is max(1, cas_count). */
@@ -160,6 +164,7 @@ export async function listDeskClients(tx: Tx, f: DeskFilters = {}): Promise<Desk
            (select app.today_ist() - min((d.created_at at time zone 'Asia/Kolkata')::date) from public.advisory_plans d where d.client_id = s.client_id and d.status = 'DRAFT') as draft_days,
            (select app.today_ist() - max((ab.communicated_at at time zone 'Asia/Kolkata')::date) from public.advice_batches ab where ab.client_id = s.client_id) as last_call_days,
            (select max(ps3.snapshot_date)::text from public.portfolio_snapshots ps3 where ps3.client_id = s.client_id and ps3.review_status = 'PENDING_REVIEW') as pending_cas_date,
+           (select max(ps4.snapshot_date)::text from public.portfolio_snapshots ps4 where ps4.client_id = s.client_id and ps4.review_status = 'CONFIRMED' and not (ps4.source = 'MANUAL' and ps4.holdings_count = 0)) as real_cas_date,
            coalesce((select min(rp.plan_date) from public.advisory_plans rp where rp.client_id = s.client_id and rp.status <> 'CANCELLED'), s.onboarding_date)::text as report_date,
            (select count(*)::int from public.portfolio_snapshots ps2 where ps2.client_id = s.client_id and ps2.review_status = 'CONFIRMED'
               and ps2.snapshot_date >= coalesce((select b.snapshot_date from public.portfolio_snapshots b where b.client_id = s.client_id and b.is_baseline limit 1), '-infinity'::date)) as cas_count
@@ -198,7 +203,7 @@ export async function listDeskClients(tx: Tx, f: DeskFilters = {}): Promise<Desk
       remaining_to_advise: remaining,
     };
     const nextTranche = Boolean(c.active_plan_id) && c.pending_total < 0.5 && remaining >= 0.5;
-    return { ...c, action_count: (c.pending_total >= 0.5 ? 1 : 0) + (c.cas_to_review ? 1 : 0) + (c.unadvised_to_review ? 1 : 0) + (c.has_draft_plan ? 1 : 0) + (c.follow_ups_due ? 1 : 0) + (nextTranche ? 1 : 0) };
+    return { ...c, action_count: (c.pending_total >= 0.5 ? 1 : 0) + (c.cas_to_review ? 1 : 0) + (c.unadvised_to_review ? 1 : 0) + (f.canAdvise !== false && c.has_draft_plan ? 1 : 0) + (c.follow_ups_due ? 1 : 0) + (f.canAdvise !== false && nextTranche ? 1 : 0) };
   });
   if (f.plan) out = out.filter((c) => (f.plan === "active" ? Boolean(c.active_plan_id) : f.plan === "draft" ? c.has_draft_plan : !c.active_plan_id));
   if (f.premium) {
