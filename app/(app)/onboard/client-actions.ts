@@ -12,7 +12,7 @@ import { ALL_ROLES } from "@/lib/server";
 import { maskPan } from "@/lib/format";
 import { type PreparedFile, fileFromForm, formFileName } from "@/lib/storage";
 import type { AdvisoryReportParse } from "@/lib/parsers/advisory-report";
-import { findClientByPan, knownClientPhones } from "@/services/cas-intake";
+import { findClientByPan, findClientForCas, knownClientPhones } from "@/services/cas-intake";
 import { findDuplicateDocument } from "@/services/portfolio";
 import { checkDocumentsBelongTogether, decideReportKind, type ReportKindChoice } from "@/services/onboarding";
 import type { PlanKind } from "@/types/domain";
@@ -63,7 +63,7 @@ export async function identifyBulkFileAction(fd: FormData): Promise<BulkFileInfo
     const id = await identifyPdf(file.bytes, await candidatesFor(run, file.fileName, str(fd, "password") || null));
     switch (id.kind) {
       case "CAS": {
-        const existing = await run((tx) => findClientByPan(tx, id.cas.investor.pan));
+        const existing = await run((tx) => findClientForCas(tx, id.cas.investor));
         return {
           ...base, kind: "CAS", name: id.cas.investor.name, panMasked: maskPan(id.cas.investor.pan), casDate: id.cas.valuationDate,
           existingClient: existing ? `${existing.full_name} (${existing.client_code})` : null,
@@ -153,7 +153,7 @@ export async function onboardBulkPairAction(fd: FormData): Promise<BulkOnboardRo
     if (!cas.investor.pan) return fail("FAILED", "The CAS shows no PAN, so the client cannot be identified.");
 
     // Same report already onboarded for this client: nothing to do.
-    const existing = await run((tx) => findClientByPan(tx, cas.investor.pan));
+    const existing = await run((tx) => findClientForCas(tx, cas.investor));
     if (existing) {
       const dup = await run((tx) => findDuplicateDocument(tx, existing.id, "ADVISORY_REPORT", reportUpload.sha256));
       if (dup) {

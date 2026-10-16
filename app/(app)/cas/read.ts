@@ -11,7 +11,7 @@ import { AppError } from "@/lib/errors";
 import { maskPan } from "@/lib/format";
 import { actionTx } from "@/lib/server";
 import type { StoredFile } from "@/services/cas-intake";
-import { ingestParsedCas, knownClientPhones, type CasIntakeOutcome } from "@/services/cas-intake";
+import { claimPan, findClientByPan, ingestParsedCas, knownClientPhones, type CasIntakeOutcome } from "@/services/cas-intake";
 
 export async function readClientCas(args: {
   clientId: string;
@@ -34,11 +34,19 @@ export async function readClientCas(args: {
   if (args.clientPan && pan && pan !== args.clientPan.toUpperCase()) {
     throw new AppError(`This CAS is for PAN ${maskPan(pan)} (${parsed.investor.name ?? "another investor"}), not this client.`);
   }
-  return actionTx((tx, actor) => ingestParsedCas(tx, actor, {
+  return actionTx(async (tx, actor) => {
+    // Onboarded without a PAN (from the report alone): the first CAS gives it, unless another client has it.
+    if (!args.clientPan && pan) {
+      const other = await findClientByPan(tx, pan);
+      if (other && other.id !== args.clientId) throw new AppError(`This CAS is for PAN ${maskPan(pan)}, which is ${other.full_name} (${other.client_code}).`);
+      if (!other) await claimPan(tx, args.clientId, pan);
+    }
+    return ingestParsedCas(tx, actor, {
     clientId: args.clientId,
     file: args.file,
     parsed,
     passwordProtected,
     existingCasDocumentId: args.existingCasDocumentId,
-  }));
+    });
+  });
 }

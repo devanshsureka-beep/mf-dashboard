@@ -41,7 +41,7 @@ const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct
 /** The months clients were onboarded in, newest first, with how many. */
 function months(rows: Desk[]): { key: string; label: string; n: number }[] {
   const by = new Map<string, number>();
-  for (const c of rows) { const k = String(c.onboarding_date).slice(0, 7); by.set(k, (by.get(k) ?? 0) + 1); }
+  for (const c of rows) { const k = String(c.report_date).slice(0, 7); by.set(k, (by.get(k) ?? 0) + 1); }
   return [...by.entries()].sort((a, b) => b[0].localeCompare(a[0])).map(([k, n]) => ({ key: k, label: `${MON[Number(k.slice(5, 7)) - 1]} ${k.slice(0, 4)}`, n }));
 }
 
@@ -156,8 +156,8 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
           <option value="">Any risk</option>
           {RISK_PROFILES.map((r) => <option key={r} value={r}>{humanize(r)}</option>)}
         </AutoSelect>
-        <AutoSelect name="month" defaultValue={f.month ?? ""} className="h-9 w-44" aria-label="Onboarded in">
-          <option value="">Onboarded: any month</option>
+        <AutoSelect name="month" defaultValue={f.month ?? ""} className="h-9 w-44" aria-label="Report month">
+          <option value="">Report month: any</option>
           {months(everyone ?? all).map((m) => <option key={m.key} value={m.key}>{m.label} · {m.n}</option>)}
         </AutoSelect>
         <AutoSelect name="sort" defaultValue={f.sort} className="h-9 w-48" aria-label="Sort">
@@ -207,7 +207,7 @@ function toRow(c: Row, canAdvise: boolean): ListRow {
   if (c.agreement_status !== "VALID") todos.push({ text: c.agreement_status === "EXPIRED" ? "Renew agreement" : "Upload agreement", tone: "grey", href: `/clients/${c.client_id}?tab=file` });
   return {
     id: c.client_id, name: c.full_name, code: c.client_code, tag, todos, casToCheck: c.cas_to_review > 0, openCalls: c.open_calls,
-    month: MON[Number(c.onboarding_date.slice(5, 7)) - 1] ?? "", pendingCas: c.pending_cas_date,
+    month: MON[Number(c.report_date.slice(5, 7)) - 1] ?? "", reportDate: c.report_date, pendingCas: c.pending_cas_date,
     advisor: c.advisor_name ?? "—", risk: c.risk_profile ? humanize(c.risk_profile) : "—",
     valueToday: c.live_portfolio_value == null && inBank < 0.5 ? null : (c.live_portfolio_value ?? 0) + inBank,
     inFunds: c.live_portfolio_value, inBank,

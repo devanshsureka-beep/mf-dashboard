@@ -21,8 +21,9 @@ export interface ListRow {
   /** A CAS is waiting to be checked: the money columns show once it is. */
   casToCheck: boolean;
   openCalls: number;
-  /** Onboarding month, three letters ("Oct"). */
+  /** Report (onboarding) month, three letters ("Oct"), and the report date. */
   month: string;
+  reportDate: string;
   /** Date of a CAS still waiting to be checked. */
   pendingCas: string | null;
   advisor: string;
@@ -225,7 +226,7 @@ export function ClientList({ rows, isAdmin, canAdvise, advisors, deleteAction, r
                       <td className="py-2 pl-3 align-top"><input type="checkbox" checked={on} onChange={() => toggle(r.id)} aria-label={`Select ${r.name}`} /></td>
                       <td className="min-w-[230px] px-2 py-2">
                         <Link href={`/clients/${r.id}`} className="font-semibold text-ink hover:underline">{r.name}</Link>
-                        {r.month ? <span title={`Onboarded ${short(r.since)}`} className="ml-1.5 rounded bg-slate-100 px-1 py-px align-[1px] text-[10px] font-semibold uppercase tracking-wide text-slate-600">{r.month}</span> : null}
+                        {r.month ? <span title={`Report of ${short(r.reportDate)}`} className="ml-1.5 rounded bg-slate-100 px-1 py-px align-[1px] text-[10px] font-semibold uppercase tracking-wide text-slate-600">{r.month}</span> : null}
                         <div className="mt-0.5 flex flex-wrap items-center gap-1.5"><span className="font-mono text-[11px] text-muted">{r.code}</span>{r.tag ? <Tag t={r.tag} /> : null}</div>
                         <Todos todos={r.todos} />
                       </td>

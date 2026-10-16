@@ -28,12 +28,14 @@ export async function onboardNewInvestorAction(_p: ActionResult | null, fd: Form
     await checkAdvisor(actor, advisorId);
     const reportFile = await fileFromForm(fd, "report");
     if (reportFile.mimeType !== "application/pdf") throw new AppError("The report must be a PDF.");
+    // Only the report and the mobile number: the name comes from the report, the PAN from the first CAS.
     const who = {
-      fullName: str(fd, "full_name"),
-      pan: str(fd, "pan").toUpperCase(),
+      fullName: null,
+      pan: null,
       phone: str(fd, "mobile").replace(/\D/g, "").slice(-10) || null,
-      email: str(fd, "email") || null,
+      email: null,
     };
+    if (!/^[6-9][0-9]{9}$/.test(who.phone ?? "")) throw new AppError("Enter the client's 10-digit mobile number.");
     const candidates = [str(fd, "password"), ...fileNamePasswords(reportFile.fileName)].filter(Boolean);
     const read = await readReportDetailed(reportFile.bytes, candidates);
     let report: AdvisoryReportParse | null = read.report;
@@ -42,7 +44,7 @@ export async function onboardNewInvestorAction(_p: ActionResult | null, fd: Form
     const readingProblem = !report || problems.some((p) => !/^Enter |is for "|already holds mutual funds|does not have: onboard/.test(p));
     if (problems.length && readingProblem && reportAiConfigured()) {
       const r = await resolveWithClaude({
-        cas: null, expectedName: who.fullName, reportPdf: reportFile.bytes, draft: report, readerError: read.error, problems,
+        cas: null, expectedName: report?.clientName ?? null, reportPdf: reportFile.bytes, draft: report, readerError: read.error, problems,
         deadline: Date.now() + 240_000, reportFileName: reportFile.fileName,
         check: (x) => ({ kind: "FULL", problems: previewNewInvestor(x, who).problems }),
       });

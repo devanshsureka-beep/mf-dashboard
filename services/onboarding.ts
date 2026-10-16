@@ -5,7 +5,7 @@ import { buildPlanFromReport, type PlanHolding, type ReportPlanDraft, type Since
 import { toCasParseResult, type CasParseOutput } from "@/lib/parsers/cas";
 import { sameInvestor, type AdvisoryReportParse } from "@/lib/parsers/advisory-report";
 import { createClient } from "@/services/clients";
-import { findClientByPan, ingestParsedCas, isDuplicateCas, type StoredFile } from "@/services/cas-intake";
+import { findClientByPan, findClientForCas, ingestParsedCas, isDuplicateCas, type StoredFile } from "@/services/cas-intake";
 import { registerDocument } from "@/services/documents";
 import { ingestAdvisoryReport } from "@/services/plans";
 import { resolveOrCreateSecurity, suggestSecurity } from "@/services/securities";
@@ -153,7 +153,7 @@ export async function ensureClientFromDocuments(
     const problems = previewOnboarding(args.cas, args.report, args.kind ?? "FULL", { newerCas: args.newerCas }).problems;
     if (problems.length) throw new AppError(problemsMessage(problems));
   }
-  const existing = await findClientByPan(tx, args.cas.investor.pan);
+  const existing = await findClientForCas(tx, args.cas.investor, { claim: true });
   if (existing) return { id: existing.id, client_code: existing.client_code, full_name: existing.full_name, created: false };
   const name = args.cas.investor.name ?? args.report.clientName ?? "Unknown";
   const c = await createClient(tx, actor, {
@@ -186,7 +186,7 @@ export async function onboardFromDocuments(
   },
 ): Promise<Omit<OnboardResult, "created">> {
   const kind = args.kind ?? "FULL";
-  const client = await findClientByPan(tx, args.cas.investor.pan);
+  const client = await findClientForCas(tx, args.cas.investor, { claim: true });
   if (!client || client.id !== args.clientId) throw new AppError("The CAS belongs to a different client.");
 
   // 2) CAS -> snapshot (skipped when this exact file is already stored).
@@ -338,20 +338,28 @@ async function planFromDraft(
 // plan (buys and SIPs, all with fresh money); the first CAS later shows the buys.
 // -----------------------------------------------------------------------------
 export interface NewInvestorDetails {
-  fullName: string;
-  pan: string;
+  /** Empty: the name printed in the report. */
+  fullName?: string | null;
+  /** Optional: the client's first CAS gives it (see findClientForCas). */
+  pan?: string | null;
+  /** Required: the CAS password and the way the first CAS finds the client. */
   phone?: string | null;
   email?: string | null;
 }
+
+/** The client's name: as typed, else as the report prints it. */
+export const newInvestorName = (who: NewInvestorDetails, report: AdvisoryReportParse) => (who.fullName?.trim() || report.clientName?.trim() || "");
 
 const PAN_RE = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
 
 /** Everything that must hold before a new investor is saved. Pure. */
 export function previewNewInvestor(report: AdvisoryReportParse, who: NewInvestorDetails): { problems: string[]; draft: ReportPlanDraft | null } {
   const problems: string[] = [];
-  if (!who.fullName.trim()) problems.push("Enter the client's name.");
-  if (!PAN_RE.test(who.pan.trim().toUpperCase())) problems.push("Enter a valid PAN (e.g. ABCDE1234F): the client's first CAS is matched to them by PAN.");
-  if (report.clientName && who.fullName.trim() && !sameInvestor(who.fullName, report.clientName)) {
+  if (!newInvestorName(who, report)) problems.push("The report shows no client name: read it again, or check it is a Univest advisory report.");
+  if (!/^[6-9][0-9]{9}$/.test((who.phone ?? "").replace(/\D/g, "").slice(-10))) problems.push("Enter the client's 10-digit mobile number: their first CAS opens and is matched with it.");
+  const pan = who.pan?.trim().toUpperCase() ?? "";
+  if (pan && !PAN_RE.test(pan)) problems.push("Enter a valid PAN (e.g. ABCDE1234F), or leave it empty: the first CAS gives it.");
+  if (report.clientName && who.fullName?.trim() && !sameInvestor(who.fullName, report.clientName)) {
     problems.push(`The report is for "${report.clientName}", not "${who.fullName.trim()}".`);
   }
   if (report.sells.length) {
@@ -370,7 +378,7 @@ export function previewNewInvestor(report: AdvisoryReportParse, who: NewInvestor
 }
 
 /** New-investor problems no "as it is" can accept: the name / PAN, or a report for someone who already holds funds. */
-export const isBlockingNewInvestorProblem = (p: string) => /^Enter |is for "|already holds mutual funds|does not have: onboard/.test(p);
+export const isBlockingNewInvestorProblem = (p: string) => /^Enter |is for "|already holds mutual funds|does not have: onboard|shows no client name/.test(p);
 
 /** Step 1: create the client (refused when the PAN is already a client or the report does not hold up). */
 export async function createNewInvestor(
@@ -381,8 +389,14 @@ export async function createNewInvestor(
   const { problems } = previewNewInvestor(args.report, args.who);
   const blocking = args.asReported ? problems.filter(isBlockingNewInvestorProblem) : problems;
   if (blocking.length) throw new AppError(newInvestorMessage(blocking));
-  const pan = args.who.pan.trim().toUpperCase();
-  const existing = await findClientByPan(tx, pan);
+  const pan = args.who.pan?.trim().toUpperCase() || null;
+  const phone = (args.who.phone ?? "").replace(/\D/g, "").slice(-10);
+  // Without a PAN the mobile number tells clients apart.
+  const existing = pan ? await findClientByPan(tx, pan)
+    : (await tx<{ id: string; client_code: string; full_name: string }[]>`
+        select id, client_code, full_name from public.clients
+        where deleted_at is null and right(regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g'), 10) = ${phone}
+        order by created_at limit 1`)[0] ?? null;
   if (existing) {
     // An earlier attempt that stopped after creating the client (no plan, no CAS yet): carry on with it.
     const unfinished = (await tx<{ ok: boolean }[]>`
@@ -390,12 +404,12 @@ export async function createNewInvestor(
          and not exists (select 1 from public.cas_documents where client_id = ${existing.id})
          and exists (select 1 from public.portfolio_snapshots where client_id = ${existing.id} and is_baseline and source = 'MANUAL' and holdings_count = 0) as ok`)[0]?.ok;
     if (unfinished) return { id: existing.id, client_code: existing.client_code };
-    throw new AppError(`${existing.full_name} (${existing.client_code}) already has this PAN: upload the report on their page instead.`);
+    throw new AppError(`${existing.full_name} (${existing.client_code}) already has this ${pan ? "PAN" : "mobile number"}: upload the report on their page instead.`);
   }
   const c = await createClient(tx, actor, {
-    full_name: args.who.fullName.trim(),
+    full_name: newInvestorName(args.who, args.report),
     email: args.who.email?.trim().toLowerCase() || null,
-    phone: args.who.phone || null,
+    phone: phone || null,
     pan,
     risk_profile: (RISK_PROFILES as string[]).includes(args.report.riskProfile ?? "") ? args.report.riskProfile : null,
     goal: args.report.goal,

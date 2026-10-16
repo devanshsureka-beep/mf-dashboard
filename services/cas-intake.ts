@@ -1,4 +1,5 @@
-import type { Actor, Tx } from "@/lib/db/tx";
+import { setAuditReason, type Actor, type Tx } from "@/lib/db/tx";
+import { sameInvestor } from "@/lib/parsers/advisory-report";
 import { AppError } from "@/lib/errors";
 import { casParseResultSchema } from "@/lib/integrations/contracts";
 import { toCasParseResult, type CasParseOutput } from "@/lib/parsers/cas";
@@ -28,6 +29,34 @@ export async function findClientByPan(tx: Tx, pan: string | null): Promise<Intak
     where pan = ${pan.toUpperCase()} and deleted_at is null
     order by created_at limit 1`;
   return rows[0] ?? null;
+}
+
+/**
+ * The client a CAS belongs to: by PAN; else a client onboarded without a PAN (a new investor
+ * onboarded from the report alone) whose mobile number, or else whose name, matches the CAS,
+ * when exactly one does. With `claim`, that client takes the CAS's PAN from now on.
+ */
+export async function findClientForCas(
+  tx: Tx,
+  investor: { pan: string | null; mobile?: string | null; name?: string | null },
+  opts: { claim?: boolean } = {},
+): Promise<IntakeClient | null> {
+  const byPan = await findClientByPan(tx, investor.pan);
+  if (byPan || !investor.pan) return byPan;
+  const open = await tx<IntakeClient[]>`
+    select id, client_code, full_name, phone, email, pan from public.clients where pan is null and deleted_at is null`;
+  const mobile = (investor.mobile ?? "").replace(/\D/g, "").slice(-10);
+  const byPhone = mobile.length === 10 ? open.filter((c) => (c.phone ?? "").replace(/\D/g, "").slice(-10) === mobile) : [];
+  const byName = investor.name ? open.filter((c) => sameInvestor(c.full_name, investor.name ?? null)) : [];
+  const hit = byPhone.length === 1 ? byPhone[0] : byPhone.length === 0 && byName.length === 1 ? byName[0] : null;
+  if (hit && opts.claim) await claimPan(tx, hit.id, investor.pan);
+  return hit && opts.claim ? { ...hit, pan: investor.pan.toUpperCase() } : hit;
+}
+
+/** Record a PAN read from the client's CAS on a client onboarded without one. */
+export async function claimPan(tx: Tx, clientId: string, pan: string): Promise<void> {
+  await setAuditReason(tx, "PAN read from the client's CAS (onboarded without a PAN)");
+  await tx`select public.claim_client_pan(${clientId}, ${pan})`;
 }
 
 /** Mobile numbers of the clients this user can see (to build CAS password candidates). */

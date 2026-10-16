@@ -38,16 +38,9 @@ export default async function NewInvestorPage() {
             <Input type="file" name="report" accept="application/pdf" required aria-label="Advisory report (PDF)" className="mx-auto mt-4 max-w-xs" />
           </div>
           <div className="space-y-3 rounded-xl border border-border bg-white p-4">
-            <Field label="Client name *" hint="As on the PAN; must match the name in the report.">
-              <Input name="full_name" required autoComplete="off" />
+            <Field label="Mobile number *" hint="The client's name is read from the report, and their PAN from their first CAS (matched by this number). Nothing else to type.">
+              <Input name="mobile" required inputMode="tel" autoComplete="off" placeholder="98xxxxxxxx" pattern="[0-9 +-]{10,15}" />
             </Field>
-            <Field label="PAN *" hint="The report never has it; their first CAS is matched to them by PAN.">
-              <Input name="pan" required autoComplete="off" maxLength={10} placeholder="ABCDE1234F" className="uppercase" />
-            </Field>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Mobile"><Input name="mobile" inputMode="tel" autoComplete="off" placeholder="98xxxxxxxx" /></Field>
-              <Field label="Email"><Input name="email" type="email" autoComplete="off" /></Field>
-            </div>
             {ops ? advisorField : null}
           </div>
         </div>
@@ -60,7 +53,7 @@ export default async function NewInvestorPage() {
               {actor.role === "ADMIN" ? advisorField : null}
               {ops ? null : (
                 <Field label="If the report cannot be fully read: why create the draft with what was read" className="sm:col-span-2"
-                  hint="Only reading points are accepted (never the name or PAN); they are kept on the draft. Leave empty to be stopped at any point.">
+                  hint="Only reading points are accepted (never a missing name or mobile); they are kept on the draft. Leave empty to be stopped at any point.">
                   <Input name="as_reported_reason" maxLength={500} autoComplete="off" placeholder="e.g. Report layout partly unreadable; lines checked by hand" />
                 </Field>
               )}

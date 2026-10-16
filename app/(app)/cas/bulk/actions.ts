@@ -9,7 +9,7 @@ import { AppError, logServerError, toUserMessage } from "@/lib/errors";
 import { actionTx } from "@/lib/server";
 import { maskPan } from "@/lib/format";
 import { objectPath, uploadAsUser, fileFromForm, formFileName } from "@/lib/storage";
-import { findClientByPan, ingestParsedCas, isDuplicateCas, knownClientPhones } from "@/services/cas-intake";
+import { findClientForCas, ingestParsedCas, isDuplicateCas, knownClientPhones } from "@/services/cas-intake";
 
 export interface BulkCasRow {
   ok: boolean;
@@ -47,7 +47,7 @@ export async function processCasFileAction(fd: FormData): Promise<BulkCasRow> {
     });
     const { parsed, passwordProtected } = await readCasAnyPdf(file.bytes, candidates, { timeoutMs: 220_000 }); // leaves time to save within 300 s
 
-    const client = await actionTx((tx) => findClientByPan(tx, parsed.investor.pan));
+    const client = await actionTx((tx) => findClientForCas(tx, parsed.investor, { claim: true }));
     if (!client) {
       return {
         ok: false, fileName, outcome: "NO_CLIENT",

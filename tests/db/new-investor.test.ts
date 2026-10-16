@@ -5,6 +5,7 @@ import { approvePlan } from "@/services/plans";
 import { confirmSnapshot, createSnapshotFromParsed } from "@/services/portfolio";
 import { createNewInvestor, newInvestorPlan, previewNewInvestor } from "@/services/onboarding";
 import { runReconciliation } from "@/services/reconciliation";
+import { findClientForCas } from "@/services/cas-intake";
 import { parsed, scenario, sql, TEST_DB } from "./harness";
 
 const describeDb = TEST_DB ? describe : describe.skip;
@@ -28,9 +29,11 @@ const report = (over: Partial<AdvisoryReportParse> = {}): AdvisoryReportParse =>
 });
 
 describeDb("A new investor with no mutual funds yet (no CAS)", () => {
-  it("refuses what a new investor cannot have, and a wrong name or PAN", () => {
-    const who = { fullName: "Kavya Iyer", pan: "ABCDE1234F" };
+  it("refuses what a new investor cannot have; only the mobile is asked, the name is the report's", () => {
+    const who = { phone: "9876543210" };
     expect(previewNewInvestor(report(), who).problems).toEqual([]);
+    expect(previewNewInvestor(report(), {}).problems[0]).toMatch(/10-digit mobile/);
+    expect(previewNewInvestor(report({ clientName: null }), who).problems[0]).toMatch(/shows no client name/);
     expect(previewNewInvestor(report(), { ...who, pan: "123" }).problems[0]).toMatch(/valid PAN/);
     expect(previewNewInvestor(report(), { ...who, fullName: "Someone Else" }).problems[0]).toMatch(/is for "Kavya Iyer"/);
     const withSell = report({ sells: [{ fund: "Old Fund", folio: null, actionText: "Exit", action: "SELL", partial: false, value: 1000 }] });
@@ -40,7 +43,9 @@ describeDb("A new investor with no mutual funds yet (no CAS)", () => {
 
   it("starts from nothing: the plan buys with fresh money, and the first CAS completes the buys", async () => {
     await scenario(async (ctx) => {
-      const who = { fullName: "Kavya Iyer", pan: `KAVYA${String(Math.floor(Math.random() * 1e4)).padStart(4, "0")}F` };
+      // Only the mobile is typed: the name is the report's, the PAN comes from the first CAS.
+      const phone = `9${String(Math.floor(Math.random() * 1e9)).padStart(9, "0")}`;
+      const who = { phone };
       const r = report();
       const client = await ctx.as("advisor", (t) => createNewInvestor(t, ctx.users.advisor, { who, report: r }));
       // Stopped before the plan was saved: trying again carries on with the same client.
@@ -51,8 +56,16 @@ describeDb("A new investor with no mutual funds yet (no CAS)", () => {
         reportFile: { fileName: "report.pdf", mimeType: "application/pdf", size: 10, sha256: "a".repeat(64), path: `${client.id}/ADVISORY_REPORT/report.pdf` },
       }));
 
-      // Once the client has a plan, the same PAN cannot be onboarded again.
-      expect(await ctx.expectError("advisor", (t) => createNewInvestor(t, ctx.users.advisor, { who, report: r }))).toMatch(/already has this PAN/);
+      // Once the client has a plan, the same mobile cannot be onboarded again.
+      expect(await ctx.expectError("advisor", (t) => createNewInvestor(t, ctx.users.advisor, { who, report: r }))).toMatch(/already has this mobile number/);
+      const saved = (await ctx.tx<{ full_name: string; pan: string | null }[]>`select full_name, pan from public.clients where id = ${client.id}`)[0];
+      expect(saved).toEqual({ full_name: "Kavya Iyer", pan: null });
+
+      // Their first CAS finds them by the mobile number and gives them its PAN.
+      const pan = `KAVYA${String(Math.floor(Math.random() * 1e4)).padStart(4, "0")}F`;
+      const found = await ctx.as("ops", (t) => findClientForCas(t, { pan, mobile: `+91 ${phone}`, name: "KAVYA IYER" }, { claim: true }));
+      expect(found?.id).toBe(client.id);
+      expect((await ctx.tx<{ pan: string }[]>`select pan from public.clients where id = ${client.id}`)[0].pan).toBe(pan);
 
       const p = (await ctx.tx<{ plan_name: string; plan_kind: string; fresh_money: number; buy_target: number; sell_target: number }[]>`
         select a.plan_name, a.plan_kind, a.fresh_money::float8, t.buy_target::float8, t.sell_target::float8
