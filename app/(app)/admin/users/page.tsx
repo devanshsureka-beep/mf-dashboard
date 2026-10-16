@@ -17,14 +17,16 @@ export default async function UsersPage() {
   const { users, assignments, clients } = await pageData(async (tx) => ({
     users: await tx<{ id: string; email: string; full_name: string; role: string; is_active: boolean; removed_at: Date | null; created_at: Date; clients: number; under_advice: number; awaiting: number; last_active: Date | null }[]>`
       select p.id, p.email, p.full_name, p.role, p.is_active, p.removed_at, p.created_at,
-             (select count(*) from public.client_advisor_assignments a where a.advisor_id = p.id and a.is_active)::int as clients,
+             (select count(*) from public.client_advisor_assignments a join public.clients c on c.id = a.client_id and c.deleted_at is null
+              where a.advisor_id = p.id and a.is_active)::int as clients,
              (select coalesce(sum(s.live_portfolio_value), 0) from public.v_client_summary s where s.advisor_id = p.id)::float8 as under_advice,
              (select coalesce(sum(s.pending_total), 0) from public.v_client_summary s where s.advisor_id = p.id)::float8 as awaiting,
              (select max(l.occurred_at) from public.audit_logs l where l.actor_id = p.id) as last_active
       from public.profiles p order by p.is_active desc, p.role, p.full_name`,
     assignments: await tx<{ id: string; client_name: string; user_name: string; assignment_role: string; assigned_at: Date }[]>`
       select a.id, c.full_name as client_name, p.full_name as user_name, a.assignment_role, a.assigned_at
-      from public.client_advisor_assignments a join public.clients c on c.id = a.client_id join public.profiles p on p.id = a.advisor_id
+      from public.client_advisor_assignments a join public.clients c on c.id = a.client_id and c.deleted_at is null
+      join public.profiles p on p.id = a.advisor_id
       where a.is_active order by c.full_name, a.assignment_role`,
     clients: await listClientSummaries(tx),
   }), ["ADMIN"]);

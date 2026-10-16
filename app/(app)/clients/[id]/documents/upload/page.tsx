@@ -45,7 +45,7 @@ export default async function UploadDocumentPage(props: PageProps<"/clients/[id]
               </Field>
               <Field label="File *"><Input type="file" name="file" required className="pt-1.5" accept="application/pdf,image/png,image/jpeg,application/json,text/csv" /></Field>
               <Field label="Description"><Input name="description" /></Field>
-              {n8nConfigured.advisoryParse() ? (
+              {!canAdvise ? null : n8nConfigured.advisoryParse() ? (
                 <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="extract" value="yes" defaultChecked /> Send advisory reports for extraction (creates a DRAFT plan for review)</label>
               ) : <p className="text-xs text-muted">Advisory-report extraction webhook not configured — use the JSON import on the right.</p>}
               <SubmitButton>Upload</SubmitButton>

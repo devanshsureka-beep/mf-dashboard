@@ -443,6 +443,8 @@ export interface DocumentRow {
   description: string | null;
   created_at: Date;
   uploader_name: string | null;
+  /** CAS documents: the statement's valuation date. */
+  valuation_date?: string | null;
 }
 
 /** What the desk accepted when onboarding with the report as it is. */

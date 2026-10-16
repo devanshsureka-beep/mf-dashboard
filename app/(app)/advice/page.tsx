@@ -45,7 +45,7 @@ function callState(r: Row) {
 export default async function TranchesPage(props: PageProps<"/advice">) {
   const sp = await props.searchParams;
   const one = (k: string) => (typeof sp[k] === "string" && sp[k] ? (sp[k] as string) : null);
-  const period: Period = (one("period") as Period) in PERIODS ? (one("period") as Period) : one("client") ? "all" : "30";
+  const period: Period = Object.hasOwn(PERIODS, one("period") ?? "") ? (one("period") as Period) : one("client") ? "all" : "30";
   const today = todayIST();
   const from = isoDateOrNull(one("from")) ?? (period === "today" ? today
     : period === "month" ? `${today.slice(0, 8)}01`
@@ -78,7 +78,8 @@ export default async function TranchesPage(props: PageProps<"/advice">) {
 
   const shown = tranches.flatMap((t) => t.rows);
   const live = (r: Row) => !CLOSED.includes(r.status);
-  const sum = (pred: (r: Row) => boolean, k: "advised_amount" | "executed_amount" | "pending_amount") => shown.filter(pred).reduce((s, r) => s + Number(r[k]), 0);
+  // "Advised" is the view's effective advised amount: a call closed part-done counts what was done.
+  const sum = (pred: (r: Row) => boolean, k: "effective_advised_amount" | "executed_amount" | "pending_amount") => shown.filter(pred).reduce((s, r) => s + Number(r[k]), 0);
   const qs = (patch: Record<string, string | null>) => {
     const p = new URLSearchParams();
     for (const [k, v] of Object.entries({ ...f, period, ...patch })) if (v) p.set(k, v);
@@ -126,8 +127,8 @@ export default async function TranchesPage(props: PageProps<"/advice">) {
 
       <div className="mb-4 flex flex-wrap gap-x-6 gap-y-1 text-[13.5px] text-slate-700">
         <span><b className="text-ink">{tranches.length} tranche{tranches.length === 1 ? "" : "s"}</b> · {shown.length} calls</span>
-        <span>Sell advised <Money value={sum((r) => r.action !== "BUY" && live(r), "advised_amount")} className="font-semibold text-red-700" /></span>
-        <span>Buy advised <Money value={sum((r) => r.action === "BUY" && live(r), "advised_amount")} className="font-semibold text-blue-700" /></span>
+        <span>Sell advised <Money value={sum((r) => r.action !== "BUY", "effective_advised_amount")} className="font-semibold text-red-700" /></span>
+        <span>Buy advised <Money value={sum((r) => r.action === "BUY", "effective_advised_amount")} className="font-semibold text-blue-700" /></span>
         <span>Done (CAS) <Money value={sum(() => true, "executed_amount")} className="font-semibold text-emerald-700" /></span>
         <span>Waiting <Money value={sum(() => true, "pending_amount")} className="font-semibold text-amber-700" /></span>
       </div>
@@ -140,10 +141,10 @@ export default async function TranchesPage(props: PageProps<"/advice">) {
               <div className="space-y-2">
                 {d.list.map(({ rows: list, first, state }) => {
                   const counted = list.filter(live);
-                  const advised = counted.reduce((t, r) => t + Number(r.advised_amount), 0);
+                  const advised = list.reduce((t, r) => t + Number(r.effective_advised_amount), 0);
                   const done = list.reduce((t, r) => t + Number(r.executed_amount), 0);
-                  const sells = counted.filter((r) => r.action !== "BUY").reduce((t, r) => t + Number(r.advised_amount), 0);
-                  const buys = counted.filter((r) => r.action === "BUY").reduce((t, r) => t + Number(r.advised_amount), 0);
+                  const sells = list.filter((r) => r.action !== "BUY").reduce((t, r) => t + Number(r.effective_advised_amount), 0);
+                  const buys = list.filter((r) => r.action === "BUY").reduce((t, r) => t + Number(r.effective_advised_amount), 0);
                   const nDone = counted.filter((r) => r.status === "EXECUTED").length;
                   const closed = list.length - counted.length;
                   const pct = advised > 0 ? Math.min(100, Math.round((done / advised) * 100)) : 0;

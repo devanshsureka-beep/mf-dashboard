@@ -461,8 +461,9 @@ export async function ingestAdvisoryReport(
 ): Promise<{ planId: string | null; clientId: string; itemsNeedingReview: number; warnings: string[] }> {
   const client = await tx<{ id: string; created_by: string | null }[]>`
     select id, created_by from public.clients
-    where (${payload.client_id ?? null}::uuid is not null and id = ${payload.client_id ?? null})
-       or (${payload.client_code ?? null}::text is not null and client_code = ${payload.client_code ?? null})`;
+    where deleted_at is null
+      and ((${payload.client_id ?? null}::uuid is not null and id = ${payload.client_id ?? null})
+        or (${payload.client_code ?? null}::text is not null and client_code = ${payload.client_code ?? null}))`;
   if (!client[0]) throw new AppError("Client not found for advisory report.", "NOT_FOUND");
   const clientId = client[0].id;
 

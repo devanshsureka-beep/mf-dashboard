@@ -51,6 +51,8 @@ export default async function AdviceItemPage(props: PageProps<"/advice/items/[it
     } : null,
   }));
   const canAdvise = actor.role !== "OPERATIONS";
+  // Hand fixes are admin-only; an execution the CAS verified is corrected, never voided by hand.
+  const liveExecutions = executions.filter((e) => !["REJECTED", "CANCELLED"].includes(e.status));
 
   return (
     <>
@@ -87,12 +89,12 @@ export default async function AdviceItemPage(props: PageProps<"/advice/items/[it
           <Card>
             <CardHeader><CardTitle>Executions against this call</CardTitle></CardHeader>
             {executions.length ? <ExecutionsTable rows={executions} showClient={false} showSecurity={false} /> : <CardContent><EmptyState title="No executions recorded yet" /></CardContent>}
-            {executions.some((e) => e.status === "EXECUTED" || e.status === "PARTIAL" || e.status === "PENDING") ? (
+            {actor.role === "ADMIN" && liveExecutions.length ? (
               <CardContent className="space-y-2 border-t border-border">
-                {executions.filter((e) => !["REJECTED", "CANCELLED"].includes(e.status)).map((e) => (
+                {liveExecutions.map((e) => (
                   <div key={e.id} className="flex flex-wrap items-center gap-2 text-xs">
                     <span className="w-56 text-muted">{formatDate(e.execution_date)} · <Money value={e.executed_amount} full /></span>
-                    {e.status === "PENDING" ? (
+                    {e.status === "PENDING" && e.verification_type !== "CAS_VERIFIED" ? (
                       <ActionForm action={confirmPendingExecutionAction.bind(null, itemId, e.id)}><SubmitButton size="sm" variant="outline">Confirm executed</SubmitButton></ActionForm>
                     ) : null}
                     {fixable ? (
@@ -108,11 +110,13 @@ export default async function AdviceItemPage(props: PageProps<"/advice/items/[it
                         </ActionForm>
                       </details>
                     ) : null}
-                    <ActionForm action={voidExecutionAction.bind(null, itemId, e.id)} className="flex items-center gap-1">
-                      <Select name="status" className="h-8 w-28 text-xs"><option value="REJECTED">Reject</option><option value="CANCELLED">Cancel</option></Select>
-                      <Input name="reason" placeholder="Reason (required)" className="h-8 w-56 text-xs" required />
-                      <SubmitButton size="sm" variant="ghost" confirm="Void this execution? It stays in history but stops counting.">Void</SubmitButton>
-                    </ActionForm>
+                    {e.verification_type !== "CAS_VERIFIED" ? (
+                      <ActionForm action={voidExecutionAction.bind(null, itemId, e.id)} className="flex items-center gap-1">
+                        <Select name="status" className="h-8 w-28 text-xs"><option value="REJECTED">Reject</option><option value="CANCELLED">Cancel</option></Select>
+                        <Input name="reason" placeholder="Reason (required)" className="h-8 w-56 text-xs" required />
+                        <SubmitButton size="sm" variant="ghost" confirm="Void this execution? It stays in history but stops counting.">Void</SubmitButton>
+                      </ActionForm>
+                    ) : null}
                   </div>
                 ))}
               </CardContent>

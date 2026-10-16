@@ -1,15 +1,18 @@
 import Link from "next/link";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { formatDateTime, humanize } from "@/lib/format";
+import { formatDateTime, humanize, maskPan } from "@/lib/format";
 import type { AuditLogRow } from "@/types/domain";
 
 const HIDDEN = new Set(["updated_at", "created_at", "extraction_payload", "status_changed_at"]);
 
+const PAN = /\b[A-Z]{5}[0-9]{4}[A-Z]\b/g;
+
+/** PANs are never shown in full on screen, wherever they sit in a changed value. */
 function show(v: unknown): string {
   if (v === null || v === undefined) return "∅";
-  if (typeof v === "object") return JSON.stringify(v);
-  return String(v);
+  const text = typeof v === "object" ? JSON.stringify(v) : String(v);
+  return text.replace(PAN, (p) => maskPan(p) ?? "");
 }
 
 /** Immutable audit trail: who changed what, from what, to what, and why. */
@@ -45,7 +48,7 @@ export function AuditTable({ rows, showClient = false }: { rows: AuditLogRow[]; 
                   <span className="text-muted">{summary(r.old_value)}</span>
                 )}
               </TD>
-              <TD className="max-w-64 text-xs">{r.reason ?? <span className="text-muted">—</span>}</TD>
+              <TD className="max-w-64 text-xs">{r.reason ? show(r.reason) : <span className="text-muted">—</span>}</TD>
             </TR>
           );
         })}

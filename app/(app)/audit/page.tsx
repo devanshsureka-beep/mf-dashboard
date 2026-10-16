@@ -9,6 +9,7 @@ import { pageData } from "@/lib/server";
 import { HubTabs } from "@/components/app/hub-tabs";
 import { listAuditLogs } from "@/services/audit";
 import { listClientSummaries } from "@/services/clients";
+import { isoDateOrNull, uuidOrNull } from "@/lib/utils";
 
 export const metadata = { title: "Audit log" };
 
@@ -21,7 +22,7 @@ const ENTITIES = [
 export default async function AuditPage(props: PageProps<"/audit">) {
   const sp = await props.searchParams;
   const one = (k: string) => (typeof sp[k] === "string" && sp[k] ? (sp[k] as string) : null);
-  const f = { clientId: one("client"), entityType: one("entity"), from: one("from"), to: one("to"), entityId: one("entity_id") };
+  const f = { clientId: uuidOrNull(one("client")), entityType: one("entity"), from: isoDateOrNull(one("from")), to: isoDateOrNull(one("to")), entityId: uuidOrNull(one("entity_id")) };
   const { rows, clients } = await pageData(async (tx) => ({
     rows: await listAuditLogs(tx, { ...f, limit: 500 }),
     clients: await listClientSummaries(tx),

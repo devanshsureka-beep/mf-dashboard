@@ -7,7 +7,7 @@ import { withUserTx, type Actor } from "@/lib/db/tx";
 import { formatDateTime, humanize } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { listAdvisors } from "@/services/clients";
-import { listDocuments } from "@/services/documents";
+import { casLabel, listDocuments } from "@/services/documents";
 import type { ClientSummary } from "@/types/domain";
 import { reassignAdvisorAction, updateClientAction } from "../../actions";
 import { AgreementsTab } from "./agreements";
@@ -63,7 +63,7 @@ export async function ClientFileTab({ client: c, actor, docType, open }: { clien
             {shown.map((d) => (
               <li key={d.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2 text-[13px]">
                 <span className={cn("rounded px-1.5 py-px text-[10px] font-semibold", TYPE_TONE[d.document_type] ?? "bg-slate-100 text-slate-700")}>{humanize(d.document_type)}</span>
-                <a className="min-w-0 flex-1 truncate font-medium hover:underline" href={`/api/documents/${d.id}/download`}>{d.description || d.file_name}</a>
+                <a className="min-w-0 flex-1 truncate font-medium hover:underline" href={`/api/documents/${d.id}/download`}>{d.document_type === "CAS" ? casLabel(d.valuation_date) : d.description || d.file_name}</a>
                 {d.parse_status !== "NOT_APPLICABLE" ? <StatusBadge status={d.parse_status} /> : null}
                 <span className="text-xs text-muted">{formatDateTime(d.created_at)} · {d.uploader_name ?? "integration"}</span>
                 <a className="text-xs font-medium text-brand hover:underline" href={`/api/documents/${d.id}/download`}>Download</a>

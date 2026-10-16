@@ -10,6 +10,7 @@ import { n8nConfigured } from "@/lib/integrations/n8n";
 import { AppError } from "@/lib/errors";
 import type { CasDocumentRow } from "@/types/domain";
 import { importCasJsonAction, markCasFailedAction, readStoredCasAction, triggerExtractionAction } from "../actions";
+import { casLabel } from "@/services/documents";
 
 // Reading a CAS PDF and saving the snapshot can take a while on a cold start.
 export const maxDuration = 300; // a picture-only CAS is read by Claude (up to 4 min)
@@ -49,7 +50,7 @@ export default async function CasDocumentPage(props: PageProps<"/cas/[casId]">) 
     <>
       <div className="mb-4">
         <div className="text-xs text-muted"><Link href={`/clients/${d.client_id}?tab=tranches`} className="hover:underline">{d.client_name}</Link> / CAS</div>
-        <h1 className="mt-0.5 flex items-center gap-2 text-xl font-semibold">{d.file_name} <StatusBadge status={d.parse_status} /></h1>
+        <h1 className="mt-0.5 flex items-center gap-2 text-xl font-semibold">{casLabel(d.valuation_date)} <StatusBadge status={d.parse_status} /></h1>
         <div className="mt-1 flex flex-wrap gap-x-4 text-sm text-muted">
           <span>Uploaded {formatDateTime(d.uploaded_at)}</span><span>Source {humanize(d.source)}</span>
           <span>{d.password_protected ? "Password protected" : "Not encrypted"}</span>

@@ -19,9 +19,10 @@ export async function uploadDocumentAction(clientId: string, _p: ActionResult | 
     const type = reqStr(fd, "document_type", "Type");
     if (!TYPES.includes(type)) throw new AppError("Invalid document type (upload CAS files from the CAS page).");
     const file = await fileFromForm(fd, "file");
-    const client = await actionTx((tx) => getClientSummary(tx, clientId));
+    const { client, role } = await actionTx(async (tx, actor) => ({ client: await getClientSummary(tx, clientId), role: actor.role }));
     const path = objectPath(clientId, type, file);
-    const extract = type === "ADVISORY_REPORT" && str(fd, "extract") === "yes" && n8nConfigured.advisoryParse();
+    // Extraction drafts a plan, which is advisory work: operations upload the report only.
+    const extract = type === "ADVISORY_REPORT" && str(fd, "extract") === "yes" && n8nConfigured.advisoryParse() && ADVISORY_ROLES.includes(role);
     await uploadAsUser(path, file);
     const docId = await actionTx((tx, actor) => registerDocument(tx, actor.id, {
       clientId, type, filePath: path, fileName: file.fileName, mimeType: file.mimeType, sizeBytes: file.size,

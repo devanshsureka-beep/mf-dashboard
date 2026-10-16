@@ -5,7 +5,7 @@ import { settleSipInstalments } from "@/services/reconciliation";
 import { revalidatePath } from "next/cache";
 import { optStr, reqStr, runAction, type ActionResult } from "@/lib/actions";
 import { AppError, logServerError } from "@/lib/errors";
-import { actionTx } from "@/lib/server";
+import { ADVISORY_ROLES, actionTx } from "@/lib/server";
 import { linkCallsToPlan } from "@/services/advice";
 import { addNote, completeFollowUp } from "@/services/notes";
 import { setSipStatus } from "@/services/plans";
@@ -38,7 +38,9 @@ export async function setSipStatusAction(clientId: string, sipId: string, _p: Ac
   return runAction("setSipStatus", async () => {
     const status = String(fd.get("status"));
     if (!["ADVISED", "COMPLETED", "CANCELLED"].includes(status)) throw new AppError("Invalid SIP status.");
-    await actionTx((tx) => setSipStatus(tx, sipId, status as "ADVISED" | "COMPLETED" | "CANCELLED", optStr(fd, "note")));
+    // Advising or cancelling a SIP is an advisory decision; operations may only mark one completed.
+    await actionTx((tx) => setSipStatus(tx, sipId, status as "ADVISED" | "COMPLETED" | "CANCELLED", optStr(fd, "note")),
+      status === "COMPLETED" ? {} : { roles: ADVISORY_ROLES });
     revalidatePath(`/clients/${clientId}`);
     return `SIP action marked ${status.toLowerCase()}.`;
   });

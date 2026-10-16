@@ -12,13 +12,14 @@ import { getHoldings } from "@/services/portfolio";
 import { getSipStatus, type SipStatusView } from "@/services/sip-status";
 import { issueAdviceAction, searchFundsAction } from "../actions";
 import { CHANNELS, type HoldingRow } from "@/types/domain";
+import { uuidOrNull } from "@/lib/utils";
 
 export const metadata = { title: "Issue call" };
 
 export default async function NewAdvicePage(props: PageProps<"/advice/new">) {
   const sp = await props.searchParams;
-  const clientId = typeof sp.client === "string" ? sp.client : null;
-  const planItem = typeof sp.planItem === "string" ? sp.planItem : null;
+  const clientId = uuidOrNull(sp.client);
+  const planItem = uuidOrNull(sp.planItem);
   const side = sp.side === "SELL" || sp.side === "BUY" ? sp.side : "ALL";
   // A preselected plan item is shown regardless of the side filter.
   const effectiveSide = typeof sp.planItem === "string" ? "ALL" : side;

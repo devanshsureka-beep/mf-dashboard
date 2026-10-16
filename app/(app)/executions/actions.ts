@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { num, optStr, reqStr, runAction, str, type ActionResult } from "@/lib/actions";
+import type { Tx } from "@/lib/db/tx";
 import { AppError } from "@/lib/errors";
 import { todayIST } from "@/lib/format";
 import { actionTx } from "@/lib/server";
@@ -60,11 +61,23 @@ export async function recordExecutionAction(adviceItemId: string, _p: ActionResu
   });
 }
 
+/** Hand corrections apply to this call's executions only, and never to one the CAS verified (reconciliation owns those). */
+async function assertHandExecution(tx: Tx, adviceItemId: string, executionId: string): Promise<void> {
+  const [e] = await tx<{ verification_type: string }[]>`
+    select verification_type from public.executions where id = ${executionId} and advice_item_id = ${adviceItemId}`;
+  if (!e) throw new AppError("Execution not found for this call.", "NOT_FOUND");
+  if (e.verification_type === "CAS_VERIFIED") throw new AppError("This execution was verified from a CAS; correct it through the CAS inbox instead.");
+}
+
 export async function voidExecutionAction(adviceItemId: string, executionId: string, _p: ActionResult | null, fd: FormData): Promise<ActionResult> {
   return runAction("voidExecution", async () => {
     const status = reqStr(fd, "status") as "REJECTED" | "CANCELLED";
     if (!["REJECTED", "CANCELLED"].includes(status)) throw new AppError("Invalid status.");
-    await actionTx((tx) => voidExecution(tx, executionId, status, reqStr(fd, "reason", "Reason")));
+    const reason = reqStr(fd, "reason", "Reason");
+    await actionTx(async (tx) => {
+      await assertHandExecution(tx, adviceItemId, executionId);
+      await voidExecution(tx, executionId, status, reason);
+    }, { roles: ["ADMIN"] });
     revalidatePath(`/advice/items/${adviceItemId}`);
     return `Execution marked ${status.toLowerCase()}; call status recalculated.`;
   });
@@ -72,7 +85,10 @@ export async function voidExecutionAction(adviceItemId: string, executionId: str
 
 export async function confirmPendingExecutionAction(adviceItemId: string, executionId: string, _p: ActionResult | null): Promise<ActionResult> {
   return runAction("confirmPendingExecution", async () => {
-    await actionTx((tx) => confirmPendingExecution(tx, executionId));
+    await actionTx(async (tx) => {
+      await assertHandExecution(tx, adviceItemId, executionId);
+      await confirmPendingExecution(tx, executionId);
+    }, { roles: ["ADMIN"] });
     revalidatePath(`/advice/items/${adviceItemId}`);
     return "Execution confirmed.";
   });

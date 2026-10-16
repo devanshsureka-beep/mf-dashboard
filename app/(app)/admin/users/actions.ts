@@ -79,6 +79,13 @@ export async function updateUserAction(userId: string, _p: ActionResult | null, 
       if (actor.id === userId && (!active || role !== "ADMIN")) throw new AppError("You cannot demote or deactivate yourself.");
       const [p] = await tx<{ removed_at: Date | null }[]>`select removed_at from public.profiles where id = ${userId}`;
       if (p?.removed_at && active) throw new AppError("This person was removed from the team: use Add back.");
+      // Live clients must keep a primary advisor who can advise them.
+      if (!active || role === "OPERATIONS") {
+        const [{ n }] = await tx<{ n: number }[]>`
+          select count(*)::int as n from public.client_advisor_assignments a join public.clients c on c.id = a.client_id and c.deleted_at is null
+          where a.advisor_id = ${userId} and a.is_active and a.assignment_role = 'PRIMARY'`;
+        if (n > 0) throw new AppError(`This person is the primary advisor of ${n} client(s). Move those clients to another advisor first.`);
+      }
       await tx`update public.profiles set role = ${role}, is_active = ${active} where id = ${userId}`;
     }, { roles: ["ADMIN"], reason: str(fd, "reason") || "Role / access changed by admin" });
     revalidatePath("/admin/users");

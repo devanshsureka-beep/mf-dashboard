@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getCurrentActor } from "@/lib/auth/session";
 import { withUserTx } from "@/lib/db/tx";
 import { AppError, logServerError } from "@/lib/errors";
+import { todayIST } from "@/lib/format";
 import { downloadAsUser, storeClientExport } from "@/lib/storage";
 import { buildZip, toCsv, type ZipEntry } from "@/lib/zip";
 import { exportReadme, gatherClientExport } from "@/services/client-export";
@@ -30,7 +31,7 @@ export async function GET(_req: NextRequest, ctx: RouteContext<"/api/clients/[id
     }
     entries.unshift({ name: "README.txt", data: exportReadme(data, actor.fullName ?? actor.email, missing) });
     const zip = buildZip(entries);
-    const stamp = new Date().toISOString().slice(0, 10);
+    const stamp = todayIST();
     const name = `${data.client.client_code} ${data.client.full_name} - everything ${stamp}.zip`.replace(/[\\/:*?"<>|]+/g, "_");
     if (zip.length <= DIRECT_LIMIT) {
       return new NextResponse(zip as unknown as BodyInit, {

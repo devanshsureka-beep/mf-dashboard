@@ -18,6 +18,7 @@ import { InboxCase, reasons, TONE, type ClientCard } from "./inbox-case";
 import { listCasDocuments } from "@/services/portfolio";
 import { listRuns } from "@/services/reconciliation";
 import { BulkUploader } from "../cas/bulk/bulk-uploader";
+import { casLabel } from "@/services/documents";
 
 // Reading PDFs and saving a whole CAS can take a while on a cold start.
 export const maxDuration = 300; // the bulk uploader here may send a picture-only CAS to Claude (up to 4 min)
@@ -255,7 +256,7 @@ export default async function CasInboxPage(props: PageProps<"/reconciliation">) 
                     <TR key={d.id}>
                       <TD className="whitespace-nowrap text-xs">{formatDateTime(d.uploaded_at)}</TD>
                       <TD className="whitespace-nowrap">{d.client_name}</TD>
-                      <TD className="max-w-60 truncate text-xs"><Link className="text-brand hover:underline" href={`/cas/${d.id}`}>{d.file_name}</Link></TD>
+                      <TD className="max-w-60 truncate text-xs"><Link className="text-brand hover:underline" href={`/cas/${d.id}`}>{casLabel(d.valuation_date)}</Link></TD>
                       <TD className="text-xs">{humanize(d.source)}</TD>
                       <TD className="text-xs">{formatDate(d.valuation_date)}</TD>
                       <TD><StatusBadge status={d.parse_status} /></TD>

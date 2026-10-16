@@ -6,6 +6,7 @@ import { StatusBadge } from "@/components/app/status-badge";
 import { EmptyState } from "@/components/app/page-header";
 import { withUserTx, type Actor } from "@/lib/db/tx";
 import { formatDate, formatDateTime, humanize } from "@/lib/format";
+import { casLabel } from "@/services/documents";
 import { listCasDocuments } from "@/services/portfolio";
 import { listRuns } from "@/services/reconciliation";
 
@@ -29,7 +30,7 @@ export async function CasTab({ clientId, actor }: { clientId: string; actor: Act
                 <TR key={d.id}>
                   <TD className="whitespace-nowrap text-xs">{formatDateTime(d.uploaded_at)}</TD>
                   <TD className="max-w-56 truncate text-xs">
-                    <a className="hover:underline" href={`/api/documents/${d.document_id}/download`}>{d.file_name}</a>
+                    <a className="hover:underline" href={`/api/documents/${d.document_id}/download`}>{casLabel(d.valuation_date)}</a>
                     {d.password_protected ? <span className="ml-1 text-muted">🔒</span> : null}
                   </TD>
                   <TD className="text-xs">{humanize(d.source)}</TD>

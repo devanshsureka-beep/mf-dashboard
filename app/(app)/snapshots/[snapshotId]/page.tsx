@@ -14,6 +14,7 @@ import { holdingKey } from "@/lib/domain/reconciliation";
 import { getClientSummary } from "@/services/clients";
 import { getHoldings, getSnapshot } from "@/services/portfolio";
 import { confirmSnapshotAction, rejectSnapshotAction } from "../../cas/actions";
+import { casLabel } from "@/services/documents";
 
 export const maxDuration = 300; // a picture-only CAS is read by Claude (up to 4 min)
 
@@ -29,8 +30,8 @@ export default async function SnapshotPage(props: PageProps<"/snapshots/[snapsho
         and (snapshot_date, created_at) < (${s.snapshot_date}::date, ${s.created_at})
       order by snapshot_date desc, created_at desc limit 1`;
     const cas = s.cas_document_id
-      ? (await tx<{ id: string; parse_warnings: string[]; file_name: string }[]>`
-          select cd.id, cd.parse_warnings, d.file_name from public.cas_documents cd join public.documents d on d.id = cd.document_id
+      ? (await tx<{ id: string; parse_warnings: string[]; valuation_date: string | null }[]>`
+          select cd.id, cd.parse_warnings, cd.valuation_date::text as valuation_date from public.cas_documents cd join public.documents d on d.id = cd.document_id
           where cd.id = ${s.cas_document_id}`)[0]
       : null;
     return {
@@ -63,7 +64,7 @@ export default async function SnapshotPage(props: PageProps<"/snapshots/[snapsho
         <h1 className="mt-0.5 flex items-center gap-2 text-xl font-semibold">Portfolio snapshot · {formatDate(s.snapshot_date)} <StatusBadge status={s.review_status} />{s.is_baseline ? <span className="text-xs font-medium text-brand">BASELINE</span> : null}</h1>
         <div className="mt-1 flex flex-wrap gap-x-4 text-sm text-muted">
           <span>Source {humanize(s.source)}</span><span>Extraction {humanize(s.extraction_method)}</span><span>Created {formatDateTime(s.created_at)}</span>
-          {cas ? <Link className="text-brand hover:underline" href={`/cas/${cas.id}`}>CAS: {cas.file_name}</Link> : null}
+          {cas ? <Link className="text-brand hover:underline" href={`/cas/${cas.id}`}>{casLabel(cas.valuation_date)}</Link> : null}
           {s.reviewed_at ? <span>Reviewed {formatDateTime(s.reviewed_at)}{s.review_note ? ` — ${s.review_note}` : ""}</span> : null}
         </div>
       </div>

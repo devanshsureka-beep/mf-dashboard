@@ -17,10 +17,14 @@ export async function POST(req: NextRequest) {
       pending_by_advisor: await tx`
         select p.advisor_id, p.advisor_name, count(*)::int as open_calls, sum(p.pending_amount) as pending_amount,
                count(*) filter (where p.age_days > 3)::int as stale_calls
-        from public.v_pending_executions p group by p.advisor_id, p.advisor_name order by pending_amount desc`,
+        from public.v_pending_executions p
+        join public.clients c on c.id = p.client_id and c.deleted_at is null
+        group by p.advisor_id, p.advisor_name order by pending_amount desc`,
       stale_calls: await tx`
-        select client_code, client_name, advisor_name, action, scheme_name, pending_amount, age_days
-        from public.v_pending_executions where age_days > 3 order by age_days desc limit 50`,
+        select p.client_code, p.client_name, p.advisor_name, p.action, p.scheme_name, p.pending_amount, p.age_days
+        from public.v_pending_executions p
+        join public.clients c on c.id = p.client_id and c.deleted_at is null
+        where p.age_days > 3 order by p.age_days desc limit 50`,
     }));
     return NextResponse.json({ ok: true, generated_at: new Date().toISOString(), ...out });
   } catch (e) {

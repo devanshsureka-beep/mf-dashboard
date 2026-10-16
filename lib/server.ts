@@ -15,6 +15,8 @@ export async function pageData<T>(fn: (tx: Tx, actor: Actor) => Promise<T>, role
     return { ...data, actor };
   } catch (e) {
     if (e instanceof AppError && e.code === "NOT_FOUND") notFound();
+    // A malformed id in the URL (invalid uuid / date text) is a missing page, not a server error.
+    if ((e as { code?: string } | null)?.code === "22P02" || (e as { code?: string } | null)?.code === "22007" || (e as { code?: string } | null)?.code === "22008") notFound();
     throw e;
   }
 }

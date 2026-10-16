@@ -31,6 +31,7 @@ import {
   convertSipToLumpsumAction, updateSipAmountsAction,
 } from "../actions";
 import { setSipStatusAction } from "../../actions";
+import { AppError } from "@/lib/errors";
 
 export const metadata = { title: "Portfolio plan" };
 
@@ -40,6 +41,7 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
   const { c, plan, items: allItems, sips, sipProgress, sipSeen, securities, heldIds, tranches, migrateNotes, questions, actor } = await pageData(async (tx) => {
     const c = await getClientSummary(tx, id);
     const plan = await getPlan(tx, planId);
+    if (plan.client_id !== id) throw new AppError("Plan not found for this client.", "NOT_FOUND");
     const holdings = c.latest_snapshot_id ? await getHoldings(tx, c.latest_snapshot_id) : [];
     return {
       c, plan,
@@ -199,8 +201,8 @@ export default async function PlanPage(props: PageProps<"/clients/[id]/plans/[pl
         {sips.length ? (
           <SipTable
             rows={sips}
-            canUpdate={isActive}
-            action={isActive ? setSipStatusAction.bind(null, id) : undefined}
+            canUpdate={editable}
+            action={editable ? setSipStatusAction.bind(null, id) : undefined}
             invested={Object.fromEntries(sipProgress.map((r) => [r.sip_item_id, r]))}
             extra={editable ? (s) => s.status === "CANCELLED" || s.status === "COMPLETED" ? null : (
               <details className="text-xs">

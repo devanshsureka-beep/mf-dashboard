@@ -67,11 +67,11 @@ export async function getMonthlyReport(tx: Tx, clientId: string, ym: string): Pr
     order by e.execution_date`;
 
   const sipRows = await tx<{ scheme_name: string; amount: number; instalments: number }[]>`
-    select scheme_name, sum(abs(amount))::float8 as amount, count(*)::int as instalments
-    from public.portfolio_transactions
-    where client_id = ${clientId} and public.txn_effective_type(transaction_type, description, units) = 'SIP' and coalesce(amount, 0) <> 0
-      and transaction_date between ${start}::date and ${end}::date
-    group by scheme_name order by 2 desc`;
+    -- The SIP instalments rule (v_sip_instalments): bounced instalments do not count, monthly runs of plain purchases do.
+    select t.scheme_name, sum(i.amount)::float8 as amount, count(*)::int as instalments
+    from public.v_sip_instalments i join public.portfolio_transactions t on t.id = i.transaction_id
+    where i.client_id = ${clientId} and i.transaction_date between ${start}::date and ${end}::date
+    group by t.scheme_name order by 2 desc`;
 
   const unadvised = await tx<MonthlyReport["unadvised"]>`
     select m.transaction_date::text as date, m.scheme_name, m.approx_amount::float8 as amount,

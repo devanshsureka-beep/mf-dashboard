@@ -53,7 +53,7 @@ export default async function MonthlyReportPage(props: PageProps<"/clients/[id]/
   const { id } = await props.params;
   const sp = await props.searchParams;
   const thisMonth = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit" }).format(new Date());
-  const ym = typeof sp.month === "string" && /^\d{4}-\d{2}$/.test(sp.month) ? sp.month : thisMonth;
+  const ym = typeof sp.month === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(sp.month) ? sp.month : thisMonth;
   const { c, r, notes, premium, sip, actor } = await pageData(async (tx) => ({
     c: await getClientSummary(tx, id),
     r: await getMonthlyReport(tx, id, ym),
