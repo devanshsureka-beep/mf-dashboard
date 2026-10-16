@@ -93,9 +93,9 @@ function Todos({ todos }: { todos: ListTag[] }) {
       <Tag t={todos[0]} first />
       {todos[1] ? <Tag t={todos[1]} /> : null}
       {rest.length ? (
-        <details className="relative">
-          <summary className="cursor-pointer list-none rounded px-1.5 py-px text-[11px] font-medium text-ink ring-1 ring-ink/70 hover:bg-slate-50 [&::-webkit-details-marker]:hidden">+{rest.length} more</summary>
-          <ol className="absolute left-0 z-30 mt-1 w-64 space-y-1 rounded-lg border border-border bg-white p-2 text-[12px] shadow-lg">
+        <details className="basis-full">
+          <summary className="inline-block cursor-pointer list-none rounded px-1.5 py-px text-[11px] font-medium text-ink ring-1 ring-ink/70 hover:bg-slate-50 [&::-webkit-details-marker]:hidden">+{rest.length} more</summary>
+          <ol className="mt-1 w-60 space-y-1 rounded-lg border border-border bg-white p-2 text-[12px] shadow-sm">
             {todos.map((t, i) => (
               <li key={t.text} className="flex items-center gap-2">
                 <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-ink text-[10px] font-bold text-white">{i + 1}</span>

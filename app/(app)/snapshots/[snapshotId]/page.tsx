@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { maskPans } from "@/lib/domain/cas-review";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { Input } from "@/components/ui/form";
@@ -77,7 +78,7 @@ export default async function SnapshotPage(props: PageProps<"/snapshots/[snapsho
       {cas?.parse_warnings?.length ? (
         <div className="mt-4 rounded-md bg-amber-50 p-3 text-sm text-amber-900">
           <strong>Extraction warnings — check against the PDF:</strong>
-          <ul className="ml-5 list-disc">{cas.parse_warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
+          <ul className="ml-5 list-disc">{cas.parse_warnings.map((w, i) => <li key={i}>{maskPans(w)}</li>)}</ul>
         </div>
       ) : null}
 

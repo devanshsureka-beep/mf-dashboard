@@ -158,6 +158,10 @@ export interface InboxCheckDetail {
   source: string | null;
   uploaded_at: Date | null;
   previous: { date: string; value: number } | null;
+  /** The client already has a starting portfolio (this CAS will not become it). */
+  has_baseline: boolean;
+  /** The newest CAS of this client still waiting (the inbox shows that one). */
+  newest_pending: boolean;
   points: ReviewPoint[];
   holdings: (ReviewHolding & { nav: number | null })[];
 }
@@ -179,11 +183,16 @@ export async function getInboxCheckDetail(tx: Tx, snapshotId: string): Promise<I
     where client_id = ${s.client_id} and review_status = 'CONFIRMED' and id <> ${snapshotId}
       and (snapshot_date, created_at) < (${s.snapshot_date}::date, ${s.created_at})
     order by snapshot_date desc, created_at desc limit 1`)[0] ?? null;
+  const flags = (await tx<{ has_baseline: boolean; newest_pending: boolean }[]>`
+    select exists (select 1 from public.portfolio_snapshots b where b.client_id = ${s.client_id} and b.is_baseline and b.review_status = 'CONFIRMED') as has_baseline,
+           ${snapshotId}::uuid = (select p.id from public.portfolio_snapshots p where p.client_id = ${s.client_id} and p.review_status = 'PENDING_REVIEW'
+                                   order by p.snapshot_date desc, p.created_at desc limit 1) as newest_pending`)[0];
   const costs = holdings.filter((h) => h.cost != null && h.cost > 0);
   return {
     snapshot_id: s.id, snapshot_date: s.snapshot_date, value: s.value,
     cost: costs.length ? costs.reduce((t, h) => t + Number(h.cost), 0) : null,
     document_id: s.document_id, source: s.source, uploaded_at: s.uploaded_at, previous: prev,
+    has_baseline: Boolean(flags?.has_baseline), newest_pending: Boolean(flags?.newest_pending),
     points: explainCasWarnings(Array.isArray(s.warnings) ? s.warnings : [], holdings),
     holdings: holdings.map(({ cost: _c, ...h }) => h),
   };

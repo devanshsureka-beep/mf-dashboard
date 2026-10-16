@@ -4,7 +4,6 @@ import { Money } from "@/components/app/money";
 import { Input, Select } from "@/components/ui/form";
 import { formatDate, formatDateTime, formatINRCompact, formatUnits, humanize } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { totalMatches } from "@/lib/domain/cas-review";
 import type { InboxCheck, InboxCheckDetail, InboxReading, InboxRunDetail } from "@/services/cas-inbox";
 import type { ClientSummary } from "@/types/domain";
 import { CHANNELS } from "@/types/domain";
@@ -24,18 +23,21 @@ export interface ClientCard {
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
 /** Why a client is in the inbox, as coloured tags: yellow to review, red blocked, indigo still reading. */
-export function reasons(c: ClientCard, details: Record<string, InboxRunDetail>): { label: string; tone: "review" | "blocked" | "reading" }[] {
+export function reasons(c: ClientCard, details: Record<string, InboxRunDetail>, checks: Record<string, InboxCheckDetail | null>): { label: string; tone: "review" | "blocked" | "reading" }[] {
   const ds = c.runIds.map((id) => details[id]).filter(Boolean);
   const suggested = ds.reduce((n, d) => n + d.suggested.length, 0);
   const trades = ds.reduce((n, d) => n + d.unadvised.length, 0);
   const out: { label: string; tone: "review" | "blocked" | "reading" }[] = [];
   if (c.reading.some((r) => r.status === "FAILED")) out.push({ label: "Couldn't read the PDF", tone: "blocked" });
   else if (c.reading.length) out.push({ label: "Reading…", tone: "reading" });
-  for (const x of c.check) out.push({ label: x.warnings ? `CAS to check · ${plural(x.warnings, "point")}` : "CAS to check", tone: "review" });
+  for (const x of c.check) { const n = pointsOf(x, checks); out.push({ label: n ? `CAS to check · ${plural(n, "point")}` : "CAS to check", tone: "review" }); }
   if (suggested) out.push({ label: `${plural(suggested, "call")} to confirm`, tone: "review" });
   if (trades) out.push({ label: `${plural(trades, "trade")}: ours or theirs?`, tone: "review" });
   return out;
 }
+
+/** Points shown for a CAS: the explained ones (several reader warnings about one fund are one point). */
+const pointsOf = (x: InboxCheck, checks: Record<string, InboxCheckDetail | null>) => checks[x.snapshot_id]?.points.length ?? x.warnings;
 
 export const TONE = {
   review: "bg-amber-50 text-amber-900 ring-1 ring-amber-200",
@@ -57,8 +59,7 @@ function CheckStep({ n, x, d }: { n: number; x: InboxCheck; d: InboxCheckDetail 
     <Step n={n} title={points.length ? `Needs review: the CAS of ${formatDate(x.snapshot_date)}` : `Check the CAS of ${formatDate(x.snapshot_date)}`} tone="review">
       <p className="text-sm text-slate-700">
         We read {plural(x.funds, "fund")}, {formatINRCompact(x.value)}
-        {d?.previous ? <> (last CAS {formatDate(d.previous.date)}: {formatINRCompact(d.previous.value)})</> : <> · first CAS for this client, it becomes the starting portfolio</>}.
-        {" "}{totalMatches(points) ? <span className="text-emerald-700">✓ total matches the statement</span> : null}
+        {d?.previous ? <> (last CAS {formatDate(d.previous.date)}: {formatINRCompact(d.previous.value)})</> : d && !d.has_baseline ? <> · first CAS for this client, it becomes the starting portfolio</> : null}.
         {d && d.cost == null ? <span className="text-muted"> · cost not printed in this CAS</span> : null}
       </p>
       {points.length ? (
@@ -79,7 +80,7 @@ function CheckStep({ n, x, d }: { n: number; x: InboxCheck; d: InboxCheckDetail 
             <thead><tr className="text-left text-muted"><th className="px-3 py-1.5 font-medium">Fund</th><th className="px-3 py-1.5 font-medium">Folio</th><th className="px-3 py-1.5 text-right font-medium">Units</th><th className="px-3 py-1.5 text-right font-medium">Value</th></tr></thead>
             <tbody>
               {d.holdings.map((h, i) => {
-                const flagged = points.some((p) => p.kind === "FUND_MATCH" && (p.scheme === h.scheme_name || p.folio === h.folio_number));
+                const flagged = points.some((p) => p.kind === "FUND_MATCH" && p.scheme === h.scheme_name && (!p.folio || !h.folio_number || p.folio === h.folio_number));
                 return (
                   <tr key={i} className={cn("border-t border-slate-100", flagged && "bg-amber-50")}>
                     <td className="px-3 py-1.5">{h.scheme_name}{flagged ? <b className="ml-1 text-amber-800">· check</b> : null}</td>
@@ -97,6 +98,7 @@ function CheckStep({ n, x, d }: { n: number; x: InboxCheck; d: InboxCheckDetail 
       <div className="mt-3 flex flex-wrap items-start gap-2">
         <ActionForm action={confirmCasInInboxAction.bind(null, x.snapshot_id)} className="flex flex-wrap items-center gap-2">
           <label className="flex items-center gap-1.5 text-xs text-slate-700"><input type="checkbox" name="confirm" value="yes" required /> I compared {points.length ? "these points" : "the funds"} with the PDF</label>
+          <Input name="note" placeholder="Note (optional)" aria-label="Review note" className="h-8 w-44 text-xs" />
           <SubmitButton variant="success" size="sm" confirm={blocked ? "Some points may mean the wrong CAS or wrong numbers. Confirm anyway?" : undefined}>Confirm CAS</SubmitButton>
         </ActionForm>
         {d?.document_id ? <a className="self-center text-xs font-medium text-brand hover:underline" href={`/api/documents/${d.document_id}/download`} target="_blank" rel="noreferrer">Open PDF</a> : null}
@@ -113,11 +115,13 @@ function CheckStep({ n, x, d }: { n: number; x: InboxCheck; d: InboxCheckDetail 
   );
 }
 
-export function InboxCase({ c, details, checks, summary, next, canAdvise }: {
+export function InboxCase({ c, details, checks, summary, inBank, next, canAdvise }: {
   c: ClientCard;
   details: Record<string, InboxRunDetail>;
   checks: Record<string, InboxCheckDetail | null>;
   summary: ClientSummary | null;
+  /** Money sold and not bought back (v_client_bank, as on every other screen). */
+  inBank: number;
   next: ClientCard | null;
   canAdvise: boolean;
 }) {
@@ -127,13 +131,13 @@ export function InboxCase({ c, details, checks, summary, next, canAdvise }: {
   const done = ds.flatMap((d) => d.done);
   const sipTicked = ds.reduce((n, d) => n + d.sip_lines_ticked, 0);
   const shown = trades.slice(0, 8);
-  const tags = reasons(c, details);
-  const open = c.check.reduce((t, x) => t + Math.max(1, x.warnings), 0) + suggested.length + trades.length;
+  const tags = reasons(c, details, checks);
+  const open = c.check.reduce((t, x) => t + Math.max(1, pointsOf(x, checks)), 0) + suggested.length + trades.length;
   let n = 0;
   const left = summary ? summary.yet_to_advise_sell + summary.yet_to_advise_buy : 0;
 
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-surface">
+    <div className="rounded-xl border border-border bg-surface">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-5 py-3.5">
         <Link href={`/clients/${c.client_id}`} className="text-lg font-semibold hover:underline">{c.client_name}</Link>
         {open ? <span className={cn("rounded-full px-2.5 py-0.5 text-xs font-semibold", TONE.review)}>Needs review · {plural(open, "point")}</span> : null}
@@ -212,14 +216,14 @@ export function InboxCase({ c, details, checks, summary, next, canAdvise }: {
             <div className="grid gap-2 text-sm sm:grid-cols-3">
               <div className="rounded-lg bg-slate-50 p-3"><div className="text-xs text-muted">Left to advise</div><div className="text-base font-semibold text-brand-700"><Money value={left} /></div></div>
               <div className="rounded-lg bg-slate-50 p-3"><div className="text-xs text-muted">Waiting on client</div><div className={cn("text-base font-semibold", summary.pending_total >= 0.5 && "text-amber-700")}><Money value={summary.pending_total} /></div></div>
-              <div className="rounded-lg bg-slate-50 p-3"><div className="text-xs text-muted">In bank</div><div className="text-base font-semibold"><Money value={Math.max(0, summary.money_left)} /></div></div>
+              <div className="rounded-lg bg-slate-50 p-3"><div className="text-xs text-muted">In bank</div><div className="text-base font-semibold"><Money value={inBank} /></div></div>
             </div>
             {c.check.length ? <p className="mt-2 text-xs text-muted">These change once the CAS above is confirmed.</p> : null}
           </Step>
         ) : null}
       </div>
 
-      <div className="flex flex-wrap items-center gap-3 border-t border-border bg-slate-50 px-5 py-3">
+      <div className="flex flex-wrap items-center gap-3 rounded-b-xl border-t border-border bg-slate-50 px-5 py-3">
         {tags.length ? <span className="flex flex-wrap gap-1.5">{tags.map((t, i) => <span key={i} className={cn("rounded-full px-2.5 py-0.5 text-xs font-medium", TONE[t.tone])}>{t.label}</span>)}</span> : null}
         <span className="flex-1" />
         {next ? <Link href={`/reconciliation?c=${next.client_id}`} className="rounded-md bg-ink px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800">Next: {next.client_name} →</Link> : <span className="text-xs text-muted">Last client in the inbox</span>}

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { maskPans } from "@/lib/domain/cas-review";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, Input, Textarea } from "@/components/ui/form";
 import { ActionForm, SubmitButton } from "@/components/app/action-form";
@@ -32,8 +33,10 @@ const EXAMPLE = `{
 export default async function CasDocumentPage(props: PageProps<"/cas/[casId]">) {
   const { casId } = await props.params;
   const { d } = await pageData(async (tx) => {
-    const rows = await tx<(CasDocumentRow & { client_name: string; client_code: string; document_id: string })[]>`
-      select cd.*, d.file_name, c.full_name as client_name, c.client_code, s.id as snapshot_id, s.review_status as snapshot_review_status
+    const rows = await tx<(CasDocumentRow & { client_name: string; client_code: string; document_id: string; newest_pending: boolean })[]>`
+      select cd.*, d.file_name, c.full_name as client_name, c.client_code, s.id as snapshot_id, s.review_status as snapshot_review_status,
+             s.id = (select p.id from public.portfolio_snapshots p where p.client_id = cd.client_id and p.review_status = 'PENDING_REVIEW'
+                     order by p.snapshot_date desc, p.created_at desc limit 1) as newest_pending
       from public.cas_documents cd join public.documents d on d.id = cd.document_id
       join public.clients c on c.id = cd.client_id
       left join public.portfolio_snapshots s on s.cas_document_id = cd.id
@@ -60,11 +63,11 @@ export default async function CasDocumentPage(props: PageProps<"/cas/[casId]">) 
       {d.parse_warnings?.length ? (
         <div className="mb-4 rounded-md bg-amber-50 p-3 text-sm text-amber-900">
           <strong>Needs review — validation warnings:</strong>
-          <ul className="ml-5 list-disc">{d.parse_warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
+          <ul className="ml-5 list-disc">{d.parse_warnings.map((w, i) => <li key={i}>{maskPans(w)}</li>)}</ul>
         </div>
       ) : null}
       {d.snapshot_id ? (
-        d.snapshot_review_status === "PENDING_REVIEW" ? (
+        d.snapshot_review_status === "PENDING_REVIEW" && d.newest_pending ? (
           <p className="mb-4 flex flex-wrap items-center gap-3 rounded-md bg-amber-50 px-3 py-2.5 text-sm text-amber-900 ring-1 ring-amber-300">
             Read, waiting to be checked.
             <Link className="rounded-md bg-brand px-3 py-1 text-xs font-medium text-white hover:bg-brand-700" href={`/reconciliation?c=${d.client_id}`}>Check it in the CAS inbox →</Link>

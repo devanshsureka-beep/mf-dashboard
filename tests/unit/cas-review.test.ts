@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { explainCasWarnings, maskPan, totalMatches } from "@/lib/domain/cas-review";
+import { explainCasWarnings, maskPan, maskPans, totalMatches } from "@/lib/domain/cas-review";
 
 const sensex = "Demo Sensex Index Fund - Direct Plan - Growth Option";
 
@@ -46,4 +46,14 @@ describe("explainCasWarnings", () => {
   });
 
   it("maskPan", () => expect(maskPan("ABCDE1234F")).toBe("••••••234F"));
+
+  it("a misread PAN and family PANs are masked too; folio numbers are not", () => {
+    const pts = explainCasWarnings([
+      "Statement PAN ABCDE1Z34F does not match the client's PAN ZYXWV9876K.",
+      "This CAS also contains folios of other PAN(s): QWERT1234Y, ASDF12345 (family consolidation).",
+    ]);
+    const text = pts.map((p) => p.detail).join(" ");
+    for (const pan of ["ABCDE1Z34F", "ZYXWV9876K", "QWERT1234Y", "ASDF12345"]) expect(text).not.toContain(pan);
+    expect(maskPans("ISIN for folio 1234567/89 (Demo) could not be read")).toBe("ISIN for folio 1234567/89 (Demo) could not be read");
+  });
 });

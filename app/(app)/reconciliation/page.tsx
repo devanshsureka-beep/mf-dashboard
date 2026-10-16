@@ -10,7 +10,7 @@ import { PAGES } from "@/lib/brand";
 import { casPasswordTemplate } from "@/lib/cas/password";
 import { formatDate, formatDateTime, humanize } from "@/lib/format";
 import { pageData } from "@/lib/server";
-import { cn } from "@/lib/utils";
+import { cn, UUID_RE } from "@/lib/utils";
 import { askCasHref } from "@/lib/ask-cas";
 import { getCasInbox, getInboxCheckDetail, getInboxRunDetails, type InboxCheckDetail, type InboxRunDetail } from "@/services/cas-inbox";
 import type { ClientSummary } from "@/types/domain";
@@ -87,17 +87,20 @@ function Tabs({ view, counts }: { view: string; counts: Record<string, number> }
 export default async function CasInboxPage(props: PageProps<"/reconciliation">) {
   const sp = await props.searchParams;
   const view = sp.view === "done" || sp.view === "collect" ? sp.view : "needs";
-  const want = typeof sp.c === "string" ? sp.c : null;
-  const { inbox, runs, docs, details, cards, selected, checks, summary, actor } = await pageData(async (tx) => {
+  const want = typeof sp.c === "string" && UUID_RE.test(sp.c) ? sp.c : null;
+  const { inbox, runs, docs, details, cards, selected, checks, summary, inBank, wantedName, actor } = await pageData(async (tx) => {
     const inbox = await getCasInbox(tx);
     const runIds = [...new Set([...inbox.confirm, ...inbox.unadvised].map((x) => x.run_id).concat(inbox.done.flatMap((d) => (d.run_id ? [d.run_id] : []))))];
     const cards = cardsFromInbox(inbox);
-    const selected = cards.find((c) => c.client_id === want) ?? cards[0] ?? null;
+    // A client asked for by link but with nothing open: say so, never show someone else's case.
+    const selected = want ? cards.find((c) => c.client_id === want) ?? null : cards[0] ?? null;
     const checks: Record<string, InboxCheckDetail | null> = {};
-    for (const x of selected?.check ?? []) checks[x.snapshot_id] = await getInboxCheckDetail(tx, x.snapshot_id);
+    for (const x of cards.flatMap((c) => c.check)) checks[x.snapshot_id] = await getInboxCheckDetail(tx, x.snapshot_id);
     return {
       inbox, cards, selected, checks,
       summary: selected ? (await tx<ClientSummary[]>`select * from public.v_client_summary where client_id = ${selected.client_id}`)[0] ?? null : null,
+      inBank: selected ? Number((await tx<{ in_bank: number }[]>`select in_bank::float8 as in_bank from public.v_client_bank where client_id = ${selected.client_id}`)[0]?.in_bank ?? 0) : 0,
+      wantedName: want && !selected ? ((await tx<{ full_name: string }[]>`select full_name from public.clients where id = ${want}`)[0]?.full_name ?? null) : null,
       runs: await listRuns(tx),
       docs: await listCasDocuments(tx),
       details: await getInboxRunDetails(tx, runIds),
@@ -105,7 +108,7 @@ export default async function CasInboxPage(props: PageProps<"/reconciliation">) 
   });
   const templateSet = casPasswordTemplate() !== null;
   const at = selected ? cards.indexOf(selected) : -1;
-  const nextCard = at >= 0 && cards.length > 1 ? cards[(at + 1) % cards.length] : null;
+  const nextCard = at >= 0 && cards.length > 1 ? cards[(at + 1) % cards.length] : !selected ? cards[0] ?? null : null;
   const canAdvise = actor.role !== "OPERATIONS";
 
   return (
@@ -137,7 +140,7 @@ export default async function CasInboxPage(props: PageProps<"/reconciliation">) 
                       <Link href={`/reconciliation?c=${c.client_id}`} aria-current={on ? "true" : undefined}
                         className={cn("block border-l-[3px] px-4 py-2.5 hover:bg-slate-50", on ? "border-amber-500 bg-amber-50/70" : "border-transparent")}>
                         <span className="flex items-baseline justify-between gap-2"><b className="truncate text-sm">{c.client_name}</b><span className="shrink-0 text-[11px] text-muted">{c.snapshot_date ? `CAS ${formatDate(c.snapshot_date)}` : ""}</span></span>
-                        <span className="mt-1 flex flex-wrap gap-1">{reasons(c, details).map((t, i) => <span key={i} className={cn("rounded-full px-2 py-0.5 text-[11px] font-medium", TONE[t.tone])}>{t.label}</span>)}</span>
+                        <span className="mt-1 flex flex-wrap gap-1">{reasons(c, details, checks).map((t, i) => <span key={i} className={cn("rounded-full px-2 py-0.5 text-[11px] font-medium", TONE[t.tone])}>{t.label}</span>)}</span>
                       </Link>
                     </li>
                   );
@@ -145,7 +148,12 @@ export default async function CasInboxPage(props: PageProps<"/reconciliation">) 
               </ul>
               <div className="border-t border-border px-4 py-2 text-[11px] text-muted">CAS files that passed every check counted by themselves; they are under <Link href="/reconciliation?view=done" className="text-brand hover:underline">Done</Link>.</div>
             </nav>
-            {selected ? <InboxCase c={selected} details={details} checks={checks} summary={summary} next={nextCard} canAdvise={canAdvise} /> : null}
+            {selected ? <InboxCase c={selected} details={details} checks={checks} summary={summary} inBank={inBank} next={nextCard} canAdvise={canAdvise} /> : (
+              <div className="rounded-xl border border-dashed border-border bg-white p-6 text-center text-sm text-muted">
+                <p>Nothing is open for <b className="text-ink">{wantedName ?? "this client"}</b> in the inbox: their CAS is checked and every trade decided.</p>
+                {nextCard ? <Link href={`/reconciliation?c=${nextCard.client_id}`} className="mt-3 inline-block rounded-md bg-ink px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800">Next: {nextCard.client_name} →</Link> : null}
+              </div>
+            )}
           </div>
         )
       ) : null}

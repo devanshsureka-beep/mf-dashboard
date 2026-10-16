@@ -1,5 +1,6 @@
 "use server";
 
+import { maskPans } from "@/lib/domain/cas-review";
 import { revalidatePath } from "next/cache";
 import { readCasAnyPdf } from "@/lib/integrations/cas-ai";
 import { str } from "@/lib/actions";
@@ -80,7 +81,7 @@ export async function processCasFileAction(fd: FormData): Promise<BulkCasRow> {
 
     const common = { ...clientInfo, valuationDate: out.valuationDate, snapshotId: out.snapshotId, runId: out.runId, summary: out.summary };
     if (out.snapshotStatus === "PENDING_REVIEW") {
-      return { ok: true, fileName, outcome: "NEEDS_REVIEW", message: `Read with ${out.warnings.length} check(s) to review: ${out.warnings.slice(0, 2).join(" ")}`, ...common };
+      return { ok: true, fileName, outcome: "NEEDS_REVIEW", message: `Read with ${out.warnings.length} check(s) to review: ${out.warnings.slice(0, 2).map(maskPans).join(" ")}`, ...common };
     }
     if (out.snapshotStatus === "FAILED") {
       return { ok: false, fileName, outcome: "ERROR", message: "The CAS could not be ingested.", ...common };

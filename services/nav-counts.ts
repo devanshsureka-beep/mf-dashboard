@@ -1,12 +1,23 @@
 import type { Tx } from "@/lib/db/tx";
 
-/** Counts shown next to the menu items (RLS: only the user's clients). */
+/** Sidebar badges: open calls, and clients the CAS inbox "Needs you" tab lists (same rules as getCasInbox). */
 export async function getNavCounts(tx: Tx): Promise<{ awaitingExecution: number; casInbox: number }> {
-  const r = (await tx<{ calls: number; snaps: number; unadvised: number }[]>`
+  const r = (await tx<{ calls: number; inbox: number }[]>`
     select
       (select count(*)::int from public.v_advice_items v where v.is_open) as calls,
-      (select count(distinct s.client_id)::int from public.portfolio_snapshots s where s.review_status = 'PENDING_REVIEW') as snaps,
-      (select count(distinct m.client_id)::int from public.reconciliation_matches m join public.reconciliation_runs r on r.id = m.run_id
-        where r.status <> 'CANCELLED' and m.classification = 'UNADVISED' and m.status in ('UNEXPLAINED', 'SUGGESTED') and m.reviewed_at is null) as unadvised`)[0];
-  return { awaitingExecution: r?.calls ?? 0, casInbox: (r?.snaps ?? 0) + (r?.unadvised ?? 0) };
+      (select count(distinct client_id)::int from (
+        select s.client_id from public.portfolio_snapshots s where s.review_status = 'PENDING_REVIEW'
+        union all
+        select m.client_id from public.reconciliation_matches m join public.reconciliation_runs r on r.id = m.run_id
+        where r.status <> 'CANCELLED' and m.classification = 'UNADVISED' and m.status in ('UNEXPLAINED', 'SUGGESTED') and m.reviewed_at is null
+        union all
+        select m.client_id from public.reconciliation_matches m join public.reconciliation_runs r on r.id = m.run_id
+        join public.advice_items a on a.id = m.advice_item_id and a.status in ('ISSUED', 'PARTIALLY_EXECUTED', 'EXECUTED')
+        where r.status <> 'CANCELLED' and m.classification = 'ADVICE_MATCH' and m.status = 'SUGGESTED'
+        union all
+        select cd.client_id from public.cas_documents cd
+        where cd.parse_status in ('UPLOADED', 'PROCESSING', 'FAILED') and cd.uploaded_at > now() - interval '14 days'
+          and not exists (select 1 from public.portfolio_snapshots s where s.cas_document_id = cd.id)
+      ) x) as inbox`)[0];
+  return { awaitingExecution: r?.calls ?? 0, casInbox: r?.inbox ?? 0 };
 }

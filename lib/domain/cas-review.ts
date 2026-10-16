@@ -35,7 +35,14 @@ const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 const folioKey = (f: string | null | undefined) => (f ?? "").split("/")[0].replace(/[^0-9a-z]/gi, "").toLowerCase();
 /** Never print a full PAN on screen: "ABCDE1234F" → "••••••234F". */
 export const maskPan = (pan: string) => (pan.length > 4 ? `${"•".repeat(pan.length - 4)}${pan.slice(-4)}` : pan);
-const maskPans = (s: string) => s.replace(/\b[A-Z]{5}[0-9]{4}[A-Z]\b/g, maskPan);
+/**
+ * Mask every PAN in a reader message, also a misread one: in a line that speaks of a PAN, any
+ * token of 6-12 letters and digits mixed is treated as one. Folio numbers (digits only) stay.
+ */
+export function maskPans(s: string): string {
+  if (!/\bPAN/i.test(s)) return s.replace(/\b[A-Z]{5}[0-9]{4}[A-Z]\b/g, maskPan);
+  return s.replace(/\b(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{6,12}\b/g, (t) => (t === "PAN" ? t : maskPan(t)));
+}
 
 const inr = (n: number) => `₹${Math.round(n).toLocaleString("en-IN")}`;
 
@@ -96,9 +103,9 @@ export function explainCasWarnings(warnings: readonly string[], holdings: readon
     } else if ((m = w.match(/^(?:Holdings|Scheme values) add up to (₹[\d,.]+) but the (?:statement total|portfolio summary says) (?:is )?(₹[\d,.]+)\.$/))) {
       out.push({ kind: "TOTAL", title: "Does the total match?", severity: "blocked",
         detail: `The funds we read add up to ${m[1]}, but the PDF's total is ${m[2]}. A fund may be missing or read twice.` });
-    } else if (/^Statement PAN .+ does not match the client's PAN/.test(w)) {
+    } else if ((m = w.match(/^Statement PAN (\S+) does not match the client's PAN (\S+?)\.?$/))) {
       out.push({ kind: "PAN", title: "Is this the right client?", severity: "blocked",
-        detail: `${maskPans(w.replace(/\.$/, ""))}. It may be someone else's CAS.` });
+        detail: `The PAN on this CAS (${maskPan(m[1])}) is not the client's PAN (${maskPan(m[2])}). It may be someone else's CAS.` });
     } else if (/^This CAS also contains folios of other PAN/.test(w)) {
       out.push({ kind: "FAMILY", title: "Family folios inside", severity: "review",
         detail: `${maskPans(w.replace(/ \(family consolidation\)\.?$/, ""))}. Check that only this client's funds are counted.` });

@@ -53,8 +53,8 @@ const STAGES: { view: string; label: string; line: (rows: Desk[]) => string; sub
   { view: "draft", label: "Drafts to approve", line: () => "review & approve", sub: (r) => { const d = Math.max(-1, ...r.filter((c) => c.has_draft_plan).map((c) => c.draft_days ?? 0)); return d >= 0 ? `oldest ${d} day${d === 1 ? "" : "s"}` : "none waiting"; }, warn: (r) => r.some((c) => c.has_draft_plan && (c.draft_days ?? 0) > 7) },
   { view: "tranche", label: "Next tranche to advise", line: (r) => `${formatINRCompact(sumOf(r.filter(nextTrancheOf), (c) => c.remaining_to_advise))} left to advise`, sub: (r) => `${r.filter((c) => nextTrancheOf(c) && (c.last_call_days == null || c.last_call_days > 14)).length} quiet over 14 days`, warn: (r) => r.some((c) => nextTrancheOf(c) && (c.last_call_days == null || c.last_call_days > 14)) },
   { view: "pending", label: "Waiting on client", line: (r) => `${formatINRCompact(sumOf(r, (c) => c.pending_total))} not done yet`, sub: (r) => (r.some((c) => c.pending_total >= 0.5) ? "check with the client" : "all clear") },
-  { view: "cas", label: "CAS to check", line: () => "in the CAS inbox", sub: (r) => `${r.filter((c) => c.unadvised_to_review > 0).length} with trades to decide` },
-  { view: "agreement", label: "Admin to fix", line: () => "no agreement on file", sub: (r) => `${r.filter((c) => c.premium_status === "UNPAID").length} premium not recorded` },
+  { view: "cas", label: "CAS to check", line: () => "in the CAS inbox", sub: (r) => `${r.filter((c) => c.cas_to_review > 0 && c.unadvised_to_review > 0).length} also with trades to decide` },
+  { view: "agreement", label: "Admin to fix", line: () => "no agreement on file", sub: (r) => `${r.filter((c) => c.agreement_status !== "VALID" && c.premium_status === "UNPAID").length} also premium not recorded` },
 ];
 
 export default async function ClientsPage(props: PageProps<"/clients">) {
@@ -176,7 +176,7 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
           <DraftList rows={drafts.filter((d) => !f.q || `${d.client_name} ${d.client_code}`.toLowerCase().includes(f.q.toLowerCase()))} />
         </>
       ) : <ClientList
-        rows={clients.map(toRow)}
+        rows={clients.map((c) => toRow(c, actor.role !== "OPERATIONS"))}
         isAdmin={isAdmin}
         canAdvise={actor.role !== "OPERATIONS"}
         advisors={advisors.map((a) => ({ id: a.id, name: a.full_name }))}
@@ -190,7 +190,7 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
 type Row = Awaited<ReturnType<typeof listDeskClients>>[number];
 
 /** One client as the list shows it (plain data for the client-side table). */
-function toRow(c: Row): ListRow {
+function toRow(c: Row, canAdvise: boolean): ListRow {
   const target = c.target_sell + c.target_buy;
   const inBank = c.in_bank;
   const nextTranche = Boolean(c.active_plan_id) && c.pending_total < 0.5 && c.remaining_to_advise >= 0.5;
@@ -201,8 +201,8 @@ function toRow(c: Row): ListRow {
   if (c.cas_to_review) todos.push({ text: "Check CAS", tone: "amber", href: `/reconciliation?c=${c.client_id}` });
   if (c.unadvised_to_review) todos.push({ text: `${c.unadvised_to_review} trade${c.unadvised_to_review === 1 ? "" : "s"} to decide`, tone: "amber", href: `/reconciliation?c=${c.client_id}` });
   if (c.pending_total >= 0.5) todos.push({ text: `${formatINRCompact(c.pending_total)} waiting`, tone: "amber", href: `${tranchesHref}&side=PENDING#ledger` });
-  if (c.has_draft_plan) todos.push({ text: "Approve draft", tone: "brand", href: c.draft_plan_id ? `/clients/${c.client_id}/plans/${c.draft_plan_id}` : "/clients?plan=draft" });
-  if (nextTranche) todos.push({ text: `Advise tranche · ${formatINRCompact(c.remaining_to_advise)}`, tone: "brand", href: tranchesHref });
+  if (canAdvise && c.has_draft_plan) todos.push({ text: "Approve draft", tone: "brand", href: c.draft_plan_id ? `/clients/${c.client_id}/plans/${c.draft_plan_id}` : "/clients?plan=draft" });
+  if (canAdvise && nextTranche) todos.push({ text: `Advise tranche · ${formatINRCompact(c.remaining_to_advise)}`, tone: "brand", href: tranchesHref });
   if (c.follow_ups_due) todos.push({ text: `${c.follow_ups_due} follow-up${c.follow_ups_due === 1 ? "" : "s"} due`, tone: "grey", href: `/clients/${c.client_id}?tab=file#notes` });
   if (c.agreement_status !== "VALID") todos.push({ text: c.agreement_status === "EXPIRED" ? "Renew agreement" : "Upload agreement", tone: "grey", href: `/clients/${c.client_id}?tab=file` });
   return {
