@@ -64,7 +64,14 @@ export default async function CasDocumentPage(props: PageProps<"/cas/[casId]">) 
         </div>
       ) : null}
       {d.snapshot_id ? (
-        <p className="mb-4 text-sm">Snapshot created: <Link className="text-brand hover:underline" href={`/snapshots/${d.snapshot_id}`}>review snapshot</Link> <StatusBadge status={d.snapshot_review_status} /></p>
+        d.snapshot_review_status === "PENDING_REVIEW" ? (
+          <p className="mb-4 flex flex-wrap items-center gap-3 rounded-md bg-amber-50 px-3 py-2.5 text-sm text-amber-900 ring-1 ring-amber-300">
+            Read, waiting to be checked.
+            <Link className="rounded-md bg-brand px-3 py-1 text-xs font-medium text-white hover:bg-brand-700" href={`/reconciliation?c=${d.client_id}`}>Check it in the CAS inbox →</Link>
+          </p>
+        ) : (
+          <p className="mb-4 text-sm">What we read: <Link className="text-brand hover:underline" href={`/snapshots/${d.snapshot_id}`}>funds and units</Link> <StatusBadge status={d.snapshot_review_status} /></p>
+        )
       ) : null}
 
       {waiting ? (

@@ -113,7 +113,7 @@ export function BulkUploader() {
                     <TD className="max-w-md text-xs text-muted">{r.message}</TD>
                     <TD className="whitespace-nowrap text-xs">
                       {"runId" in r && r.runId ? <Link className="text-brand hover:underline" href={`/reconciliation/${r.runId}`}>Review →</Link>
-                        : "snapshotId" in r && r.snapshotId ? <Link className="text-brand hover:underline" href={`/snapshots/${r.snapshotId}`}>Snapshot →</Link>
+                        : "snapshotId" in r && r.snapshotId ? <Link className="text-brand hover:underline" href={"clientId" in r && r.clientId ? `/reconciliation?c=${r.clientId}` : `/snapshots/${r.snapshotId}`}>Check →</Link>
                         : r.outcome === "ERROR" && !busy ? <button className="text-brand hover:underline" onClick={() => run(files, i)}>Retry</button>
                         : null}
                     </TD>

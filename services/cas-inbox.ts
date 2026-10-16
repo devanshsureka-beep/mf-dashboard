@@ -1,4 +1,5 @@
 import type { Tx } from "@/lib/db/tx";
+import { explainCasWarnings, type ReviewHolding, type ReviewPoint } from "@/lib/domain/cas-review";
 
 /**
  * The CAS inbox: every CAS moves Reading → Check what we read → Unadvised
@@ -144,4 +145,46 @@ export async function getInboxRunDetails(tx: Tx, runIds: string[]): Promise<Reco
     }
   }
   return out;
+}
+
+/** What the review of one CAS needs on the inbox screen: its points, its funds, the PDF and the CAS before it. */
+export interface InboxCheckDetail {
+  snapshot_id: string;
+  snapshot_date: string;
+  value: number;
+  /** Cost is printed in only some CAS; null when none of the funds carries it. */
+  cost: number | null;
+  document_id: string | null;
+  source: string | null;
+  uploaded_at: Date | null;
+  previous: { date: string; value: number } | null;
+  points: ReviewPoint[];
+  holdings: (ReviewHolding & { nav: number | null })[];
+}
+
+export async function getInboxCheckDetail(tx: Tx, snapshotId: string): Promise<InboxCheckDetail | null> {
+  const s = (await tx<{ id: string; client_id: string; snapshot_date: string; created_at: Date; value: number; warnings: string[] | null; document_id: string | null; source: string | null; uploaded_at: Date | null }[]>`
+    select s.id, s.client_id, s.snapshot_date::text as snapshot_date, s.created_at, s.total_current_value::float8 as value,
+           cd.parse_warnings as warnings, cd.document_id, cd.source, cd.uploaded_at
+    from public.portfolio_snapshots s left join public.cas_documents cd on cd.id = s.cas_document_id
+    where s.id = ${snapshotId}`)[0];
+  if (!s) return null;
+  const holdings = await tx<(ReviewHolding & { nav: number | null; cost: number | null })[]>`
+    select h.scheme_name, h.folio_number, h.isin, sm.scheme_name as matched_name, h.units::float8 as units,
+           h.current_value::float8 as current_value, h.latest_nav::float8 as nav, h.cost_value::float8 as cost
+    from public.portfolio_holdings h left join public.security_master sm on sm.id = h.security_id
+    where h.snapshot_id = ${snapshotId} order by h.current_value desc`;
+  const prev = (await tx<{ date: string; value: number }[]>`
+    select snapshot_date::text as date, total_current_value::float8 as value from public.portfolio_snapshots
+    where client_id = ${s.client_id} and review_status = 'CONFIRMED' and id <> ${snapshotId}
+      and (snapshot_date, created_at) < (${s.snapshot_date}::date, ${s.created_at})
+    order by snapshot_date desc, created_at desc limit 1`)[0] ?? null;
+  const costs = holdings.filter((h) => h.cost != null && h.cost > 0);
+  return {
+    snapshot_id: s.id, snapshot_date: s.snapshot_date, value: s.value,
+    cost: costs.length ? costs.reduce((t, h) => t + Number(h.cost), 0) : null,
+    document_id: s.document_id, source: s.source, uploaded_at: s.uploaded_at, previous: prev,
+    points: explainCasWarnings(Array.isArray(s.warnings) ? s.warnings : [], holdings),
+    holdings: holdings.map(({ cost: _c, ...h }) => h),
+  };
 }

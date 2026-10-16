@@ -14,8 +14,13 @@ export interface ListRow {
   id: string;
   name: string;
   code: string;
+  /** A status other than active (onboarding, paused…). */
   tag: ListTag | null;
-  subTags: ListTag[];
+  /** What to do for this client, in the order to do it (the first is the next step). */
+  todos: ListTag[];
+  /** A CAS is waiting to be checked: the money columns show once it is. */
+  casToCheck: boolean;
+  openCalls: number;
   advisor: string;
   risk: string;
   valueToday: number | null;
@@ -39,11 +44,19 @@ type Action = (prev: ActionResult | null, fd: FormData) => Promise<ActionResult>
 type Key = "name" | "advisor" | "today" | "funds" | "bank" | "tranche" | "waiting" | "sip" | "premium" | "cas";
 
 const TAG: Record<Tone, string> = {
-  amber: "bg-amber-50 text-amber-800",
-  blue: "bg-blue-50 text-blue-700 ring-1 ring-blue-200 rounded-full px-2",
-  grey: "bg-white text-slate-700 ring-1 ring-border rounded-full px-2",
-  red: "bg-red-50 text-red-700",
-  brand: "bg-brand-50 text-brand-700",
+  amber: "bg-amber-50 text-amber-900 ring-1 ring-amber-300",
+  blue: "bg-blue-50 text-blue-700 ring-1 ring-blue-200",
+  grey: "bg-slate-50 text-slate-700 ring-1 ring-slate-200",
+  red: "bg-red-50 text-red-700 ring-1 ring-red-200",
+  brand: "bg-brand-50 text-brand-700 ring-1 ring-brand-200",
+};
+/** The first to-do is a button, in the same colour family. */
+const FIRST: Record<Tone, string> = {
+  amber: "bg-amber-600 text-white hover:bg-amber-700",
+  blue: "bg-blue-600 text-white hover:bg-blue-700",
+  grey: "bg-slate-700 text-white hover:bg-slate-800",
+  red: "bg-red-600 text-white hover:bg-red-700",
+  brand: "bg-brand text-white hover:bg-brand-700",
 };
 
 const COLS: { key: Key; label: string; right?: boolean; value: (r: ListRow) => number | string }[] = [
@@ -61,9 +74,35 @@ const COLS: { key: Key; label: string; right?: boolean; value: (r: ListRow) => n
 
 const M = (v: number | null) => (v == null ? "—" : v < 0.5 ? "—" : formatINRCompact(v));
 
-function Tag({ t }: { t: ListTag }) {
-  const cls = cn("rounded px-1 text-[11px]", TAG[t.tone]);
-  return t.href ? <Link href={t.href} className={cn(cls, "hover:underline")}>{t.text}</Link> : <span className={cls}>{t.text}</span>;
+function Tag({ t, first }: { t: ListTag; first?: boolean }) {
+  const cls = cn("whitespace-nowrap rounded px-1.5 py-px text-[11px]", first ? cn("font-semibold", FIRST[t.tone]) : TAG[t.tone]);
+  const text = first && t.href ? `${t.text} →` : t.text;
+  return t.href ? <Link href={t.href} className={cn(cls, !first && "hover:underline")}>{text}</Link> : <span className={cls}>{text}</span>;
+}
+
+/** The to-dos under a name: the first as a button, one more, and the rest behind "+n more". */
+function Todos({ todos }: { todos: ListTag[] }) {
+  if (!todos.length) return null;
+  const rest = todos.slice(2);
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1">
+      <Tag t={todos[0]} first />
+      {todos[1] ? <Tag t={todos[1]} /> : null}
+      {rest.length ? (
+        <details className="relative">
+          <summary className="cursor-pointer list-none rounded px-1.5 py-px text-[11px] font-medium text-ink ring-1 ring-ink/70 hover:bg-slate-50 [&::-webkit-details-marker]:hidden">+{rest.length} more</summary>
+          <ol className="absolute left-0 z-30 mt-1 w-64 space-y-1 rounded-lg border border-border bg-white p-2 text-[12px] shadow-lg">
+            {todos.map((t, i) => (
+              <li key={t.text} className="flex items-center gap-2">
+                <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-ink text-[10px] font-bold text-white">{i + 1}</span>
+                {t.href ? <Link href={t.href} className="hover:underline">{t.text}</Link> : <span>{t.text}</span>}
+              </li>
+            ))}
+          </ol>
+        </details>
+      ) : null}
+    </div>
+  );
 }
 
 /**
@@ -180,15 +219,21 @@ export function ClientList({ rows, isAdmin, canAdvise, advisors, deleteAction, r
                   return (
                     <tr key={r.id} className={on ? "bg-brand-50/50" : "hover:bg-slate-50/70"}>
                       <td className="py-2 pl-3 align-top"><input type="checkbox" checked={on} onChange={() => toggle(r.id)} aria-label={`Select ${r.name}`} /></td>
-                      <td className="px-2 py-2">
+                      <td className="min-w-[230px] px-2 py-2">
                         <Link href={`/clients/${r.id}`} className="font-semibold text-ink hover:underline">{r.name}</Link>
                         <div className="mt-0.5 flex flex-wrap items-center gap-1.5"><span className="font-mono text-[11px] text-muted">{r.code}</span>{r.tag ? <Tag t={r.tag} /> : null}</div>
-                        {r.subTags.length ? <div className="mt-0.5 flex flex-wrap gap-1">{r.subTags.map((t) => <Tag key={t.text} t={t} />)}</div> : null}
+                        <Todos todos={r.todos} />
                       </td>
                       <td className="px-2 py-2 text-xs">{r.advisor}<div className="text-muted">{r.risk}</div></td>
-                      <td className="px-2 py-2 text-right font-semibold num">{M(r.valueToday)}</td>
-                      <td className="px-2 py-2 text-right num">{M(r.inFunds)}</td>
-                      <td className={cn("px-2 py-2 text-right num", r.inBank >= 0.5 ? "text-amber-700" : "text-muted")}>{M(r.inBank)}</td>
+                      {r.casToCheck && r.valueToday == null ? (
+                        <td colSpan={3} className="px-2 py-2"><span className="block rounded-md bg-slate-50 px-2 py-1 text-center text-[11px] text-muted">shows once the CAS is checked</span></td>
+                      ) : (
+                        <>
+                          <td className="px-2 py-2 text-right font-semibold num">{M(r.valueToday)}</td>
+                          <td className="px-2 py-2 text-right num">{M(r.inFunds)}</td>
+                          <td className={cn("px-2 py-2 text-right num", r.inBank >= 0.5 ? "text-amber-700" : "text-muted")}>{M(r.inBank)}</td>
+                        </>
+                      )}
                       <td className="w-44 px-2 py-2">
                         {r.donePct == null ? <span className="text-xs text-muted">{r.tranche ?? "No active plan"}</span> : (
                           <>
@@ -201,14 +246,18 @@ export function ClientList({ rows, isAdmin, canAdvise, advisors, deleteAction, r
                           </>
                         )}
                       </td>
-                      <td className={cn("px-2 py-2 text-right num", r.waiting >= 0.5 ? "font-semibold text-amber-700" : "text-muted")}>{M(r.waiting)}</td>
+                      <td className={cn("px-2 py-2 text-right num", r.waiting >= 0.5 ? "font-semibold text-amber-700" : "text-muted")}>{M(r.waiting)}{r.waiting >= 0.5 && r.openCalls ? <div className="text-[11px] font-normal text-muted">{r.openCalls} call{r.openCalls === 1 ? "" : "s"}</div> : null}</td>
                       <td className="px-2 py-2 text-right text-violet-700 num">{M(r.sip)}</td>
                       <td className="whitespace-nowrap px-2 py-2 text-xs">
-                        {M(r.premium)}
-                        <div className={{ green: "text-emerald-700", amber: "text-amber-700", red: "text-red-700" }[r.premiumTone]}>{r.premiumNote}</div>
-                        {r.agreementGap ? <div className="text-red-700">{r.agreementGap}</div> : null}
+                        <span className={cn("rounded px-1.5 py-px text-[11px] font-medium", { green: "bg-emerald-50 text-emerald-800", amber: "bg-amber-50 text-amber-900", red: "bg-red-50 text-red-700" }[r.premiumTone])}>
+                          {r.premium >= 0.5 ? `${M(r.premium)} · ` : ""}{r.premiumNote}
+                        </span>
+                        {r.agreementGap ? <div className="mt-0.5 text-[11px] text-muted">{r.agreementGap}</div> : null}
                       </td>
-                      <td className="whitespace-nowrap px-2 py-2 pr-3 text-xs">{r.latestCas ? short(r.latestCas) : <span className="text-muted">No CAS</span>}<div className="text-muted">since {short(r.since)}</div></td>
+                      <td className="whitespace-nowrap px-2 py-2 pr-3 text-xs">
+                        {r.casToCheck ? <Link href={`/reconciliation?c=${r.id}`} className="font-medium text-amber-800 hover:underline">To check</Link> : r.latestCas ? <span className="text-emerald-700">Confirmed</span> : <span className="text-muted">No CAS yet</span>}
+                        <div className="text-muted">{r.latestCas ? `CAS ${short(r.latestCas)}` : `since ${short(r.since)}`}</div>
+                      </td>
                     </tr>
                   );
                 })}

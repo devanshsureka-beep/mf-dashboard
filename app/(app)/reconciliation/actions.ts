@@ -1,10 +1,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { num, optStr, reqStr, runAction, type ActionResult } from "@/lib/actions";
 import { AppError, logServerError, toUserMessage } from "@/lib/errors";
 import { actionTx } from "@/lib/server";
-import { cancelRun, recheckRun, recordAdvisedOffline, resolveMatch, type MatchDecision } from "@/services/reconciliation";
+import { cancelRun, recheckRun, recordAdvisedOffline, resolveMatch, runReconciliation, type MatchDecision } from "@/services/reconciliation";
+import { confirmSnapshot, rejectSnapshot } from "@/services/portfolio";
+import { notify } from "@/lib/integrations/n8n";
 import { fromISTDateTimeLocal } from "@/lib/format";
 import { CHANNELS, type Channel } from "@/types/domain";
 
@@ -151,5 +154,39 @@ export async function confirmMatchFromInboxAction(matchId: string, _p: ActionRes
     revalidatePath("/reconciliation");
     revalidatePath("/");
     return "Confirmed done.";
+  });
+}
+
+/**
+ * Confirm a CAS from the inbox: it counts from now on, its trades are matched against the calls,
+ * and the inbox stays on the same client to show what that matching found (no page hop).
+ */
+export async function confirmCasInInboxAction(snapshotId: string, _p: ActionResult | null, fd: FormData): Promise<ActionResult> {
+  let clientId = "";
+  const res = await runAction("confirmCasInInbox", async () => {
+    if (optStr(fd, "confirm") !== "yes") throw new AppError("Tick the box once you have compared the funds with the PDF.");
+    const out = await actionTx(async (tx, actor) => {
+      const snap = await tx<{ client_id: string }[]>`select client_id from public.portfolio_snapshots where id = ${snapshotId}`;
+      if (!snap[0]) throw new AppError("CAS not found.", "NOT_FOUND");
+      const c = await confirmSnapshot(tx, snapshotId, optStr(fd, "note"));
+      const runId = c.previousSnapshotId
+        ? (await runReconciliation(tx, actor, { clientId: snap[0].client_id, currentSnapshotId: snapshotId })).runId
+        : null;
+      return { runId, clientId: snap[0].client_id };
+    });
+    clientId = out.clientId;
+    if (out.runId) notify({ event: "reconciliation.completed", client: { id: out.clientId, client_code: "", full_name: "" }, data: { run_id: out.runId } });
+  });
+  if (!res.ok) return res;
+  revalidatePath("/reconciliation");
+  revalidatePath("/");
+  redirect(`/reconciliation?c=${clientId}`);
+}
+
+export async function rejectCasInInboxAction(snapshotId: string, _p: ActionResult | null, fd: FormData): Promise<ActionResult> {
+  return runAction("rejectCasInInbox", async () => {
+    await actionTx((tx) => rejectSnapshot(tx, snapshotId, reqStr(fd, "reason", "Reason")));
+    revalidatePath("/reconciliation");
+    return "CAS rejected. It stays in history and never counts. Upload a corrected CAS when you have it.";
   });
 }

@@ -8,14 +8,13 @@ import { StatusBadge } from "@/components/app/status-badge";
 import { EmptyState, PageHeader } from "@/components/app/page-header";
 import { PAGES } from "@/lib/brand";
 import { casPasswordTemplate } from "@/lib/cas/password";
-import { formatDate, formatDateTime, formatINRCompact, humanize } from "@/lib/format";
+import { formatDate, formatDateTime, humanize } from "@/lib/format";
 import { pageData } from "@/lib/server";
 import { cn } from "@/lib/utils";
 import { askCasHref } from "@/lib/ask-cas";
-import { getCasInbox, getInboxRunDetails, type InboxCheck, type InboxReading, type InboxRunDetail } from "@/services/cas-inbox";
-import { confirmMatchFromInboxAction, decideTradeAction } from "./actions";
-import { Input, Select } from "@/components/ui/form";
-import { CHANNELS } from "@/types/domain";
+import { getCasInbox, getInboxCheckDetail, getInboxRunDetails, type InboxCheckDetail, type InboxRunDetail } from "@/services/cas-inbox";
+import type { ClientSummary } from "@/types/domain";
+import { InboxCase, reasons, TONE, type ClientCard } from "./inbox-case";
 import { listCasDocuments } from "@/services/portfolio";
 import { listRuns } from "@/services/reconciliation";
 import { BulkUploader } from "../cas/bulk/bulk-uploader";
@@ -26,17 +25,6 @@ export const maxDuration = 300; // the bulk uploader here may send a picture-onl
 export const metadata = { title: PAGES.casInbox };
 
 type Inbox = Awaited<ReturnType<typeof getCasInbox>>;
-
-/** Every open item of one client, from the four inbox lists. */
-interface ClientCard {
-  client_id: string;
-  client_name: string;
-  client_code: string;
-  snapshot_date: string | null;
-  reading: InboxReading[];
-  check: InboxCheck[];
-  runIds: string[];
-}
 
 function cardsFromInbox(inbox: Inbox): ClientCard[] {
   const by = new Map<string, ClientCard>();
@@ -99,18 +87,25 @@ function Tabs({ view, counts }: { view: string; counts: Record<string, number> }
 export default async function CasInboxPage(props: PageProps<"/reconciliation">) {
   const sp = await props.searchParams;
   const view = sp.view === "done" || sp.view === "collect" ? sp.view : "needs";
-  const { inbox, runs, docs, details, actor } = await pageData(async (tx) => {
+  const want = typeof sp.c === "string" ? sp.c : null;
+  const { inbox, runs, docs, details, cards, selected, checks, summary, actor } = await pageData(async (tx) => {
     const inbox = await getCasInbox(tx);
     const runIds = [...new Set([...inbox.confirm, ...inbox.unadvised].map((x) => x.run_id).concat(inbox.done.flatMap((d) => (d.run_id ? [d.run_id] : []))))];
+    const cards = cardsFromInbox(inbox);
+    const selected = cards.find((c) => c.client_id === want) ?? cards[0] ?? null;
+    const checks: Record<string, InboxCheckDetail | null> = {};
+    for (const x of selected?.check ?? []) checks[x.snapshot_id] = await getInboxCheckDetail(tx, x.snapshot_id);
     return {
-      inbox,
+      inbox, cards, selected, checks,
+      summary: selected ? (await tx<ClientSummary[]>`select * from public.v_client_summary where client_id = ${selected.client_id}`)[0] ?? null : null,
       runs: await listRuns(tx),
       docs: await listCasDocuments(tx),
       details: await getInboxRunDetails(tx, runIds),
     };
   });
   const templateSet = casPasswordTemplate() !== null;
-  const cards = cardsFromInbox(inbox);
+  const at = selected ? cards.indexOf(selected) : -1;
+  const nextCard = at >= 0 && cards.length > 1 ? cards[(at + 1) % cards.length] : null;
   const canAdvise = actor.role !== "OPERATIONS";
 
   return (
@@ -131,91 +126,26 @@ export default async function CasInboxPage(props: PageProps<"/reconciliation">) 
 
       {view === "needs" ? (
         cards.length === 0 ? <p className="rounded-xl border border-dashed border-border bg-white p-6 text-center text-sm text-muted">Nothing needs you. Every CAS so far was checked by itself.</p> : (
-          <div className="space-y-3">
-            {cards.map((c) => {
-              const ds = c.runIds.map((id) => details[id]).filter((d): d is InboxRunDetail => Boolean(d));
-              const suggested = ds.flatMap((d) => d.suggested.map((m) => ({ ...m, run_id: d.run_id })));
-              const trades = ds.flatMap((d) => d.unadvised.map((m) => ({ ...m, run_id: d.run_id })));
-              const prev = ds.map((d) => d.previous_date).filter(Boolean).sort()[0] ?? null;
-              const shown = trades.slice(0, 6);
-              return (
-                <article key={c.client_id} className="overflow-hidden rounded-xl border border-border bg-surface">
-                  <div className="flex flex-wrap items-start justify-between gap-2 px-4 pt-3">
-                    <div>
-                      <Link href={`/clients/${c.client_id}`} className="font-semibold hover:underline">{c.client_name}</Link>
-                      <span className="ml-2 text-xs text-muted">{c.client_code}{c.snapshot_date ? ` · CAS ${prev ? `${formatDate(prev)} → ` : ""}${formatDate(c.snapshot_date)}` : ""}</span>
-                    </div>
-                    <Link href={`/clients/${c.client_id}`} className="text-xs font-medium text-brand hover:underline">Open client →</Link>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5 px-4 pb-2 pt-2 text-xs">
-                    {ds.map((d) => <DoneChips key={d.run_id} d={d} />)}
-                    {trades.length ? <span className="rounded-full bg-red-50 px-2.5 py-0.5 font-medium text-red-800">{plural(trades.length, "trade")} need{trades.length === 1 ? "s" : ""} you</span> : null}
-                    {suggested.length ? <span className="rounded-full bg-amber-50 px-2.5 py-0.5 font-medium text-amber-900">{plural(suggested.length, "call")} to confirm</span> : null}
-                    {c.check.length ? <span className="rounded-full bg-amber-50 px-2.5 py-0.5 font-medium text-amber-900">CAS to check before it counts</span> : null}
-                    {c.reading.length ? <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 font-medium text-indigo-800">{c.reading.some((r) => r.status === "FAILED") ? "CAS could not be read" : "Reading…"}</span> : null}
-                  </div>
-                  <ul className="divide-y divide-border border-t border-border text-[13px]">
-                    {c.reading.map((r) => (
-                      <li key={r.cas_id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
-                        <span className={r.status === "FAILED" ? "text-red-700" : "text-indigo-700"}>
-                          {r.status === "FAILED" ? `Could not be read: ${r.error ?? "unknown error"}` : `${humanize(r.status)}… uploaded ${formatDateTime(r.uploaded_at)}`}
-                        </span>
-                        <Link className="text-xs font-medium text-brand hover:underline" href={`/cas/${r.cas_id}`}>Open</Link>
-                      </li>
-                    ))}
-                    {c.check.map((x) => (
-                      <li key={x.snapshot_id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
-                        <span>CAS of {formatDate(x.snapshot_date)} read: {plural(x.funds, "fund")}, {formatINRCompact(x.value)}.{x.warnings ? <b className="text-amber-800"> {plural(x.warnings, "point")} to check</b> : null} Compare it with the PDF, then confirm.</span>
-                        <Link href={x.cas_id ? `/cas/${x.cas_id}` : `/snapshots/${x.snapshot_id}`} className="rounded-md bg-brand px-3 py-1 text-xs font-medium text-white hover:bg-brand-700">Check &amp; confirm</Link>
-                      </li>
-                    ))}
-                    {suggested.map((m) => (
-                      <li key={m.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
-                        <span><b>{m.scheme_name}</b> {m.action === "SELL" ? "redeemed" : "bought"} <Money value={m.amount} />{m.date ? ` on ${formatDate(m.date)}` : ""}: looks like our {m.action?.toLowerCase() ?? ""} call.</span>
-                        <span className="flex items-center gap-2">
-                          <ActionForm action={confirmMatchFromInboxAction.bind(null, m.id)}><SubmitButton size="sm" variant="success">Confirm done</SubmitButton></ActionForm>
-                          <Link href={`/reconciliation/${m.run_id}`} className="text-xs text-brand hover:underline">Part done / not it →</Link>
-                        </span>
-                      </li>
-                    ))}
-                    {shown.map((m) => (
-                      <li key={m.id} className="flex flex-wrap items-center justify-between gap-2 bg-red-50/40 px-4 py-2.5">
-                        <span><b>{m.scheme_name}</b> {m.change_type === "DECREASE" || m.change_type === "EXITED" ? "redeemed" : "invested"} <Money value={m.amount} />{m.date ? ` on ${formatDate(m.date)}` : ""}. No call matches it.</span>
-                        <span className="flex items-center gap-1.5">
-                          {canAdvise && m.single_trade ? (
-                            <details className="relative">
-                              <summary className="cursor-pointer list-none rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-medium hover:bg-slate-50 [&::-webkit-details-marker]:hidden">We advised it ▾</summary>
-                              <ActionForm action={decideTradeAction.bind(null, m.id)} className="absolute right-0 z-30 mt-1 w-72 space-y-2 rounded-lg border border-border bg-white p-3 text-xs shadow-lg">
-                                <input type="hidden" name="decision" value="ADVISED" />
-                                <p className="text-muted">Records the call given outside the dashboard and this trade as its execution.</p>
-                                <label className="block">How the client was told *
-                                  <Select name="channel" required defaultValue="" className="mt-1 h-8 text-xs">
-                                    <option value="" disabled>Choose…</option>
-                                    {CHANNELS.map((ch) => <option key={ch} value={ch}>{humanize(ch)}</option>)}
-                                  </Select>
-                                </label>
-                                <label className="block">When (empty: the trade day, 09:00)
-                                  <Input name="communicated_at" type="datetime-local" className="mt-1 h-8 text-xs" />
-                                </label>
-                                <SubmitButton size="sm" confirm="Record this trade as our call, done?">Record call</SubmitButton>
-                              </ActionForm>
-                            </details>
-                          ) : null}
-                          <ActionForm action={decideTradeAction.bind(null, m.id)}><input type="hidden" name="decision" value="OWN" /><SubmitButton size="sm" variant="outline" confirm="Mark this as the client's own trade (no call)?">Client&rsquo;s own</SubmitButton></ActionForm>
-                        </span>
-                      </li>
-                    ))}
-                    {trades.length > shown.length ? <li className="px-4 py-2 text-xs text-muted">+ {trades.length - shown.length} more trade(s) in the full match table.</li> : null}
-                  </ul>
-                  {c.runIds.length ? (
-                    <div className="border-t border-border px-4 py-2 text-xs">
-                      {c.runIds.map((id) => <Link key={id} href={`/reconciliation/${id}`} className="mr-3 text-brand hover:underline">Full match table →</Link>)}
-                      <span className="text-muted">units, NAV and part-done decisions</span>
-                    </div>
-                  ) : null}
-                </article>
-              );
-            })}
+          <div className="grid items-start gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
+            <nav aria-label="Clients that need you" className="overflow-hidden rounded-xl border border-border bg-surface lg:sticky lg:top-4">
+              <div className="border-b border-border px-4 py-2.5 text-[11px] font-bold uppercase tracking-[0.06em] text-amber-800">Needs you · {cards.length}</div>
+              <ul className="max-h-[70vh] divide-y divide-border overflow-y-auto">
+                {cards.map((c) => {
+                  const on = c.client_id === selected?.client_id;
+                  return (
+                    <li key={c.client_id}>
+                      <Link href={`/reconciliation?c=${c.client_id}`} aria-current={on ? "true" : undefined}
+                        className={cn("block border-l-[3px] px-4 py-2.5 hover:bg-slate-50", on ? "border-amber-500 bg-amber-50/70" : "border-transparent")}>
+                        <span className="flex items-baseline justify-between gap-2"><b className="truncate text-sm">{c.client_name}</b><span className="shrink-0 text-[11px] text-muted">{c.snapshot_date ? `CAS ${formatDate(c.snapshot_date)}` : ""}</span></span>
+                        <span className="mt-1 flex flex-wrap gap-1">{reasons(c, details).map((t, i) => <span key={i} className={cn("rounded-full px-2 py-0.5 text-[11px] font-medium", TONE[t.tone])}>{t.label}</span>)}</span>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+              <div className="border-t border-border px-4 py-2 text-[11px] text-muted">CAS files that passed every check counted by themselves; they are under <Link href="/reconciliation?view=done" className="text-brand hover:underline">Done</Link>.</div>
+            </nav>
+            {selected ? <InboxCase c={selected} details={details} checks={checks} summary={summary} next={nextCard} canAdvise={canAdvise} /> : null}
           </div>
         )
       ) : null}

@@ -1,7 +1,8 @@
 import { HubTabs } from "@/components/app/hub-tabs";
 import Link from "next/link";
 import { Card } from "@/components/ui/card";
-import { Input, Select } from "@/components/ui/form";
+import { Input } from "@/components/ui/form";
+import { AutoSelect } from "@/components/app/auto-select";
 import { Button, LinkButton } from "@/components/ui/button";
 import { EmptyState, PageHeader } from "@/components/app/page-header";
 import { formatDate, formatINRCompact, humanize } from "@/lib/format";
@@ -34,6 +35,18 @@ const VIEWS: { key: string; label: string; params: Record<string, string | undef
   { key: "cas", label: "CAS to check", params: { attention: "cas_review" }, match: (f) => f.attention === "cas_review", count: (c) => c.cas_to_review > 0 },
   { key: "follow", label: "Follow-ups due", params: { attention: "follow_up" }, match: (f) => f.attention === "follow_up", count: (c) => c.follow_ups_due > 0 },
   { key: "agreement", label: "No agreement", params: { agreement: "missing" }, match: (f) => f.agreement === "missing", count: (c) => c.agreement_status !== "VALID" },
+];
+
+const sumOf = (rows: Desk[], f: (c: Desk) => number) => rows.reduce((t, c) => t + f(c), 0);
+const nextTrancheOf = (c: Desk) => Boolean(c.active_plan_id) && c.pending_total < 0.5 && c.remaining_to_advise >= 0.5;
+/** The six stage tiles, each a saved view with its money and what is getting old. */
+const STAGES: { view: string; label: string; line: (rows: Desk[]) => string; sub: (rows: Desk[]) => string; warn?: (rows: Desk[]) => boolean }[] = [
+  { view: "all", label: "All clients", line: (r) => `${formatINRCompact(sumOf(r, (c) => c.live_portfolio_value ?? 0))} in funds`, sub: (r) => `${r.filter((c) => c.active_plan_id).length} on a live plan` },
+  { view: "draft", label: "Drafts to approve", line: () => "review & approve", sub: (r) => { const d = Math.max(-1, ...r.filter((c) => c.has_draft_plan).map((c) => c.draft_days ?? 0)); return d >= 0 ? `oldest ${d} day${d === 1 ? "" : "s"}` : "none waiting"; }, warn: (r) => r.some((c) => c.has_draft_plan && (c.draft_days ?? 0) > 7) },
+  { view: "tranche", label: "Next tranche to advise", line: (r) => `${formatINRCompact(sumOf(r.filter(nextTrancheOf), (c) => c.remaining_to_advise))} left to advise`, sub: (r) => `${r.filter((c) => nextTrancheOf(c) && (c.last_call_days == null || c.last_call_days > 14)).length} quiet over 14 days`, warn: (r) => r.some((c) => nextTrancheOf(c) && (c.last_call_days == null || c.last_call_days > 14)) },
+  { view: "pending", label: "Waiting on client", line: (r) => `${formatINRCompact(sumOf(r, (c) => c.pending_total))} not done yet`, sub: (r) => (r.some((c) => c.pending_total >= 0.5) ? "check with the client" : "all clear") },
+  { view: "cas", label: "CAS to check", line: () => "in the CAS inbox", sub: (r) => `${r.filter((c) => c.unadvised_to_review > 0).length} with trades to decide` },
+  { view: "agreement", label: "Admin to fix", line: () => "no agreement on file", sub: (r) => `${r.filter((c) => c.premium_status === "UNPAID").length} premium not recorded` },
 ];
 
 export default async function ClientsPage(props: PageProps<"/clients">) {
@@ -82,35 +95,63 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
         }
       />
 
-      {/* Saved views */}
-      <nav aria-label="Views" className="mb-3 flex gap-0.5 overflow-x-auto border-b border-border">
-        {VIEWS.map((v) => {
+      {/* The book by stage: every stage visible at once, click one to list its clients. */}
+      <div className="mb-2 flex flex-wrap items-center gap-x-2 text-[11px] uppercase tracking-[0.05em] text-muted">
+        <span>Every client moves through:</span><span className="text-ink">Draft plan</span>→<span className="text-ink">Advise tranche</span>→<span className="text-ink">Client acts</span>→<span className="text-ink">CAS confirms</span>→<span className="text-ink">next tranche</span>
+      </div>
+      <nav aria-label="Stages" className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+        {STAGES.map((t) => {
+          const v = VIEWS.find((x) => x.key === t.view)!;
           const on = v.match(f);
+          const n = count(v.count);
           return (
-            <Link key={v.key} href={viewHref(v.params)} aria-current={on ? "page" : undefined}
-              className={cn("-mb-px whitespace-nowrap border-b-2 px-3 py-2 text-[13.5px]", on ? "border-brand font-semibold text-brand" : "border-transparent text-slate-600 hover:text-ink")}>
-              {v.label} <span className={cn("ml-0.5 text-xs", v.alert && count(v.count) ? "font-semibold text-red-700" : "text-muted")}>{count(v.count)}</span>
+            <Link key={t.view} href={viewHref(v.params)} aria-current={on ? "page" : undefined}
+              className={cn("rounded-xl border p-3 transition-colors", on ? "border-2 border-brand bg-brand-50 p-[11px]" : "border-border bg-surface hover:border-brand-200")}>
+              <div className={cn("text-xs font-semibold", on ? "text-brand-700" : "text-slate-600")}>{t.label}</div>
+              <div className={cn("text-2xl font-bold tracking-tight num", n === 0 ? "text-slate-300" : on ? "text-brand-800" : "text-ink")}>{n}</div>
+              <div className="truncate text-xs text-slate-700">{t.line(all)}</div>
+              <div className={cn("truncate text-[11px]", t.warn?.(all) ? "text-amber-700" : "text-muted")}>{t.sub(all)}</div>
             </Link>
           );
         })}
       </nav>
+      <div className="mb-3 flex flex-wrap items-center gap-1.5 text-xs">
+        <span className="text-muted">Also:</span>
+        {(["needs", "unadvised", "follow"] as const).map((k) => {
+          const v = VIEWS.find((x) => x.key === k)!;
+          const n = count(v.count);
+          return (
+            <Link key={k} href={viewHref(v.params)} aria-current={v.match(f) ? "page" : undefined}
+              className={cn("rounded-full px-2.5 py-1 ring-1", v.match(f) ? "bg-brand-50 font-semibold text-brand-700 ring-brand" : n ? "bg-white text-slate-700 ring-border hover:ring-brand-200" : "bg-white text-slate-400 ring-border")}>
+              {v.label} <b className={cn(n && v.alert ? "text-red-700" : "")}>{n}</b>
+            </Link>
+          );
+        })}
+        <Link className={cn("rounded-full bg-white px-2.5 py-1 ring-1 ring-border hover:ring-brand-200", f.premium === "renewal_due" && "bg-brand-50 font-semibold text-brand-700 ring-brand")} href={viewHref({ premium: "renewal_due" })}>Renewal due</Link>
+        <Link className={cn("rounded-full bg-white px-2.5 py-1 ring-1 ring-border hover:ring-brand-200", f.premium === "expired" && "bg-brand-50 font-semibold text-brand-700 ring-brand")} href={viewHref({ premium: "expired" })}>Premium expired</Link>
+        <Link className={cn("rounded-full bg-white px-2.5 py-1 ring-1 ring-border hover:ring-brand-200", f.attention === "no_plan" && "bg-brand-50 font-semibold text-brand-700 ring-brand")} href={viewHref({ attention: "no_plan" })}>No active plan</Link>
+      </div>
 
       <form className="mb-3 flex flex-wrap items-center gap-2" method="get">
         <Suspense fallback={<Input name="q" defaultValue={f.q} className="h-9 w-72" aria-label="Search" />}><LiveSearch defaultValue={f.q} /></Suspense>
         {actor.role !== "ADVISOR" ? (
-          <Select name="advisor" defaultValue={f.advisorId ?? ""} className="h-9 w-44" aria-label="Advisor">
+          <AutoSelect name="advisor" defaultValue={f.advisorId ?? ""} className="h-9 w-44" aria-label="Advisor">
             <option value="">All advisors</option>
             {advisors.map((a) => <option key={a.id} value={a.id}>{a.full_name}</option>)}
-          </Select>
+          </AutoSelect>
         ) : null}
-        <Select name="sort" defaultValue={f.sort} className="h-9 w-48" aria-label="Sort">
+        <AutoSelect name="risk" defaultValue={f.risk ?? ""} className="h-9 w-40" aria-label="Risk">
+          <option value="">Any risk</option>
+          {RISK_PROFILES.map((r) => <option key={r} value={r}>{humanize(r)}</option>)}
+        </AutoSelect>
+        <AutoSelect name="sort" defaultValue={f.sort} className="h-9 w-48" aria-label="Sort">
           <option value="action">Needs action first</option><option value="left">Most left to advise</option><option value="value">Value (high first)</option>
           <option value="pending">Waiting (high first)</option><option value="name">Name</option><option value="onboarded">Newest onboarded</option>
-        </Select>
-        {(["status", "risk", "plan", "premium", "attention", "agreement", "min", "max"] as const).map((k) => one(k) ? <input key={k} type="hidden" name={k} value={one(k)} /> : null)}
-        <Button type="submit" variant="outline" size="sm">Apply</Button>
-        {activeFilters ? <Link href="/clients" className="text-xs text-muted hover:underline">Clear</Link> : null}
-        <span className="ml-auto text-[11px] text-muted">More views: <Link className="hover:underline" href={viewHref({ premium: "renewal_due" })}>renewal due</Link> · <Link className="hover:underline" href={viewHref({ premium: "expired" })}>premium expired</Link> · <Link className="hover:underline" href={viewHref({ attention: "no_plan" })}>no active plan</Link> · tick clients for one action on all · click a column to sort</span>
+        </AutoSelect>
+        {(["status", "plan", "premium", "attention", "agreement", "min", "max"] as const).map((k) => one(k) ? <input key={k} type="hidden" name={k} value={one(k)} /> : null)}
+        <noscript><Button type="submit" variant="outline" size="sm">Apply</Button></noscript>
+        {activeFilters ? <Link href="/clients" className="text-xs text-muted hover:underline">Clear filters</Link> : null}
+        <span className="ml-auto text-[11px] text-muted">To-dos under each name are in the order to do them; the first is a button · tick clients for one action on all · click a column to sort</span>
       </form>
 
       {draftView ? (
@@ -138,20 +179,18 @@ function toRow(c: Row): ListRow {
   const inBank = c.in_bank;
   const nextTranche = Boolean(c.active_plan_id) && c.pending_total < 0.5 && c.remaining_to_advise >= 0.5;
   const tranchesHref = `/clients/${c.client_id}?tab=tranches`;
-  const tag: ListTag | null =
-    c.status !== "ACTIVE" ? { text: humanize(c.status), tone: c.status === "ONBOARDING" ? "blue" : "grey" }
-    : c.pending_total >= 0.5 ? { text: `${formatINRCompact(c.pending_total)} waiting for client`, tone: "amber", href: `${tranchesHref}&side=PENDING#ledger` }
-    : nextTranche ? { text: "next tranche to advise", tone: "brand", href: tranchesHref }
-    : null;
-  const sub: ListTag[] = [];
-  if (c.status !== "ACTIVE" && c.pending_total >= 0.5) sub.push({ text: `${formatINRCompact(c.pending_total)} waiting for client`, tone: "amber" });
-  if (c.status !== "ACTIVE" && nextTranche) sub.push({ text: "next tranche to advise", tone: "brand", href: tranchesHref });
-  if (c.follow_ups_due) sub.push({ text: `${c.follow_ups_due} follow-up`, tone: "amber", href: `/clients/${c.client_id}?tab=file#notes` });
-  if (c.unadvised_to_review) sub.push({ text: `${c.unadvised_to_review} unadvised`, tone: "red", href: tranchesHref });
-  if (c.cas_to_review) sub.push({ text: "CAS to check", tone: "amber", href: "/reconciliation" });
-  if (c.has_draft_plan) sub.push({ text: "draft to approve", tone: "brand", href: c.draft_plan_id ? `/clients/${c.client_id}/plans/${c.draft_plan_id}` : "/clients?plan=draft" });
+  const tag: ListTag | null = c.status !== "ACTIVE" ? { text: humanize(c.status), tone: c.status === "ONBOARDING" ? "blue" : "grey" } : null;
+  // In the order to do them: the CAS first (it decides what is left), then trades, waiting, the plan, the rest.
+  const todos: ListTag[] = [];
+  if (c.cas_to_review) todos.push({ text: "Check CAS", tone: "amber", href: `/reconciliation?c=${c.client_id}` });
+  if (c.unadvised_to_review) todos.push({ text: `${c.unadvised_to_review} trade${c.unadvised_to_review === 1 ? "" : "s"} to decide`, tone: "amber", href: `/reconciliation?c=${c.client_id}` });
+  if (c.pending_total >= 0.5) todos.push({ text: `${formatINRCompact(c.pending_total)} waiting`, tone: "amber", href: `${tranchesHref}&side=PENDING#ledger` });
+  if (c.has_draft_plan) todos.push({ text: "Approve draft", tone: "brand", href: c.draft_plan_id ? `/clients/${c.client_id}/plans/${c.draft_plan_id}` : "/clients?plan=draft" });
+  if (nextTranche) todos.push({ text: `Advise tranche · ${formatINRCompact(c.remaining_to_advise)}`, tone: "brand", href: tranchesHref });
+  if (c.follow_ups_due) todos.push({ text: `${c.follow_ups_due} follow-up${c.follow_ups_due === 1 ? "" : "s"} due`, tone: "grey", href: `/clients/${c.client_id}?tab=file#notes` });
+  if (c.agreement_status !== "VALID") todos.push({ text: c.agreement_status === "EXPIRED" ? "Renew agreement" : "Upload agreement", tone: "grey", href: `/clients/${c.client_id}?tab=file` });
   return {
-    id: c.client_id, name: c.full_name, code: c.client_code, tag, subTags: sub,
+    id: c.client_id, name: c.full_name, code: c.client_code, tag, todos, casToCheck: c.cas_to_review > 0, openCalls: c.open_calls,
     advisor: c.advisor_name ?? "—", risk: c.risk_profile ? humanize(c.risk_profile) : "—",
     valueToday: c.live_portfolio_value == null && inBank < 0.5 ? null : (c.live_portfolio_value ?? 0) + inBank,
     inFunds: c.live_portfolio_value, inBank,
@@ -160,9 +199,9 @@ function toRow(c: Row): ListRow {
     advisedPct: target > 0 ? Math.round(((c.advised_sell + c.advised_buy) / target) * 100) : 0,
     left: c.remaining_to_advise, waiting: c.pending_total, sip: c.sip_monthly_target,
     premium: c.premium_paid_total,
-    premiumNote: c.paid_until ? `${c.premium_status === "EXPIRED" ? "expired" : "till"} ${formatDate(c.paid_until)}` : c.premium_status === "UNPAID" ? "not recorded" : "no period",
+    premiumNote: c.paid_until ? `${c.premium_status === "EXPIRED" ? "Expired" : "Paid till"} ${formatDate(c.paid_until)}` : c.premium_status === "UNPAID" ? "Not recorded" : "No period",
     premiumTone: c.premium_status === "ACTIVE" ? (c.renewal_due ? "amber" : "green") : "red",
-    agreementGap: c.agreement_status !== "VALID" ? `agreement ${c.agreement_status === "EXPIRED" ? "expired" : "missing"}` : null,
+    agreementGap: c.agreement_status !== "VALID" ? `no agreement${c.agreement_status === "EXPIRED" ? " (expired)" : ""}` : null,
     latestCas: c.latest_cas_date, since: c.onboarding_date,
   };
 }
