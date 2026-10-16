@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 import { amcName, assetClass, GROUP_BYS, groupBook, insights, shortCategory, slices, type GroupBy, type GroupNode } from "@/lib/domain/book";
 import { listDeskClients } from "@/services/clients";
 import { listDraftPlans } from "@/services/plans";
-import { getBookHoldings, getBookTrend } from "@/services/book";
+import { getBookHoldings, getBookTrend, primaryAdvisor } from "@/services/book";
 import { listWaiting } from "@/services/waiting";
 import { askCasHref } from "@/lib/ask-cas";
 import { ActionBadge } from "@/components/app/status-badge";
@@ -101,8 +101,9 @@ export default async function Today(props: PageProps<"/">) {
       draftPlans: await listDraftPlans(tx, { advisorId: adv }),
       sip: (await tx<{ target: number; started: number }[]>`
         select coalesce(sum(v.sip_monthly_target), 0)::float8 as target, coalesce(sum(v.sip_monthly_started), 0)::float8 as started
-        from public.v_client_sip v join public.v_client_summary s on s.client_id = v.client_id
-        where (${adv}::uuid is null or s.advisor_id = ${adv})`)[0],
+        from public.v_client_sip v join public.clients c on c.id = v.client_id and c.deleted_at is null
+        ${primaryAdvisor(tx)}
+        where (${adv}::uuid is null or adv.advisor_id = ${adv})`)[0],
       calls: await listWaiting(tx, { advisorId: adv, limit: 5 }),
       openCalls: Number((await tx<{ n: number }[]>`select count(*)::int as n from public.v_pending_executions where (${adv}::uuid is null or advisor_id = ${adv})`)[0]?.n ?? 0),
       // What the CAS uploads of the last 30 days did on their own, and what they left for a person.
@@ -110,8 +111,9 @@ export default async function Today(props: PageProps<"/">) {
         select count(*) filter (where m.status in ('CONFIRMED', 'PARTIAL') and coalesce(m.resolved_at, r.created_at) > now() - interval '30 days')::int as done,
                count(*) filter (where m.status = 'SUGGESTED')::int as confirm
         from public.reconciliation_matches m join public.reconciliation_runs r on r.id = m.run_id
-        join public.v_client_summary s on s.client_id = m.client_id
-        where m.classification = 'ADVICE_MATCH' and r.status <> 'CANCELLED' and (${adv}::uuid is null or s.advisor_id = ${adv})`)[0] ?? { done: 0, confirm: 0 },
+        join public.clients c on c.id = m.client_id and c.deleted_at is null
+        ${primaryAdvisor(tx)}
+        where m.classification = 'ADVICE_MATCH' and r.status <> 'CANCELLED' and (${adv}::uuid is null or adv.advisor_id = ${adv})`)[0] ?? { done: 0, confirm: 0 },
       holdings: await getBookHoldings(tx, adv),
       trend: await getBookTrend(tx, adv, live, all.filter((c) => (c.live_portfolio_value ?? 0) > 0).length),
     };

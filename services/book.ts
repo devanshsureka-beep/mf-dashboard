@@ -6,19 +6,32 @@ import type { BookHolding } from "@/lib/domain/book";
  * narrows to one advisor's clients ("My clients").
  */
 
+/**
+ * The client's primary advisor, joined as `adv` (same rule as v_client_summary). The book reads
+ * clients directly instead of v_client_summary: that view computes every plan number, which
+ * these queries do not need.
+ */
+export const primaryAdvisor = (tx: Tx) => tx`
+  left join lateral (
+    select a.advisor_id, pr.full_name as advisor_name
+    from public.client_advisor_assignments a join public.profiles pr on pr.id = a.advisor_id
+    where a.client_id = c.id and a.is_active and a.assignment_role = 'PRIMARY'
+    limit 1) adv on true`;
+
 /** Every holding of each client's latest confirmed CAS, at today's NAV, with its fund's category and AMC. */
 export async function getBookHoldings(tx: Tx, advisorId: string | null): Promise<BookHolding[]> {
   return tx<BookHolding[]>`
-    select h.client_id, s.full_name as client_name, s.advisor_name, s.risk_profile, h.security_id,
+    select h.client_id, c.full_name as client_name, adv.advisor_name, c.risk_profile, h.security_id,
            coalesce(sm.scheme_name, h.scheme_name) as scheme_name,
            coalesce(m.category, sm.category) as category, coalesce(m.amc, sm.amc) as amc,
            coalesce(h.plan_type, sm.plan_type, m.plan_type) as plan_type,
            h.live_value::float8 as value
     from public.v_holding_live h
-    join public.v_client_summary s on s.client_id = h.client_id
+    join public.clients c on c.id = h.client_id and c.deleted_at is null
+    ${primaryAdvisor(tx)}
     left join public.security_master sm on sm.id = h.security_id
     left join public.mf_schemes m on m.isin = h.isin
-    where h.live_value > 0 and (${advisorId}::uuid is null or s.advisor_id = ${advisorId})`;
+    where h.live_value > 0 and (${advisorId}::uuid is null or adv.advisor_id = ${advisorId})`;
 }
 
 export interface TrendPoint { month: string; value: number; clients: number }
@@ -34,8 +47,9 @@ export async function getBookTrend(tx: Tx, advisorId: string | null, liveNow: nu
       from generate_series(1, 11) n
     ), snaps as (
       select p.client_id, p.snapshot_date, p.created_at, p.total_current_value
-      from public.portfolio_snapshots p join public.v_client_summary s on s.client_id = p.client_id
-      where p.review_status = 'CONFIRMED' and (${advisorId}::uuid is null or s.advisor_id = ${advisorId})
+      from public.portfolio_snapshots p join public.clients c on c.id = p.client_id and c.deleted_at is null
+      ${primaryAdvisor(tx)}
+      where p.review_status = 'CONFIRMED' and (${advisorId}::uuid is null or adv.advisor_id = ${advisorId})
     )
     select to_char(mo.m_start, 'YYYY-MM') as month, coalesce(sum(l.v), 0)::float8 as value,
            -- Clients holding something then (a new investor's empty start does not count).
