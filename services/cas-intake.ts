@@ -32,9 +32,10 @@ export async function findClientByPan(tx: Tx, pan: string | null): Promise<Intak
 }
 
 /**
- * The client a CAS belongs to: by PAN; else a client onboarded without a PAN (a new investor
- * onboarded from the report alone) whose mobile number, or else whose name, matches the CAS,
- * when exactly one does. With `claim`, that client takes the CAS's PAN from now on.
+ * The client a CAS belongs to: by PAN; else the one client onboarded without a PAN (a new
+ * investor onboarded from the report alone) whose mobile number AND name both match the CAS.
+ * Families share mobiles, so the mobile alone is never enough; nor is a name alone. With
+ * `claim`, that client takes the CAS's PAN from now on.
  */
 export async function findClientForCas(
   tx: Tx,
@@ -45,18 +46,27 @@ export async function findClientForCas(
   if (byPan || !investor.pan) return byPan;
   const open = await tx<IntakeClient[]>`
     select id, client_code, full_name, phone, email, pan from public.clients where pan is null and deleted_at is null`;
-  const mobile = (investor.mobile ?? "").replace(/\D/g, "").slice(-10);
-  const byPhone = mobile.length === 10 ? open.filter((c) => (c.phone ?? "").replace(/\D/g, "").slice(-10) === mobile) : [];
-  const byName = investor.name ? open.filter((c) => sameInvestor(c.full_name, investor.name ?? null)) : [];
-  const hit = byPhone.length === 1 ? byPhone[0] : byPhone.length === 0 && byName.length === 1 ? byName[0] : null;
-  if (hit && opts.claim) await claimPan(tx, hit.id, investor.pan);
-  return hit && opts.claim ? { ...hit, pan: investor.pan.toUpperCase() } : hit;
+  const both = open.filter((c) => casMatchesClient(investor, c));
+  const hit = both.length === 1 ? both[0] : null;
+  if (!hit || !opts.claim) return hit;
+  // Someone else may have recorded a PAN meanwhile: then the PAN decides.
+  if (!(await claimPan(tx, hit.id, investor.pan))) return findClientByPan(tx, investor.pan);
+  return { ...hit, pan: investor.pan.toUpperCase() };
+}
+
+const last10 = (s: string | null | undefined) => (s ?? "").replace(/\D/g, "").slice(-10);
+
+/** Same mobile and same name: the CAS is this client's (used before taking its PAN). */
+export function casMatchesClient(investor: { mobile?: string | null; name?: string | null }, c: { phone: string | null; full_name: string }): boolean {
+  const m = last10(investor.mobile);
+  return m.length === 10 && m === last10(c.phone) && Boolean(investor.name) && sameInvestor(c.full_name, investor.name ?? null);
 }
 
 /** Record a PAN read from the client's CAS on a client onboarded without one. */
-export async function claimPan(tx: Tx, clientId: string, pan: string): Promise<void> {
+export async function claimPan(tx: Tx, clientId: string, pan: string): Promise<boolean> {
   await setAuditReason(tx, "PAN read from the client's CAS (onboarded without a PAN)");
-  await tx`select public.claim_client_pan(${clientId}, ${pan})`;
+  const r = await tx<{ ok: boolean }[]>`select public.claim_client_pan(${clientId}, ${pan}) as ok`;
+  return Boolean(r[0]?.ok);
 }
 
 /** Mobile numbers of the clients this user can see (to build CAS password candidates). */

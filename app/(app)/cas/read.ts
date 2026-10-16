@@ -11,11 +11,16 @@ import { AppError } from "@/lib/errors";
 import { maskPan } from "@/lib/format";
 import { actionTx } from "@/lib/server";
 import type { StoredFile } from "@/services/cas-intake";
-import { claimPan, findClientByPan, ingestParsedCas, knownClientPhones, type CasIntakeOutcome } from "@/services/cas-intake";
+import { casMatchesClient, claimPan, findClientByPan, ingestParsedCas, knownClientPhones, type CasIntakeOutcome } from "@/services/cas-intake";
+
+/** The CAS is someone else's: never stored on this client (not even for the n8n reader). */
+export class CasIdentityError extends AppError {}
 
 export async function readClientCas(args: {
   clientId: string;
   clientPan: string | null;
+  /** For a client without a PAN: the CAS must show their mobile and name before its PAN is taken. */
+  client?: { phone: string | null; full_name: string };
   bytes: Uint8Array;
   file: StoredFile;
   typedPassword: string | null;
@@ -32,14 +37,19 @@ export async function readClientCas(args: {
   const { parsed, passwordProtected } = await readCasAnyPdf(args.bytes, candidates, { timeoutMs: 220_000 }); // leaves time to save within 300 s
   const pan = parsed.investor.pan?.toUpperCase() ?? null;
   if (args.clientPan && pan && pan !== args.clientPan.toUpperCase()) {
-    throw new AppError(`This CAS is for PAN ${maskPan(pan)} (${parsed.investor.name ?? "another investor"}), not this client.`);
+    throw new CasIdentityError(`This CAS is for PAN ${maskPan(pan)} (${parsed.investor.name ?? "another investor"}), not this client.`);
   }
   return actionTx(async (tx, actor) => {
     // Onboarded without a PAN (from the report alone): the first CAS gives it, unless another client has it.
     if (!args.clientPan && pan) {
       const other = await findClientByPan(tx, pan);
-      if (other && other.id !== args.clientId) throw new AppError(`This CAS is for PAN ${maskPan(pan)}, which is ${other.full_name} (${other.client_code}).`);
-      if (!other) await claimPan(tx, args.clientId, pan);
+      if (other && other.id !== args.clientId) throw new CasIdentityError(`This CAS is for PAN ${maskPan(pan)}, which is ${other.full_name} (${other.client_code}).`);
+      if (!other) {
+        if (!args.client || !casMatchesClient(parsed.investor, args.client)) {
+          throw new CasIdentityError(`This CAS is for ${parsed.investor.name ?? "another investor"} (PAN ${maskPan(pan)}); its mobile number and name do not both match this client.`);
+        }
+        await claimPan(tx, args.clientId, pan);
+      }
     }
     return ingestParsedCas(tx, actor, {
     clientId: args.clientId,

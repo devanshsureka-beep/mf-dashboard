@@ -57,12 +57,15 @@ describeDb("A new investor with no mutual funds yet (no CAS)", () => {
       }));
 
       // Once the client has a plan, the same mobile cannot be onboarded again.
-      expect(await ctx.expectError("advisor", (t) => createNewInvestor(t, ctx.users.advisor, { who, report: r }))).toMatch(/already has this mobile number/);
+      expect(await ctx.expectError("advisor", (t) => createNewInvestor(t, ctx.users.advisor, { who, report: r }))).toMatch(/already has this name and mobile number/);
       const saved = (await ctx.tx<{ full_name: string; pan: string | null }[]>`select full_name, pan from public.clients where id = ${client.id}`)[0];
       expect(saved).toEqual({ full_name: "Kavya Iyer", pan: null });
 
-      // Their first CAS finds them by the mobile number and gives them its PAN.
+      // A family member's CAS on the same mobile is not theirs; nor is a CAS with only the name.
       const pan = `KAVYA${String(Math.floor(Math.random() * 1e4)).padStart(4, "0")}F`;
+      expect(await ctx.as("ops", (t) => findClientForCas(t, { pan: "RAVIZ1234K", mobile: phone, name: "Ravi Iyer" }, { claim: true }))).toBeNull();
+      expect(await ctx.as("ops", (t) => findClientForCas(t, { pan: "RAVIZ1234K", mobile: "9000000001", name: "Kavya Iyer" }, { claim: true }))).toBeNull();
+      // Their own first CAS (same mobile and name) gives them its PAN.
       const found = await ctx.as("ops", (t) => findClientForCas(t, { pan, mobile: `+91 ${phone}`, name: "KAVYA IYER" }, { claim: true }));
       expect(found?.id).toBe(client.id);
       expect((await ctx.tx<{ pan: string }[]>`select pan from public.clients where id = ${client.id}`)[0].pan).toBe(pan);

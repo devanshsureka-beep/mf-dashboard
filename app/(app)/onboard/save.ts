@@ -10,7 +10,7 @@ import type { AdvisoryReportParse } from "@/lib/parsers/advisory-report";
 import type { PlanKind } from "@/types/domain";
 import { objectPath, uploadAsUser, type PreparedFile } from "@/lib/storage";
 import { ensureClientFromDocuments, onboardFromDocuments, type AsReportedChoice } from "@/services/onboarding";
-import { findClientByPan } from "@/services/cas-intake";
+import { findClientForCas } from "@/services/cas-intake";
 import { getActivePlanId } from "@/services/plans";
 
 /**
@@ -38,11 +38,12 @@ export async function checkAdvisor(actor: Actor, advisorId: string | null): Prom
   if (!ok[0]) throw new AppError("Choose an active advisor.");
 }
 
-/** Does the client with this PAN already have an ACTIVE plan (an additional investment can be added to it)? */
-export async function hasActivePlanForPan(actor: Actor, pan: string | null): Promise<boolean> {
-  if (!pan) return false;
+/** Does the client of this CAS already have an ACTIVE plan (an additional investment can be added to it)? */
+export async function hasActivePlanForPan(actor: Actor, investor: { pan: string | null; mobile?: string | null; name?: string | null }): Promise<boolean> {
+  if (!investor.pan) return false;
   return onboardingTx(actor)(async (tx) => {
-    const c = await findClientByPan(tx, pan);
+    // A new investor onboarded from the report alone has no PAN yet: found by mobile and name.
+    const c = await findClientForCas(tx, investor);
     return c ? Boolean(await getActivePlanId(tx, c.id)) : false;
   });
 }

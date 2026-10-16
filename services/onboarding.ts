@@ -391,12 +391,13 @@ export async function createNewInvestor(
   if (blocking.length) throw new AppError(newInvestorMessage(blocking));
   const pan = args.who.pan?.trim().toUpperCase() || null;
   const phone = (args.who.phone ?? "").replace(/\D/g, "").slice(-10);
-  // Without a PAN the mobile number tells clients apart.
+  // Without a PAN: the same person is the same mobile AND the same name (family members share mobiles).
+  const name = newInvestorName(args.who, args.report);
   const existing = pan ? await findClientByPan(tx, pan)
     : (await tx<{ id: string; client_code: string; full_name: string }[]>`
         select id, client_code, full_name from public.clients
-        where deleted_at is null and right(regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g'), 10) = ${phone}
-        order by created_at limit 1`)[0] ?? null;
+        where deleted_at is null and pan is null and right(regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g'), 10) = ${phone}
+        order by created_at`).find((c) => sameInvestor(c.full_name, name)) ?? null;
   if (existing) {
     // An earlier attempt that stopped after creating the client (no plan, no CAS yet): carry on with it.
     const unfinished = (await tx<{ ok: boolean }[]>`
@@ -404,7 +405,7 @@ export async function createNewInvestor(
          and not exists (select 1 from public.cas_documents where client_id = ${existing.id})
          and exists (select 1 from public.portfolio_snapshots where client_id = ${existing.id} and is_baseline and source = 'MANUAL' and holdings_count = 0) as ok`)[0]?.ok;
     if (unfinished) return { id: existing.id, client_code: existing.client_code };
-    throw new AppError(`${existing.full_name} (${existing.client_code}) already has this ${pan ? "PAN" : "mobile number"}: upload the report on their page instead.`);
+    throw new AppError(`${existing.full_name} (${existing.client_code}) already has this ${pan ? "PAN" : "name and mobile number"}: upload the report on their page instead.`);
   }
   const c = await createClient(tx, actor, {
     full_name: newInvestorName(args.who, args.report),

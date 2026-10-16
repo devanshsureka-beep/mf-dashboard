@@ -38,7 +38,7 @@ export default async function NewInvestorPage() {
             <Input type="file" name="report" accept="application/pdf" required aria-label="Advisory report (PDF)" className="mx-auto mt-4 max-w-xs" />
           </div>
           <div className="space-y-3 rounded-xl border border-border bg-white p-4">
-            <Field label="Mobile number *" hint="The client's name is read from the report, and their PAN from their first CAS (matched by this number). Nothing else to type.">
+            <Field label="Mobile number *" hint="The client's name is read from the report, and their PAN from their first CAS (matched by this number and the name). Nothing else to type.">
               <Input name="mobile" required inputMode="tel" autoComplete="off" placeholder="98xxxxxxxx" pattern="[0-9 +-]{10,15}" />
             </Field>
             {ops ? advisorField : null}

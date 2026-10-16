@@ -13,7 +13,7 @@ import {
   confirmSnapshot, findDuplicateDocument, ingestCasParseResult, registerCasDocument, rejectSnapshot, setCasStatus,
 } from "@/services/portfolio";
 import { runReconciliation } from "@/services/reconciliation";
-import { readClientCas } from "./read";
+import { CasIdentityError, readClientCas } from "./read";
 
 export async function uploadCasAction(clientId: string, _p: ActionResult | null, fd: FormData): Promise<ActionResult> {
   let casId = "";
@@ -46,7 +46,7 @@ export async function uploadCasAction(clientId: string, _p: ActionResult | null,
 
     if (unread) {
       const out = await readClientCas({
-        clientId, clientPan: client.pan, bytes: file.bytes, typedPassword: password, existingCasDocumentId: unread.casId,
+        clientId, clientPan: client.pan, client, bytes: file.bytes, typedPassword: password, existingCasDocumentId: unread.casId,
         file: { fileName: file.fileName, mimeType: file.mimeType, size: file.size, sha256: file.sha256, path: unread.path },
       });
       casId = out.casDocumentId;
@@ -60,13 +60,14 @@ export async function uploadCasAction(clientId: string, _p: ActionResult | null,
     let readError: string | null = null;
     try {
       const out = await readClientCas({
-        clientId, clientPan: client.pan, bytes: file.bytes, typedPassword: password,
+        clientId, clientPan: client.pan, client, bytes: file.bytes, typedPassword: password,
         file: { fileName: file.fileName, mimeType: file.mimeType, size: file.size, sha256: file.sha256, path },
       });
       casId = out.casDocumentId;
       return;
     } catch (e) {
-      if (!(e instanceof AppError)) throw e;
+      // Someone else's CAS is refused outright, never kept on this client for another reader.
+      if (!(e instanceof AppError) || e instanceof CasIdentityError) throw e;
       readError = e.message;
     }
 
@@ -193,7 +194,7 @@ export async function readStoredCasAction(casId: string, _p: ActionResult | null
     if (doc.snapshot_id || ["PARSED", "NEEDS_REVIEW"].includes(doc.parse_status)) throw new AppError("This CAS already has an extraction.");
     const bytes = await downloadAsUser(doc.file_path);
     const out = await readClientCas({
-      clientId: doc.client_id, clientPan: client.pan, bytes, typedPassword: str(fd, "password") || null,
+      clientId: doc.client_id, clientPan: client.pan, client, bytes, typedPassword: str(fd, "password") || null,
       file: { fileName: doc.file_name, mimeType: doc.mime_type, size: Number(doc.size_bytes), sha256: doc.sha256, path: doc.file_path },
       existingCasDocumentId: casId,
     });

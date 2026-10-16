@@ -173,7 +173,7 @@ export async function onboardBulkPairAction(fd: FormData): Promise<BulkOnboardRo
       if (together.problem && report.clientName) return fail("FAILED", `${together.problem} Pair this CAS with the right report.`);
     }
     // Full rebalancing, or fresh money added to the client's active plan (decided per report).
-    const hasActivePlan = await hasActivePlanForPan(actor, cas.investor.pan);
+    const hasActivePlan = await hasActivePlanForPan(actor, cas.investor);
     const rk = str(fd, "report_kind");
     const choice: ReportKindChoice = rk === "FULL" || rk === "ADDITIONAL" ? rk : "AUTO";
     // A CAS dated after the report: the client already acted on part of it, so each

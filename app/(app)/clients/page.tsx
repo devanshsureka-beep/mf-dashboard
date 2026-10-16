@@ -162,7 +162,7 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
         </AutoSelect>
         <AutoSelect name="sort" defaultValue={f.sort} className="h-9 w-48" aria-label="Sort">
           <option value="action">Needs action first</option><option value="left">Most left to advise</option><option value="value">Value (high first)</option>
-          <option value="pending">Waiting (high first)</option><option value="name">Name</option><option value="onboarded">Newest onboarded</option>
+          <option value="pending">Waiting (high first)</option><option value="name">Name</option><option value="onboarded">Newest report first</option>
         </AutoSelect>
         {(["status", "plan", "premium", "attention", "agreement", "min", "max"] as const).map((k) => one(k) ? <input key={k} type="hidden" name={k} value={one(k)} /> : null)}
         <noscript><Button type="submit" variant="outline" size="sm">Apply</Button></noscript>
