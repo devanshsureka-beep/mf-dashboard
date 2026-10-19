@@ -133,6 +133,10 @@ export function parseAmfiNav(text: string): AmfiParse {
       const v = isin.toUpperCase();
       if (!/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(v) || !isValidIsin(v)) continue;
       any = true;
+      // An ISIN on two lines (an old scheme code, a segregated portfolio): keep the line with the newer NAV,
+      // never let a line without one ("N.A.") blank it.
+      const prev = out.get(v);
+      if (prev?.nav != null && (base.nav == null || (prev.nav_date ?? "") > (base.nav_date ?? ""))) continue;
       out.set(v, { ...base, isin: v, option_type: opt });
     }
     if (!any) skipped++;

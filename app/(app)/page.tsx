@@ -233,7 +233,7 @@ export default async function Today(props: PageProps<"/">) {
             {noAgreement.length || premiumGap.length ? (
               <span className="block px-1 text-xs text-muted">
                 Admin: <Link href={withAdv("/clients?agreement=missing")} className="hover:underline">{noAgreement.length} without an agreement</Link>
-                {" · "}<Link href={withAdv("/clients?premium=unpaid")} className="hover:underline">{all.filter((c) => c.premium_status === "UNPAID").length} premium not recorded</Link>
+                {" · "}<Link href={withAdv("/clients?premium=unpaid")} className="hover:underline">{all.filter((c) => c.premium_status === "UNPAID" || c.premium_status === "PAID").length} premium not recorded</Link>
                 {" · "}<Link href={withAdv("/clients?premium=renewal_due")} className="hover:underline">{all.filter((c) => c.renewal_due).length} renewal(s) due</Link>
                 {" · "}<Link href={withAdv("/clients?premium=expired")} className="hover:underline">{all.filter((c) => c.premium_status === "EXPIRED").length} expired</Link>
               </span>

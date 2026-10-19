@@ -17,6 +17,7 @@ const ENTITIES = [
   "advice_items", "advice_batches", "executions", "advisory_plans", "advisory_plan_items", "sip_plan_items",
   "portfolio_snapshots", "cas_documents", "reconciliation_matches", "reconciliation_runs", "clients",
   "client_advisor_assignments", "profiles", "documents", "client_notes", "security_master",
+  "client_agreements", "client_payments", "client_report_notes", "client_fresh_money",
 ];
 
 export default async function AuditPage(props: PageProps<"/audit">) {

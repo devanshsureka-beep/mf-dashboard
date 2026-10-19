@@ -42,7 +42,7 @@ export async function getSipStatus(tx: Tx, clientId: string): Promise<SipStatusV
   const txns = await tx<SipTxn[]>`
     select t.transaction_date::text as date, public.txn_effective_type(t.transaction_type, t.description, t.units) as type, coalesce(t.isin, sm.isin) as isin,
            t.scheme_name, t.folio_number, t.amount, t.description
-    from public.portfolio_transactions t
+    from public.v_cas_transactions t
     left join public.security_master sm on sm.id = t.security_id
     where t.client_id = ${clientId}
       -- Rows without units: only the "SIP Cancelled" kind (an invalid purchase or a refund moved nothing).

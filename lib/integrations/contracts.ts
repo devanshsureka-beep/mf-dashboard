@@ -178,7 +178,8 @@ export const reconciliationTriggerSchema = z.object({
 export const casUploadTriggerSchema = z.object({
   client_code: z.string().trim().regex(/^MN-\d{5}$/),
   source: z.enum(CAS_SOURCES).default("OTHER"),
-  password_protected: z.coerce.boolean().default(false),
+  // Sent as form text: "false" must stay false (z.coerce.boolean() makes any non-empty text true).
+  password_protected: z.union([z.boolean(), z.enum(["true", "false", "1", "0", ""])]).transform((v) => v === true || v === "true" || v === "1").default(false),
   notes: z.string().trim().max(2000).optional().nullable(),
 });
 

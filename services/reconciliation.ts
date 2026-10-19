@@ -49,7 +49,7 @@ export async function runReconciliation(
 
   // A detailed CAS (with transactions) is reconciled transaction by transaction.
   const txnCount = await tx<{ n: number }[]>`
-    select count(*)::int as n from public.portfolio_transactions where source_snapshot_id = ${args.currentSnapshotId}`;
+    select count(*)::int as n from public.portfolio_snapshot_transactions where snapshot_id = ${args.currentSnapshotId}`;
   if (txnCount[0].n > 0) {
     return runTransactionReconciliation(tx, actor, {
       clientId: args.clientId,
@@ -231,8 +231,8 @@ async function loadSnapshotTxns(tx: Tx, snapshotId: string, afterDate: string, n
     select t.id, t.security_id, t.isin, t.scheme_name, t.folio_number, t.transaction_date::text as transaction_date,
            t.transaction_type, t.description, t.amount, t.units, t.nav
     from public.portfolio_transactions t
-    where t.source_snapshot_id = ${snapshotId}
-      and t.transaction_date > ${afterDate}::date
+    join public.portfolio_snapshot_transactions l on l.transaction_id = t.id and l.snapshot_id = ${snapshotId}
+    where t.transaction_date > ${afterDate}::date
       and (${notInRunId}::uuid is null or not exists (
         select 1 from public.reconciliation_matches m where m.run_id = ${notInRunId} and m.cas_transaction_id = t.id))
     order by t.transaction_date, t.created_at`;

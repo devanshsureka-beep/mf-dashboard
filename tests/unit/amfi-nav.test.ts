@@ -84,3 +84,15 @@ describe("AMFI NAV file", () => {
     });
   });
 });
+
+describe("an ISIN on two lines", () => {
+  const head = "Scheme Code;ISIN Div Payout/ ISIN Growth;ISIN Div Reinvestment;Scheme Name;Net Asset Value;Date\n\nHDFC Mutual Fund\n\n";
+  it("keeps the line with a NAV over a later N.A. line", () => {
+    const p = parseAmfiNav(head + "100119;INF179K01BE2;-;HDFC Large Cap Fund - Growth;1102.3300;25-Sep-2026\n900119;INF179K01BE2;-;HDFC Large Cap Fund - Growth (old code);N.A.;25-Sep-2026\n");
+    expect(p.schemes.find((s) => s.isin === "INF179K01BE2")?.nav).toBe(1102.33);
+  });
+  it("keeps the newer NAV whichever line comes first", () => {
+    const p = parseAmfiNav(head + "100119;INF179K01BE2;-;HDFC Large Cap Fund - Growth;1102.3300;25-Sep-2026\n900119;INF179K01BE2;-;HDFC Large Cap Fund - Growth;1000.0000;20-Sep-2026\n");
+    expect(p.schemes.find((s) => s.isin === "INF179K01BE2")).toMatchObject({ nav: 1102.33, nav_date: "2026-09-25" });
+  });
+});

@@ -34,6 +34,11 @@ export async function issueAdvice(tx: Tx, actor: Actor, input: IssueAdviceInput)
   if (input.items.length === 0) throw new AppError("Add at least one call.");
   if (input.communicatedAt.getTime() > Date.now() + 5 * 60_000) throw new AppError("The communication time cannot be in the future.");
   const advisorId = actor.role === "ADMIN" ? input.advisorId || actor.id : actor.id;
+  if (advisorId !== actor.id) {
+    // An admin issuing on an advisor's behalf: that person must be an active advisor or admin.
+    const who = (await tx<{ role: string; active: boolean }[]>`select role, is_active as active from public.profiles where id = ${advisorId}`)[0];
+    if (!who || !who.active || (who.role !== "ADVISOR" && who.role !== "ADMIN")) throw new AppError("Choose an active advisor for the call.");
+  }
 
   const activePlan = await tx<{ id: string }[]>`
     select id from public.advisory_plans where client_id = ${input.clientId} and status = 'ACTIVE'`;

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { optStr, reqNum, reqStr, runAction, str, type ActionResult } from "@/lib/actions";
+import { num, optStr, reqNum, reqStr, runAction, str, type ActionResult } from "@/lib/actions";
 import { AppError } from "@/lib/errors";
 import { fromISTDateTimeLocal } from "@/lib/format";
 import { actionTx, ADVISORY_ROLES } from "@/lib/server";
@@ -165,14 +165,14 @@ export async function searchFundsAction(q: string): Promise<FundOption[]> {
 export async function correctAdviceAction(itemId: string, _p: ActionResult | null, fd: FormData): Promise<ActionResult> {
   return runAction("correctAdvice", async () => {
     const basis = reqStr(fd, "quantity_basis") === "UNITS" ? "UNITS" : "AMOUNT";
-    const units = optStr(fd, "advised_units");
-    const price = optStr(fd, "reference_price");
+    const units = num(fd, "advised_units");
+    const price = num(fd, "reference_price");
     const planItem = optStr(fd, "plan_item_id");
     await actionTx((tx, actor) => correctAdvice(tx, actor, itemId, {
       advisedAmount: reqNum(fd, "advised_amount", "Advised amount"),
-      advisedUnits: units ? Number(units) : null,
+      advisedUnits: units || null,
       quantityBasis: basis,
-      referencePrice: price ? Number(price) : null,
+      referencePrice: price || null,
       planItemId: planItem && planItem !== "OFF_PLAN" ? planItem : null,
       securityId: reqStr(fd, "security_id", "Fund"),
       communicatedAt: when(fd),
@@ -188,15 +188,19 @@ export async function correctAdviceAction(itemId: string, _p: ActionResult | nul
 /** Admin: correct a recorded execution (amount, units, date, NAV). */
 export async function correctExecutionAction(itemId: string, executionId: string, _p: ActionResult | null, fd: FormData): Promise<ActionResult> {
   return runAction("correctExecution", async () => {
-    const units = optStr(fd, "executed_units");
-    const price = optStr(fd, "execution_price");
-    await actionTx((tx, actor) => correctExecution(tx, actor, executionId, {
+    const units = num(fd, "executed_units");
+    const price = num(fd, "execution_price");
+    await actionTx(async (tx, actor) => {
+      const own = (await tx<{ advice_item_id: string }[]>`select advice_item_id from public.executions where id = ${executionId}`)[0];
+      if (!own || own.advice_item_id !== itemId) throw new AppError("That execution is not on this call.", "NOT_FOUND");
+      return correctExecution(tx, actor, executionId, {
       executedAmount: reqNum(fd, "executed_amount", "Executed amount"),
-      executedUnits: units ? Number(units) : null,
+      executedUnits: units || null,
       executionDate: reqStr(fd, "execution_date", "Execution date"),
-      executionPrice: price ? Number(price) : null,
+      executionPrice: price || null,
       reason: reqStr(fd, "reason", "Reason"),
-    }), { roles: ["ADMIN"] });
+      });
+    }, { roles: ["ADMIN"] });
     revalidatePath(`/advice/items/${itemId}`);
     revalidatePath("/");
     return "Execution corrected. The call's status and the plan numbers are updated.";

@@ -480,8 +480,10 @@ export async function ingestAdvisoryReport(
   const client = await tx<{ id: string; created_by: string | null }[]>`
     select id, created_by from public.clients
     where deleted_at is null
-      and ((${payload.client_id ?? null}::uuid is not null and id = ${payload.client_id ?? null})
-        or (${payload.client_code ?? null}::text is not null and client_code = ${payload.client_code ?? null}))`;
+      -- Both given: they must be the same client (never whichever of two rows comes first).
+      and (${payload.client_id ?? null}::uuid is null or id = ${payload.client_id ?? null})
+      and (${payload.client_code ?? null}::text is null or client_code = ${payload.client_code ?? null})
+      and (${payload.client_id ?? null}::uuid is not null or ${payload.client_code ?? null}::text is not null)`;
   if (!client[0]) throw new AppError("Client not found for advisory report.", "NOT_FOUND");
   const clientId = client[0].id;
 

@@ -51,7 +51,7 @@ export async function listRecentTransactions(tx: Tx, clientId: string, limit = 2
     units: number | null; nav: number | null; amount: number | null; balance_units: number | null;
   }[]>`
     select id, transaction_date, transaction_type, description, scheme_name, folio_number, units, nav, amount, balance_units
-    from public.portfolio_transactions where client_id = ${clientId}
+    from public.v_cas_transactions where client_id = ${clientId}
     order by transaction_date desc, created_at desc limit ${limit}`
     .then((rows) => rows.map(({ description, ...t }) => ({ ...t, transaction_type: effectiveTxnType(t.transaction_type, description, t.units) })));
 }
@@ -218,6 +218,12 @@ export async function createSnapshotFromParsed(tx: Tx, a: CreateSnapshotArgs): P
   }));
   for (const chunk of chunks(txnRows, 500)) {
     await tx`insert into public.portfolio_transactions ${tx(chunk)} on conflict (client_id, dedupe_hash) do nothing`;
+    // Every transaction this CAS shows belongs to it, including ones an earlier copy already stored.
+    await tx`
+      insert into public.portfolio_snapshot_transactions (snapshot_id, transaction_id, client_id)
+      select ${snapshotId}, t.id, t.client_id from public.portfolio_transactions t
+      where t.client_id = ${a.clientId} and t.dedupe_hash = any(${chunk.map((r) => r.dedupe_hash)}::text[])
+      on conflict do nothing`;
   }
 
   if (a.reviewStatus === "CONFIRMED") {

@@ -1,3 +1,4 @@
+import { todayIST } from "@/lib/format";
 import type { Tx } from "@/lib/db/tx";
 import { AppError } from "@/lib/errors";
 import { getTimeline } from "@/services/client-record";
@@ -70,7 +71,8 @@ const FOLDER: Record<string, string> = {
 };
 
 // date columns arrive as "YYYY-MM-DD" strings, timestamps as Date
-const day = (d: Date | string) => (typeof d === "string" ? d.slice(0, 10) : d.toISOString().slice(0, 10));
+// Dates in file names are Indian dates (an upload at 01:00 IST is that day, not the day before in UTC).
+const day = (d: Date | string) => (typeof d === "string" ? d.slice(0, 10) : todayIST(d));
 const safeName = (s: string) => s.replace(/[\\/:*?"<>|\x00-\x1f]+/g, "_").replace(/\s+/g, " ").trim().slice(0, 120) || "file";
 
 export async function gatherClientExport(tx: Tx, clientId: string): Promise<ClientExport> {

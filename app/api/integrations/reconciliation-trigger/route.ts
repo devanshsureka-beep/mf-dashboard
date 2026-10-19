@@ -20,8 +20,10 @@ export async function POST(req: NextRequest) {
       const c = await tx<{ id: string }[]>`
         select id from public.clients
         where deleted_at is null
-          and ((${body.data.client_id ?? null}::uuid is not null and id = ${body.data.client_id ?? null})
-            or (${body.data.client_code ?? null}::text is not null and client_code = ${body.data.client_code ?? null}))`;
+          -- Both given: they must be the same client.
+          and (${body.data.client_id ?? null}::uuid is null or id = ${body.data.client_id ?? null})
+          and (${body.data.client_code ?? null}::text is null or client_code = ${body.data.client_code ?? null})
+          and (${body.data.client_id ?? null}::uuid is not null or ${body.data.client_code ?? null}::text is not null)`;
       if (!c[0]) throw new AppError("Client not found.", "NOT_FOUND");
       const snap = body.data.current_snapshot_id
         ? body.data.current_snapshot_id

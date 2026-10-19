@@ -54,8 +54,13 @@ export async function readClientCas(args: {
         }
         // Another client (perhaps one this user cannot see) may hold the PAN: then it is not this client's CAS.
         try {
-          await claimPan(tx, args.clientId, pan);
+          // False: the client got a PAN in the meantime (another upload); this CAS is checked against it below.
+          if (!(await claimPan(tx, args.clientId, pan))) {
+            const now = (await tx<{ pan: string | null }[]>`select pan from public.clients where id = ${args.clientId}`)[0]?.pan;
+            if (now && now.toUpperCase() !== pan) throw new CasIdentityError(`This CAS is for PAN ${maskPan(pan)}, not this client.`);
+          }
         } catch (e) {
+          if (e instanceof CasIdentityError) throw e;
           if ((e as { code?: string } | null)?.code !== "23505") throw e;
           throw new CasIdentityError(`This CAS is for PAN ${maskPan(pan)}, which another client already has.`);
         }

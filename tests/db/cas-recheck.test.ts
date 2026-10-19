@@ -42,7 +42,8 @@ describeDb("A newer CAS updates the client's plan", () => {
         insert into public.portfolio_transactions (client_id, source_snapshot_id, security_id, transaction_date, transaction_type,
           scheme_name, isin, folio_number, units, nav, amount, description, dedupe_hash)
         values (${p.clientId}, ${snap}, ${ctx.sec.X}, '2026-09-14', 'OTHER', ${x.scheme_name}, ${x.isin}, 'T1', -100, 150, -15000,
-                'Payment - Units Extinguished', 'test-recheck-1')`);
+                'Payment - Units Extinguished', 'test-recheck-1')
+        returning id`.then(async ([r]) => t`insert into public.portfolio_snapshot_transactions (snapshot_id, transaction_id, client_id) values (${snap}, ${r.id}, ${p.clientId})`));
       expect(await ctx.as("ops", (t) => recheckRun(t, ctx.users.ops, runId))).toEqual({ added: 1, needsReview: 1, closedHistory: 0 });
       const run = await ctx.tx<{ status: string }[]>`select status from public.reconciliation_runs where id = ${runId}`;
       expect(run[0].status).toBe("OPEN");
@@ -108,7 +109,8 @@ describeDb("A newer CAS updates the client's plan", () => {
         insert into public.portfolio_transactions (client_id, source_snapshot_id, security_id, transaction_date, transaction_type,
           scheme_name, isin, folio_number, units, nav, amount, description, dedupe_hash)
         values (${p.clientId}, ${snap}, ${ctx.sec.X}, '2026-09-06', 'STT', ${x.scheme_name}, ${x.isin}, 'T1', -2000, 150, -300000,
-                'Redemption less STT', 'test-recheck-double')`);
+                'Redemption less STT', 'test-recheck-double')
+        returning id`.then(async ([r]) => t`insert into public.portfolio_snapshot_transactions (snapshot_id, transaction_id, client_id) values (${snap}, ${r.id}, ${p.clientId})`));
       await ctx.as("ops", (t) => recheckRun(t, ctx.users.ops, runId));
       const rows = await ctx.tx<{ classification: string; advice_item_id: string | null }[]>`
         select classification, advice_item_id from public.reconciliation_matches where run_id = ${runId} and transaction_date = '2026-09-06'`;

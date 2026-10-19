@@ -38,6 +38,7 @@ export async function correctAdvice(tx: Tx, actor: Actor, itemId: string, c: Cal
     select advice_batch_id, client_id, security_id, plan_item_id from public.advice_items where id = ${itemId} for update`)[0];
   if (!cur) throw new AppError("Call not found.", "NOT_FOUND");
   if (!(c.advisedAmount >= 0)) throw new AppError("Enter the advised amount.");
+  if (!finiteOrNull(c.advisedUnits) || !finiteOrNull(c.referencePrice)) throw new AppError("Units and NAV must be numbers.");
   if (c.quantityBasis === "UNITS" && !(Number(c.advisedUnits) > 0)) throw new AppError("Enter the advised units for a units-based call.");
   if (c.communicatedAt.getTime() > Date.now()) throw new AppError("A call cannot be dated in the future.");
 
@@ -83,6 +84,7 @@ export interface ExecutionCorrection {
 export async function correctExecution(tx: Tx, actor: Actor, executionId: string, c: ExecutionCorrection): Promise<void> {
   const reason = assertAdmin(actor, c.reason);
   if (!(c.executedAmount >= 0)) throw new AppError("Enter the executed amount.");
+  if (!finiteOrNull(c.executedUnits) || !finiteOrNull(c.executionPrice)) throw new AppError("Units and NAV must be numbers.");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(c.executionDate)) throw new AppError("Enter the execution date.");
   await setAuditReason(tx, `Admin correction: ${reason}`);
   const res = await tx`
@@ -92,3 +94,6 @@ export async function correctExecution(tx: Tx, actor: Actor, executionId: string
     where id = ${executionId}`;
   if (res.count === 0) throw new AppError("Execution not found.", "NOT_FOUND");
 }
+
+/** A number the database can hold: never NaN or Infinity (Postgres accepts NaN in numeric columns). */
+const finiteOrNull = (v: number | null | undefined) => v == null || Number.isFinite(v);

@@ -125,7 +125,7 @@ export async function getFundRows(tx: Tx, clientId: string): Promise<{ rows: Fun
   const txns = views.baseline
     ? await tx<{ security_id: string; date: string; type: string; amount: number | null; units: number | null }[]>`
         select security_id, transaction_date::text as date, public.txn_effective_type(transaction_type, description, units) as type, amount, units
-        from public.portfolio_transactions
+        from public.v_cas_transactions
         where client_id = ${clientId} and security_id is not null and transaction_date > ${views.baseline.snapshot_date}::date
         order by transaction_date`
     : [];
@@ -374,7 +374,9 @@ export async function getTranches(tx: Tx, clientId: string): Promise<{ tranches:
   const maxCalled = Math.max(ledger.reduce((m, r) => Math.max(m, r.tranche), 0), sipLedger.reduce((m, r) => Math.max(m, r.tranche), 0));
   const tranches: Tranche[] = [];
   for (let n = 1; n <= Math.max(lastClosed + 1, maxCalled); n++) {
-    const rows = ledger.filter((r) => r.tranche === n && r.status !== "REVISED");
+    // A revised call keeps what was executed on it before the revision (its advised amount is that part,
+    // per v_advice_items): it counts in the money, not as a call of its own.
+    const rows = ledger.filter((r) => r.tranche === n);
     const closing = chain[n];
     const run = closing ? runs.find((r) => r.current_snapshot_id === closing.id) : undefined;
     const sl = sipLedger.filter((r) => r.tranche === n);
@@ -393,7 +395,7 @@ export async function getTranches(tx: Tx, clientId: string): Promise<{ tranches:
     const sum = (side: string, k: "advised" | "executed") => rows.filter((r) => (r.action === "BUY" ? "BUY" : "SELL") === side).reduce((s, r) => s + r[k], 0);
     tranches.push({
       number: n, from: chain[n - 1]?.date ?? null, to: closing?.date ?? null, open: !closing,
-      calls: rows.length, advisedSell: sum("SELL", "advised"), advisedBuy: sum("BUY", "advised"),
+      calls: rows.filter((r) => r.status !== "REVISED").length, advisedSell: sum("SELL", "advised"), advisedBuy: sum("BUY", "advised"),
       executedSell: sum("SELL", "executed"), executedBuy: sum("BUY", "executed"),
       pending: rows.reduce((s, r) => s + r.pending, 0),
       casValue: closing ? num(closing.value) : null, runId: run?.id ?? null, unadvisedOpen: run?.open ?? 0, unadvisedTotal: run?.total ?? 0,
