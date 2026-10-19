@@ -19,6 +19,10 @@ import { TimelineTab } from "./_tabs/timeline";
 import { AuditTab } from "./_tabs/audit";
 import { ActionForm, SubmitButton } from "@/components/app/action-form";
 import { linkCallsToPlanAction } from "./actions";
+import { ClientAllocation } from "@/components/app/client-allocation";
+import { ClientValueLine } from "@/components/app/client-value-line";
+import { mix } from "@/lib/domain/market-cap";
+import { getClientMix } from "@/services/client-mix";
 
 const TABS = ["portfolio", "tranches", "file", "history"] as const;
 type Tab = (typeof TABS)[number];
@@ -132,7 +136,7 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
   const raw = String(sp.tab ?? "");
   const tab: Tab = (TABS as readonly string[]).includes(raw) ? (raw as Tab) : LEGACY[raw] ?? "portfolio";
   const str = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : null);
-  const { c, bank, extra, unchecked, sip, premium, alerts, casCount, actor } = await pageData(async (tx, who) => ({
+  const { c, bank, extra, unchecked, sip, picture, premium, alerts, casCount, actor } = await pageData(async (tx, who) => ({
     // SIP lines the CAS already shows done (started / changed / stopped since the report) are ticked first (advisors / admins).
     synced: who.role === "OPERATIONS" ? 0 : await syncSipLinesQuietly(tx, id),
     c: await getClientSummary(tx, id),
@@ -144,6 +148,7 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
       select in_bank::float8 as in_bank, fresh_money::float8 as fresh_money, cash_at_onboarding::float8 as cash_at_onboarding
       from public.v_client_bank where client_id = ${id}`)[0] ?? { in_bank: 0, fresh_money: 0, cash_at_onboarding: 0 },
     sip: await getClientSip(tx, id),
+    picture: await getClientMix(tx, id),
     premium: await getPremium(tx, id),
     alerts: await getClientAlerts(tx, id),
     // Confirmed CAS from onboarding on: CAS n closes tranche n.
@@ -265,6 +270,13 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
           </div>
         </div>
       </section>
+
+      {/* The portfolio picture: where the money sits now and after the plan, and its value since onboarding. */}
+      <div className="mt-3 grid gap-3 lg:grid-cols-2">
+        <ClientAllocation hasPlan={picture.planDeltas.length > 0}
+          views={{ cap: mix(picture.holdings, picture.planDeltas, "cap"), class: mix(picture.holdings, picture.planDeltas, "class"), amc: mix(picture.holdings, picture.planDeltas, "amc") }} />
+        <ClientValueLine points={picture.history} change={change} changePct={changePct} />
+      </div>
 
       <Rebalancing
         c={c} sip={sip} x={extra ?? EMPTY_EXTRA}

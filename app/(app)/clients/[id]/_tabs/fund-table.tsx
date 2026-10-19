@@ -5,6 +5,9 @@ import { useState } from "react";
 import { formatDate, formatINR, formatINRCompact, formatNav, formatUnits } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { FundEvent, FundRow, FundTotals } from "@/services/client-desk";
+import { mixColor } from "@/components/app/client-allocation";
+import { assetClass } from "@/lib/domain/book";
+import { CAP_BUCKETS, CAP_HINT, marketCap } from "@/lib/domain/market-cap";
 
 type Filter = "all" | "sell" | "buy" | "keep" | "exited";
 
@@ -23,6 +26,17 @@ const EVENT_TONE: Record<FundEvent["kind"], string> = {
 
 const L = (v: number | null | undefined) => (v == null ? "—" : formatINRCompact(v));
 const lastDate = (ds: string[]) => (ds.length ? ds[ds.length - 1] : null);
+
+/** The fund's market cap (or, outside equity, its asset class) with the same colour as in the Allocation card. */
+function CapTag({ category, name }: { category: string | null; name: string }) {
+  const cap = marketCap(category, name);
+  const label = cap === "Other" ? assetClass(category, name) : cap;
+  return (
+    <span className="inline-flex items-center gap-1 text-[11px] text-slate-600" title={CAP_HINT[cap] ?? undefined}>
+      <span className="h-2 w-2 rounded-[2px]" style={{ background: mixColor(cap, CAP_BUCKETS.indexOf(cap)) }} aria-hidden />{label}
+    </span>
+  );
+}
 
 function PlanTypeBadge({ t }: { t: string | null }) {
   if (!t) return null;
@@ -91,6 +105,7 @@ export function FundTable({ rows, totals, clientId, canAdvise, casDate, inBank }
                         {r.name} <span className="text-[11px] text-brand" aria-hidden>{isOpen ? "▾" : "▸"}</span>
                       </button>
                       <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                        <CapTag category={r.category} name={r.name} />
                         <PlanTypeBadge t={r.planType} />
                         {moves && p.advised >= 0.5 ? <StageTag s={stage(r)} /> : null}
                         {flag ? <span className="text-[11px] text-muted">{flag}</span> : null}

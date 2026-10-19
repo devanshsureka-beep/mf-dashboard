@@ -95,7 +95,8 @@ export async function getFundRows(tx: Tx, clientId: string): Promise<{ rows: Fun
   const views = await getPortfolioViews(tx, clientId);
   const meta = new Map(
     (await tx<{ id: string; category: string | null; plan_type: string | null }[]>`
-      select sm.id, sm.category, sm.plan_type from public.security_master sm
+      select sm.id, coalesce(m.category, sm.category) as category, sm.plan_type from public.security_master sm
+      left join public.mf_schemes m on m.isin = sm.isin
       where sm.id in (select security_id from public.portfolio_holdings where client_id = ${clientId}
                       union select security_id from public.advisory_plan_items where client_id = ${clientId})`).map((m) => [m.id, m]),
   );
