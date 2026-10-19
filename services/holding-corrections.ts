@@ -20,6 +20,8 @@ export interface EditableHoldings {
   snapshotDate: string;
   /** The holdings are already a correction (not a CAS). */
   isCorrection: boolean;
+  /** A CAS read but not checked yet: once confirmed it replaces any correction saved now. */
+  pendingCasDate: string | null;
   today: string;
   rows: EditableHolding[];
 }
@@ -37,14 +39,19 @@ export async function getEditableHoldings(tx: Tx, clientId: string): Promise<Edi
   if (!snap || snap.placeholder) return null;
   const rows = await tx<EditableHolding[]>`
     select h.holding_id, h.security_id, coalesce(sm.scheme_name, h.scheme_name) as scheme_name, h.folio_number,
-           h.units::float8 as units, h.nav::float8 as nav, h.nav_date::text as nav_date,
+           h.units::float8 as units,
+           -- No NAV anywhere (an unlisted line): its CAS value per unit.
+           coalesce(h.nav, h.cas_value / nullif(h.units, 0))::float8 as nav, h.nav_date::text as nav_date,
            coalesce(m.category, sm.category) as category
     from public.v_holding_live h
     left join public.security_master sm on sm.id = h.security_id
     left join public.mf_schemes m on m.isin = h.isin
     where h.client_id = ${clientId} and h.snapshot_id = ${snap.id}
     order by h.live_value desc nulls last, h.scheme_name`;
-  return { snapshotId: snap.id, snapshotDate: snap.date, isCorrection: snap.is_correction, today: snap.today, rows };
+  const pendingCasDate = (await tx<{ d: string | null }[]>`
+    select max(snapshot_date)::text as d from public.portfolio_snapshots
+    where client_id = ${clientId} and review_status = 'PENDING_REVIEW' and not is_correction`)[0]?.d ?? null;
+  return { snapshotId: snap.id, snapshotDate: snap.date, isCorrection: snap.is_correction, pendingCasDate, today: snap.today, rows };
 }
 
 export interface HoldingCorrectionInput {
@@ -67,6 +74,8 @@ export async function saveHoldingCorrection(tx: Tx, actor: Actor, input: Holding
   if (reason.length < 3) throw new AppError("Give a reason for the change: it is kept in History and the audit log.");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.asOf)) throw new AppError("Choose the date the holdings are as of.");
 
+  // One change to a client's holdings at a time (a correction, or a CAS being confirmed).
+  await lockClientHoldings(tx, input.clientId);
   const current = await getEditableHoldings(tx, input.clientId);
   if (!current) throw new AppError("This client has no holdings yet: the first CAS creates them.");
   if (current.snapshotId !== input.baseSnapshotId) {
@@ -76,8 +85,12 @@ export async function saveHoldingCorrection(tx: Tx, actor: Actor, input: Holding
   if (input.asOf < current.snapshotDate) throw new AppError(`The holdings date cannot be before the current holdings (${current.snapshotDate}).`);
 
   const base = new Map(current.rows.map((r) => [r.holding_id, r]));
+  // The ISIN as the holdings view shows it (the CAS line's, else its fund's), so a fund added on the
+  // same folio is seen as the same line.
   const source = new Map((await tx<{ id: string; isin: string | null; amc: string | null; plan_type: string | null; category: string | null; cost_value: number | null }[]>`
-    select id, isin, amc, plan_type, category, cost_value::float8 as cost_value from public.portfolio_holdings where snapshot_id = ${current.snapshotId}`).map((h) => [h.id, h]));
+    select h.id, coalesce(h.isin, sm.isin) as isin, h.amc, h.plan_type, h.category, h.cost_value::float8 as cost_value
+    from public.portfolio_holdings h left join public.security_master sm on sm.id = h.security_id
+    where h.snapshot_id = ${current.snapshotId}`).map((h) => [h.id, h]));
 
   type NewRow = {
     holdingId: string | null; security_id: string | null; scheme_name: string; amc: string | null; folio_number: string | null; isin: string | null;
@@ -135,14 +148,15 @@ export async function saveHoldingCorrection(tx: Tx, actor: Actor, input: Holding
 
   const values = out.map((r) => Math.round(r.units * r.nav * 100) / 100);
   const total = Math.round(values.reduce((t, v) => t + v, 0) * 100) / 100;
-  const invested = out.every((r) => r.cost_value != null) ? out.reduce((t, r) => t + (r.cost_value ?? 0), 0) : 0;
+  // Cost as far as it is known (as for a CAS): a line whose units changed has none.
+  const invested = Math.round(out.reduce((t, r) => t + (r.cost_value ?? 0), 0) * 100) / 100;
   await setAuditReason(tx, `Holdings corrected: ${reason}`);
   const snap = (await tx<{ id: string }[]>`
     insert into public.portfolio_snapshots
       (client_id, cas_document_id, snapshot_date, total_invested_value, total_current_value, source, extraction_method,
-       holdings_count, created_by, is_correction, correction_of)
+       holdings_count, created_by, is_correction, correction_of, created_at)
     values (${input.clientId}, null, ${input.asOf}::date, ${invested}, ${total}, 'MANUAL', 'MANUAL',
-            ${out.length}, ${actor.id}, true, ${current.snapshotId})
+            ${out.length}, ${actor.id}, true, ${current.snapshotId}, clock_timestamp())
     returning id`)[0];
   if (out.length) {
     await tx`insert into public.portfolio_holdings ${tx(out.map((r, i) => ({
@@ -151,6 +165,11 @@ export async function saveHoldingCorrection(tx: Tx, actor: Actor, input: Holding
       cost_value: r.cost_value, current_value: values[i], latest_nav: r.nav, latest_nav_date: r.nav_date ?? input.asOf,
     })))}`;
   }
-  await tx`update public.portfolio_snapshots set review_status = 'CONFIRMED', review_note = ${reason} where id = ${snap.id}`;
+  await tx`update public.portfolio_snapshots set review_status = 'CONFIRMED', review_note = ${reason}, reviewed_at = clock_timestamp() where id = ${snap.id}`;
   return { snapshotId: snap.id, changes };
+}
+
+/** Serialises changes to one client's holdings (transaction-scoped; needs no table privilege). */
+export async function lockClientHoldings(tx: Tx, clientId: string): Promise<void> {
+  await tx`select pg_advisory_xact_lock(hashtextextended(${`holdings:${clientId}`}, 0))`;
 }

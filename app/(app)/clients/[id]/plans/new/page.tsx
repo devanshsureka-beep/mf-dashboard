@@ -24,7 +24,7 @@ export default async function NewPlanPage(props: PageProps<"/clients/[id]/plans/
             {c.latest_snapshot_id ? (
               <label className="flex items-start gap-2 text-sm">
                 <input type="checkbox" name="snapshot_id" value={c.latest_snapshot_id} defaultChecked className="mt-1" />
-                <span>Start from the latest confirmed CAS ({formatDate(c.latest_cas_date)}, <Money value={c.current_portfolio_value} />): every holding is added as RETAIN, which you then change to SELL / SWITCH.</span>
+                <span>Start from the latest holdings ({formatDate(c.latest_cas_date)}, <Money value={c.current_portfolio_value} />): every holding is added as RETAIN, which you then change to SELL / SWITCH.</span>
               </label>
             ) : (
               <p className="text-sm text-amber-700">No confirmed CAS yet — the plan will start empty.</p>

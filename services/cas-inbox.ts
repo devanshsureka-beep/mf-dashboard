@@ -70,7 +70,7 @@ export async function getCasInbox(tx: Tx) {
            (select count(*)::int from public.reconciliation_matches m where m.run_id = r.id and m.classification = 'UNADVISED' and (m.reviewed_at is not null or m.status not in ('UNEXPLAINED', 'SUGGESTED'))) as unadvised_reviewed
     from public.portfolio_snapshots s join public.clients c on c.id = s.client_id
     left join public.reconciliation_runs r on r.current_snapshot_id = s.id and r.status <> 'CANCELLED'
-    where s.review_status = 'CONFIRMED' and coalesce(s.reviewed_at, s.created_at) > now() - interval '30 days'
+    where s.review_status = 'CONFIRMED' and not s.is_correction and coalesce(s.reviewed_at, s.created_at) > now() - interval '30 days'
       and not exists (select 1 from public.reconciliation_matches m where m.run_id = r.id and m.classification = 'UNADVISED'
                       and m.status in ('UNEXPLAINED', 'SUGGESTED') and m.reviewed_at is null)
       and not exists (select 1 from public.reconciliation_matches m join public.advice_items a on a.id = m.advice_item_id

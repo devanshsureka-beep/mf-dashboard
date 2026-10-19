@@ -4,6 +4,7 @@ import { syncSipLinesQuietly } from "@/services/sip-status";
 import { CAS_STORED_NAME } from "@/lib/cas/password";
 import { effectiveTxnType } from "@/lib/parsers/cas";
 import { AppError } from "@/lib/errors";
+import { lockClientHoldings } from "./holding-corrections";
 import type { CasParsed, CasParseResult, CasTransactionInput } from "@/lib/integrations/contracts";
 import type { CasDocumentRow, HoldingRow, SnapshotRow } from "@/types/domain";
 import { resolveSecuritiesBulk, securityKey } from "./securities";
@@ -258,7 +259,7 @@ export async function ingestCasParseResult(
   const identical = await tx<{ id: string }[]>`
     select s.id from public.portfolio_snapshots s
     where s.client_id = ${doc.client_id} and s.snapshot_date = ${result.statement.valuation_date}
-      and s.review_status <> 'REJECTED'
+      and s.review_status <> 'REJECTED' and not s.is_correction
       and abs(s.total_current_value - ${round2(result.holdings.reduce((x, h) => x + h.current_value, 0))}) < 1
     limit 1`;
   if (identical[0]) {
@@ -300,6 +301,8 @@ export async function confirmSnapshot(
   note: string | null,
 ): Promise<{ previousSnapshotId: string | null; isBaseline: boolean }> {
   const snap = await getSnapshot(tx, snapshotId);
+  // Same lock as a holdings correction: a correction saved at this moment waits for this CAS.
+  await lockClientHoldings(tx, snap.client_id);
   if (snap.review_status !== "PENDING_REVIEW") throw new AppError(`Snapshot is already ${snap.review_status}.`);
 
   const hasBaseline = await tx<{ id: string }[]>`
@@ -308,7 +311,9 @@ export async function confirmSnapshot(
 
   await tx`
     update public.portfolio_snapshots
-       set review_status = 'CONFIRMED', review_note = ${note}, is_baseline = ${isBaseline}
+       set review_status = 'CONFIRMED', review_note = ${note}, is_baseline = ${isBaseline},
+           -- The moment it became the holdings (a correction saved before this is replaced by it).
+           reviewed_at = clock_timestamp()
      where id = ${snapshotId}`;
   if (snap.cas_document_id) {
     const rows = await tx<{ document_id: string }[]>`

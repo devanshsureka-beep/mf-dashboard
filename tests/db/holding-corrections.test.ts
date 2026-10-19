@@ -63,6 +63,54 @@ describeDb("Edit holdings", () => {
     });
   });
 
+  it("a CAS confirmed after a correction replaces it, even with an earlier statement date", async () => {
+    await scenario(async (ctx) => {
+      const p = await clientWithActivePlan(ctx); // CAS of 01-Sep: X 10,000 units @150
+      // A CAS of 10-Sep is uploaded and waits for a check.
+      const xi = (await ctx.tx<{ isin: string; scheme_name: string }[]>`select isin, scheme_name from public.security_master where id = ${ctx.sec.X}`)[0];
+      await ctx.tx`insert into public.mf_schemes (isin, amfi_code, scheme_name, nav, nav_date) values (${xi.isin}, '999003', ${xi.scheme_name}, 150, '2026-09-01')`;
+      const pending = await ctx.as("advisor", (t) => createSnapshotFromParsed(t, { clientId: p.clientId, casDocumentId: null, parsed: parsed("2026-09-10", [{ security: ctx.sec.X, name: "X", units: 9000, nav: 150 }]), source: "SEED", createdBy: ctx.users.advisor.id }));
+      const ed = (await ctx.as("advisor", (t) => getEditableHoldings(t, p.clientId)))!;
+      expect(ed.pendingCasDate).toBe("2026-09-10");
+      const x = ed.rows[0];
+      // Corrected on 20-Sep: the same fund cannot be added again on its folio.
+      const base = { clientId: p.clientId, baseSnapshotId: p.snapshotId, asOf: "2026-09-20", reason: "Client statement" };
+      expect(await ctx.expectError("advisor", (t) => saveHoldingCorrection(t, ctx.users.advisor, { ...base, rows: [
+        { holdingId: x.holding_id, fundRef: null, folio: x.folio_number, units: 10000 },
+        { holdingId: null, fundRef: `sec:${ctx.sec.X}`, folio: x.folio_number, units: 5 },
+      ] }))).toMatch(/listed twice/);
+      const { snapshotId } = await ctx.as("advisor", (t) => saveHoldingCorrection(t, ctx.users.advisor, { ...base, rows: [{ holdingId: x.holding_id, fundRef: null, folio: x.folio_number, units: 12000 }] }));
+      const latest = async () => (await ctx.as("advisor", (t) => t<{ snapshot_id: string }[]>`select snapshot_id from public.v_latest_snapshot where client_id = ${p.clientId}`))[0].snapshot_id;
+      expect(await latest()).toBe(snapshotId);
+      // The 10-Sep CAS is confirmed after the correction: it is now the holdings.
+      await ctx.as("advisor", (t) => confirmSnapshot(t, pending, "checked"));
+      expect(await latest()).toBe(pending);
+    });
+  });
+
+  it("keeps the known cost of unchanged lines", async () => {
+    await scenario(async (ctx) => {
+      const p = await clientWithActivePlan(ctx);
+      const y = (await ctx.tx<{ isin: string; scheme_name: string }[]>`select isin, scheme_name from public.security_master where id = ${ctx.sec.Y}`)[0];
+      await ctx.tx`insert into public.mf_schemes (isin, amfi_code, scheme_name, nav, nav_date) values (${y.isin}, '999002', ${y.scheme_name}, 50, '2026-09-14')`;
+      // Give the CAS line a cost (the harness CAS has none).
+      const snap = await ctx.as("advisor", async (t) => {
+        const pp = parsed("2026-09-05", [{ security: ctx.sec.X, name: "X", units: 10000, nav: 150 }]);
+        pp.holdings[0].cost_value = 1200000;
+        const id = await createSnapshotFromParsed(t, { clientId: p.clientId, casDocumentId: null, parsed: pp, source: "SEED", createdBy: ctx.users.advisor.id });
+        await confirmSnapshot(t, id, "with cost");
+        return id;
+      });
+      const x = (await ctx.as("advisor", (t) => getEditableHoldings(t, p.clientId)))!.rows[0];
+      const { snapshotId } = await ctx.as("advisor", (t) => saveHoldingCorrection(t, ctx.users.advisor, {
+        clientId: p.clientId, baseSnapshotId: snap, asOf: "2026-09-06", reason: "Holds Y elsewhere",
+        rows: [{ holdingId: x.holding_id, fundRef: null, folio: x.folio_number, units: 10000 }, { holdingId: null, fundRef: `sec:${ctx.sec.Y}`, folio: null, units: 10 }],
+      }));
+      const s = (await ctx.tx<{ v: number }[]>`select total_invested_value::float8 as v from public.portfolio_snapshots where id = ${snapshotId}`)[0];
+      expect(s.v).toBe(1200000);
+    });
+  });
+
   it("is not offered before the first CAS", async () => {
     await scenario(async (ctx) => {
       const c = (await ctx.tx<{ id: string }[]>`insert into public.clients (full_name, client_code, status) values ('No CAS', ${`T-${Date.now()}`}, 'ACTIVE') returning id`)[0];

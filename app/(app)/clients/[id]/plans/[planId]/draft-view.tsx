@@ -135,7 +135,7 @@ export function DraftView({ c, plan, items, sips, questions, securities, heldIds
           {plan.plan_kind === "ADDITIONAL" ? <Badge tone="info">Additional money</Badge> : replacing ? <Badge tone="info">New full plan</Badge> : null}
         </h1>
         <div className="mt-1 text-sm text-muted">
-          Report of {formatDate(plan.plan_date)}{c.latest_cas_date ? ` · CAS of ${formatDate(c.latest_cas_date)}` : ""} · <Money value={plan.starting_portfolio_value} /> at the report
+          Report of {formatDate(plan.plan_date)}{c.latest_cas_date ? ` · holdings of ${formatDate(c.latest_cas_date)}` : ""} · <Money value={plan.starting_portfolio_value} /> at the report
           {plan.fresh_money ? <> · fresh money <Money value={plan.fresh_money} /></> : null}
         </div>
         <JourneySteps current={1} />

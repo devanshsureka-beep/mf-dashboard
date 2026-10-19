@@ -61,7 +61,12 @@ export function EditHoldings({
   useEffect(() => {
     focusRef.current?.focus();
     focusRef.current?.scrollIntoView({ block: "center" });
-    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") router.replace(closeHref, { scroll: false }); };
+    // Escape closes the editor, but not while typing (it would throw the edits away) or in the fund search.
+    const esc = (e: KeyboardEvent) => {
+      const el = document.activeElement;
+      if (e.key !== "Escape" || e.defaultPrevented || el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return;
+      router.replace(closeHref, { scroll: false });
+    };
     document.addEventListener("keydown", esc);
     return () => document.removeEventListener("keydown", esc);
   }, [router, closeHref]);
@@ -102,6 +107,11 @@ export function EditHoldings({
         <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
           <div>
             <h2 id="edit-holdings-title" className="text-lg font-bold">Edit holdings · {clientName}</h2>
+            {data.pendingCasDate ? (
+              <p className="mt-1 rounded bg-amber-50 px-2 py-1 text-[12px] text-amber-800">
+                A CAS of {formatDate(data.pendingCasDate)} is waiting to be checked. Once confirmed, it replaces the holdings you save here.
+              </p>
+            ) : null}
             <p className="mt-0.5 text-[12.5px] text-muted">
               Starting from {data.isCorrection ? "the correction" : "CAS"} of {formatDate(data.snapshotDate)} · {data.rows.length} {data.rows.length === 1 ? "holding" : "holdings"} · values at today&apos;s NAV
             </p>

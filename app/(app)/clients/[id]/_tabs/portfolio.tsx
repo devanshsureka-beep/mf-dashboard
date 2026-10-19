@@ -97,7 +97,7 @@ export async function PortfolioTab({ client, actor, inBank, sipTarget, edit }: {
       <FundTable rows={desk.rows} totals={desk.totals} clientId={clientId} canAdvise={actor.role !== "OPERATIONS"} casDate={desk.casDate} inBank={inBank}
         editHref={editable ? `/clients/${clientId}?tab=portfolio&edit=holdings` : null} />
       {editable && edit.open ? (
-        <EditHoldings clientId={clientId} clientName={client.full_name} data={editable} focus={edit.fund} closeHref={`/clients/${clientId}?tab=portfolio`}
+        <EditHoldings key={editable.snapshotId} clientId={clientId} clientName={client.full_name} data={editable} focus={edit.fund} closeHref={`/clients/${clientId}?tab=portfolio`}
           search={searchFundsAction} save={saveHoldingsAction} />
       ) : null}
       <MoneyBox c={client} plan={views.plan} inFunds={client.live_portfolio_value ?? 0} inBank={inBank} sipTarget={sipTarget} />
