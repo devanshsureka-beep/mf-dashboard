@@ -65,7 +65,7 @@ export function casMatchesClient(investor: { mobile?: string | null; name?: stri
 /** Record a PAN read from the client's CAS on a client onboarded without one. */
 export async function claimPan(tx: Tx, clientId: string, pan: string): Promise<boolean> {
   await setAuditReason(tx, "PAN read from the client's CAS (onboarded without a PAN)");
-  const r = await tx<{ ok: boolean }[]>`select public.claim_client_pan(${clientId}, ${pan}) as ok`;
+  const r = await tx<{ ok: boolean }[]>`select app.claim_client_pan(${clientId}, ${pan}) as ok`;
   return Boolean(r[0]?.ok);
 }
 

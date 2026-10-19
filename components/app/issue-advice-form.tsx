@@ -204,11 +204,14 @@ export function IssueAdviceForm({
     const ids = funds.filter((f) => pickFunds[f.security_id]).map((f) => f.security_id);
     const viaPlan = new Set<string>();
     const planIds: string[] = [];
-    for (const p of sells) {
-      if (p.security_id && ids.includes(p.security_id) && !viaPlan.has(p.security_id)) {
-        viaPlan.add(p.security_id);
-        planIds.push(p.id);
-      }
+    for (const id of ids) {
+      const lines = sells.filter((p) => p.security_id === id);
+      if (!lines.length) continue;
+      viaPlan.add(id);
+      // Lines that each exit their own folio are all taken (a fund held in two folios has two);
+      // a line without a folio exit already sells everything the CAS holds, so only one of those.
+      const perFolio = lines.filter((p) => Number(p.full_exit_units ?? 0) > 0);
+      planIds.push(...(perFolio.length ? perFolio : lines.slice(0, 1)).map((p) => p.id));
     }
     setMany(planIds, () => ({ include: true, mode: "FULL" }));
     const already = new Set(off.map((o) => secOf(o.fund?.value)).filter(Boolean));

@@ -6,6 +6,7 @@ import { todayIST } from "@/lib/format";
 import { downloadAsUser, storeClientExport } from "@/lib/storage";
 import { buildZip, toCsv, type ZipEntry } from "@/lib/zip";
 import { exportReadme, gatherClientExport } from "@/services/client-export";
+import { UUID_RE } from "@/lib/utils";
 
 export const maxDuration = 300;
 
@@ -18,6 +19,7 @@ export async function GET(_req: NextRequest, ctx: RouteContext<"/api/clients/[id
   const actor = await getCurrentActor();
   if (!actor) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const { id } = await ctx.params;
+  if (!UUID_RE.test(id)) return NextResponse.json({ error: "Not found" }, { status: 404 });
   try {
     const data = await withUserTx(actor, (tx) => gatherClientExport(tx, id));
     const entries: ZipEntry[] = data.tables.map((t) => ({ name: `data/${t.file}`, data: toCsv(t.columns, t.rows) }));

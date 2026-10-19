@@ -14,6 +14,7 @@ import {
 } from "@/services/portfolio";
 import { runReconciliation } from "@/services/reconciliation";
 import { CasIdentityError, readClientCas } from "./read";
+import { withSystemTx } from "@/lib/db/tx";
 
 export async function uploadCasAction(clientId: string, _p: ActionResult | null, fd: FormData): Promise<ActionResult> {
   let casId = "";
@@ -69,7 +70,8 @@ export async function uploadCasAction(clientId: string, _p: ActionResult | null,
       // Someone else's CAS is refused outright, never kept on this client for another reader
       // (nor its file, unless a document of this client already points to it).
       if (e instanceof CasIdentityError) {
-        const referenced = await actionTx(async (tx) => (await tx`select 1 from public.documents where file_path = ${path} limit 1`).length > 0);
+        // Checked as the system: a deleted document (hidden from users by RLS) may still point to the file.
+        const referenced = await withSystemTx("cas:refuse-cleanup", async (tx) => (await tx`select 1 from public.documents where file_path = ${path} limit 1`).length > 0);
         await removeUnreferencedAsService(path, referenced);
         throw e;
       }

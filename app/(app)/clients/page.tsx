@@ -58,6 +58,11 @@ const STAGES: { view: string; label: string; line: (rows: Desk[]) => string; sub
   { view: "agreement", label: "Admin to fix", line: () => "no agreement on file", sub: (r) => `${r.filter((c) => c.agreement_status !== "VALID" && c.premium_status === "UNPAID").length} also premium not recorded` },
 ];
 
+/** A URL value from a fixed list, else undefined (an unknown filter must not change what is shown). */
+function pick<T extends string>(v: string | undefined, allowed: readonly T[]): T | undefined {
+  return allowed.includes(v as T) ? (v as T) : undefined;
+}
+
 export default async function ClientsPage(props: PageProps<"/clients">) {
   const sp = await props.searchParams;
   const one = (k: string) => (typeof sp[k] === "string" && sp[k] ? (sp[k] as string) : undefined);
@@ -65,10 +70,11 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
     q: one("q"), advisorId: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(one("advisor") ?? "") ? one("advisor") : undefined,
     status: (CLIENT_STATUSES as readonly string[]).includes(one("status") ?? "") ? one("status") : undefined,
     risk: (RISK_PROFILES as readonly string[]).includes(one("risk") ?? "") ? one("risk") : undefined,
-    plan: one("plan") as DeskFilters["plan"], premium: one("premium") as DeskFilters["premium"],
-    agreement: one("agreement") as DeskFilters["agreement"], attention: one("attention") as DeskFilters["attention"],
+    plan: pick(one("plan"), ["active", "draft", "none"] as const), premium: pick(one("premium"), ["active", "renewal_due", "expired", "unpaid"] as const),
+    agreement: pick(one("agreement"), ["valid", "missing"] as const),
+    attention: pick(one("attention"), ["pending", "unadvised", "cas_review", "follow_up", "no_plan", "tranche", "needs"] as const),
     minValue: lakh(one("min")), maxValue: lakh(one("max")),
-    month: /^\d{4}-(0[1-9]|1[0-2])$/.test(one("month") ?? "") ? one("month") : null, sort: (one("sort") as DeskFilters["sort"]) ?? "action",
+    month: /^\d{4}-(0[1-9]|1[0-2])$/.test(one("month") ?? "") ? one("month") : null, sort: pick(one("sort"), ["name", "value", "pending", "onboarded", "renewal", "code", "action", "left"] as const) ?? "action",
   };
   const showDeleted = one("deleted") === "1";
   const draftView = f.plan === "draft";

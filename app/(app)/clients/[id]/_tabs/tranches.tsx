@@ -27,20 +27,25 @@ function TrancheStrip({ tranches, c, baseline, canAdvise }: { tranches: Tranche[
         <div className="text-[13px] text-slate-600">{baseline ? `Plan from the report · CAS of ${formatDate(baseline.date)} · ${L(baseline.value)}` : "No onboarding CAS"}</div>
       </div>
       {ordered.map((t) => (
-        <div key={t.number} className={cn(cell, t.open ? "bg-orange-50 ring-1 ring-orange-200" : "bg-slate-50")}>
-          <div className="flex items-center gap-2">
-            <span className={cn("h-2.5 w-2.5 rounded-full", t.open ? "bg-amber-500" : "bg-emerald-600")} aria-hidden />
-            <b>Tranche {t.number}</b>
-            <span className={cn("text-xs", t.open ? "text-orange-800" : "text-emerald-800")}>{t.open ? "in progress" : `closed by CAS ${formatDate(t.to)}`}</span>
+        <div key={t.number} className={cn(cell, t.open ? "flex-row items-center justify-between gap-2 bg-orange-50 ring-1 ring-orange-200" : "bg-slate-50")}>
+          <div className="flex min-w-0 flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <span className={cn("h-2.5 w-2.5 rounded-full", t.open ? "bg-amber-500" : "bg-emerald-600")} aria-hidden />
+              <b>Tranche {t.number}</b>
+              <span className={cn("text-xs", t.open ? "text-orange-800" : "text-emerald-800")}>{t.open ? "in progress" : `closed by CAS ${formatDate(t.to)}`}</span>
+            </div>
+            <div className="text-[13px] text-slate-600">
+              {t.calls} call(s) · <b className="text-emerald-700">{L(t.executedSell + t.executedBuy)} done</b>
+              {t.pending > 0.5 ? <> · <b className="text-amber-700">{L(t.pending)} waiting</b></> : null}
+              {t.open && remaining > 0.5 ? <> · <b className="text-brand">{L(remaining)} left to advise</b></> : null}
+              {t.runId ? <> · <Link href={`/reconciliation/${t.runId}`} className="text-brand hover:underline">CAS match</Link></> : null}
+            </div>
           </div>
-          <div className="text-[13px] text-slate-600">
-            {t.calls} call(s) · <b className="text-emerald-700">{L(t.executedSell + t.executedBuy)} done</b>
-            {t.pending > 0.5 ? <> · <b className="text-amber-700">{L(t.pending)} waiting</b></> : null}
-            {t.runId ? <> · <Link href={`/reconciliation/${t.runId}`} className="text-brand hover:underline">CAS match</Link></> : null}
-          </div>
+          {t.open && remaining > 0.5 && canAdvise ? <Link href={`/advice/new?client=${c.client_id}`} className="shrink-0 rounded-md bg-brand px-3 py-1.5 text-[13px] font-semibold text-white hover:bg-brand-700">Advise</Link> : null}
         </div>
       ))}
-      {remaining > 0.5 ? (
+      {/* New calls go into the open tranche; a "next" card only when every tranche is closed. */}
+      {remaining > 0.5 && !last?.open ? (
         <div className={cn(cell, "flex-row items-center justify-between gap-2 border border-dashed border-brand-300")}>
           <div className="flex min-w-0 flex-col gap-1">
             <div className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full border-2 border-brand" aria-hidden /><b>Tranche {nextNumber}</b><span className="text-xs text-brand">next</span></div>

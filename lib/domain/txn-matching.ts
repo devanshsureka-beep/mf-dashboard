@@ -198,7 +198,7 @@ export function matchTransactions(calls: MatchCall[], txns: MatchTxn[], switchTa
 
       const lag = daysBetween(istDate(c.call.communicatedAt), t.date);
       const full = take >= expected * (1 - TOLERANCE);
-      const confidence: TxnProposal["confidence"] = split ? "MEDIUM" : full ? "HIGH" : "HIGH";
+      const confidence: TxnProposal["confidence"] = split || !full ? "MEDIUM" : "HIGH";
       // A purchase in a monthly same-amount run may be a SIP instalment, not this call: a person decides.
       const auto = lag <= AUTO_CONFIRM_MAX_LAG_DAYS && !t.recurring;
       const hadManual = c.call.unverifiedExecutedAmount > 0 || c.call.unverifiedExecutedUnits > 0;

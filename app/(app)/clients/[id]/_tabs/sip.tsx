@@ -81,7 +81,7 @@ export async function SipTab({ client: c, actor, embedded = false }: { client: C
                 <SubmitButton size="sm" variant="outline">Re-check from CAS</SubmitButton>
               </ActionForm>
             ) : null}
-            {c.active_plan_id ? <Link className="text-xs text-brand hover:underline" href={`/clients/${c.client_id}/plans/${c.active_plan_id}`}>Change amounts / move lump sum ↔ SIP</Link> : null}
+            {c.active_plan_id && actor.role !== "OPERATIONS" ? <Link className="text-xs text-brand hover:underline" href={`/clients/${c.client_id}/plans/${c.active_plan_id}`}>Change amounts / move lump sum ↔ SIP</Link> : null}
           </div>
         </div>
         {lines.length === 0 ? <p className="px-4 py-3 text-sm text-muted">{c.active_plan_id ? "The active plan has no SIP lines." : "No active plan."}</p> : (

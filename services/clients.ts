@@ -46,6 +46,7 @@ export interface CreateClientInput {
 export async function createClient(tx: Tx, actor: Actor, input: CreateClientInput): Promise<{ id: string; client_code: string }> {
   const advisorId = actor.role === "ADVISOR" ? actor.id : input.advisor_id;
   if (!advisorId) throw new AppError("Choose the primary advisor for this client.");
+  await assertPanFree(tx, input.pan);
   const rows = await tx<{ id: string; client_code: string }[]>`
     insert into public.clients (full_name, email, phone, pan, onboarding_date, risk_profile, goal, status, next_review_date, created_by)
     values (${input.full_name}, ${input.email || null}, ${input.phone || null}, ${input.pan?.toUpperCase() || null},
@@ -59,7 +60,19 @@ export async function createClient(tx: Tx, actor: Actor, input: CreateClientInpu
   return client;
 }
 
+/**
+ * A PAN another live client already holds. RLS hides clients of other advisors, so the check runs in a
+ * SECURITY DEFINER function that answers yes / no only (no name, no id).
+ */
+export async function assertPanFree(tx: Tx, pan: string | null | undefined, exceptClientId: string | null = null): Promise<void> {
+  const p = pan?.trim().toUpperCase();
+  if (!p) return;
+  const [{ used }] = await tx<{ used: boolean }[]>`select app.pan_in_use(${p}, ${exceptClientId}::uuid) as used`;
+  if (used) throw new AppError("A client with this PAN already exists. If you cannot see them, they are assigned to another advisor: ask an admin.", "CONFLICT");
+}
+
 export async function updateClient(tx: Tx, clientId: string, input: Omit<CreateClientInput, "advisor_id">): Promise<void> {
+  await assertPanFree(tx, input.pan, clientId);
   const res = await tx`
     update public.clients set
       full_name = ${input.full_name}, email = ${input.email || null}, phone = ${input.phone || null},

@@ -1,6 +1,6 @@
 import type { Actor, Tx } from "@/lib/db/tx";
 import { setAuditReason } from "@/lib/db/tx";
-import { AppError } from "@/lib/errors";
+import { AppError, logServerError } from "@/lib/errors";
 import {
   ENGINE_VERSION,
   reconcile,
@@ -8,7 +8,7 @@ import {
   type CasTxnLine,
   type HoldingLine,
 } from "@/lib/domain/reconciliation";
-import { matchTransactions, istDate, type MatchCall, type MatchTxn, type SwitchTarget, type TxnProposal } from "@/lib/domain/txn-matching";
+import { matchTransactions, istDate, TOLERANCE as VERIFY_TOLERANCE, type MatchCall, type MatchTxn, type SwitchTarget, type TxnProposal } from "@/lib/domain/txn-matching";
 import type { Channel, ReconciliationMatchRow, ReconciliationRunRow } from "@/types/domain";
 import { effectiveTxnType } from "@/lib/parsers/cas";
 import { bouncedPurchases } from "@/lib/domain/sip-status";
@@ -303,8 +303,18 @@ async function saveTxnProposals(
     }
     if (p.kind === "ADVICE_MATCH" && p.autoConfirm) toConfirm.push(ins[0].id);
   }
+  // Each auto-confirm runs in its own savepoint: one that cannot be confirmed stays SUGGESTED for a person,
+  // instead of failing the whole CAS upload.
   for (const id of toConfirm) {
-    await resolveMatch(tx, actor, id, "CONFIRM", { auto: true });
+    try {
+      await (tx as unknown as { savepoint: <T>(cb: (sp: Tx) => Promise<T>) => Promise<T> }).savepoint((sp) => resolveMatch(sp, actor, id, "CONFIRM", { auto: true }));
+    } catch (e) {
+      const why = e instanceof AppError ? e.message : "it could not be confirmed automatically";
+      if (!(e instanceof AppError)) logServerError("reconciliation.autoConfirm", e);
+      await tx`update public.reconciliation_matches set auto_confirmed = false,
+                 system_note = left(concat_ws(' · ', system_note, ${`Not auto-confirmed: ${why}`}), 1000)
+               where id = ${id}`;
+    }
   }
 }
 
@@ -452,7 +462,8 @@ export async function cancelRun(tx: Tx, runId: string, reason: string): Promise<
     select count(*)::int as n from public.reconciliation_matches where run_id = ${runId} and status in ('CONFIRMED', 'PARTIAL')`;
   if (resolved[0].n > 0) throw new AppError("This run already has confirmed matches and cannot be cancelled.");
   await setAuditReason(tx, reason);
-  await tx`update public.reconciliation_runs set status = 'CANCELLED', completed_at = now() where id = ${runId} and status = 'OPEN'`;
+  const res = await tx`update public.reconciliation_runs set status = 'CANCELLED', completed_at = now() where id = ${runId} and status = 'OPEN'`;
+  if (res.count === 0) throw new AppError("Only an open run can be cancelled.");
 }
 
 // -----------------------------------------------------------------------------
@@ -543,33 +554,51 @@ export async function resolveMatch(
       ? Number(opts.amount)
       : fromTxn && decision === "CONFIRM" ? Number(m.approx_amount) : round2(units * nav);
     if (!(amount > 0)) throw new AppError("Enter the rupee amount for this execution.");
+    if (fromTxn && m.transaction_amount != null && amount > Math.abs(Number(m.transaction_amount)) * (1 + VERIFY_TOLERANCE) + 1) {
+      throw new AppError("The amount cannot be more than the CAS transaction.");
+    }
     if (decision === "PARTIAL" && !note) throw new AppError("Add a note explaining the partial match.");
 
     await setAuditReason(tx, note ?? (opts.auto
       ? "Auto-confirmed: CAS transaction clearly matches the call"
       : `Reconciliation match confirmed (${decision})`));
 
-    // 1) Executions already recorded manually are VERIFIED, not duplicated.
-    const unverified = await tx<{ id: string; executed_amount: number }[]>`
-      select id, executed_amount from public.executions
-      where advice_item_id = ${m.advice_item_id} and status in ('EXECUTED', 'PARTIAL')
-        and cas_verified_at is null and verification_type <> 'CAS_VERIFIED'
+    // 1) Executions already recorded by hand are VERIFIED, not duplicated. Verification is cumulative:
+    //    several CAS trades (e.g. two redemptions) can together verify one hand-recorded execution, so
+    //    this trade first uses up whatever hand-recorded amount earlier confirmed trades left uncovered.
+    const hand = await tx<{ id: string; executed_amount: number; verified: boolean }[]>`
+      select id, executed_amount::float8 as executed_amount, cas_verified_at is not null as verified from public.executions
+      where advice_item_id = ${m.advice_item_id} and status in ('EXECUTED', 'PARTIAL') and verification_type <> 'CAS_VERIFIED'
       order by execution_date, created_at`;
-    let covered = 0;
-    for (const e of unverified) {
-      if (covered + e.executed_amount > amount * 1.02 + 1) break;
+    const handTotal = hand.reduce((t, e) => t + e.executed_amount, 0);
+    // What earlier confirmed trades on this call already counted against hand-recorded executions
+    // (their confirmed amount less the CAS execution each one created).
+    const priorCover = Number((await tx<{ v: number }[]>`
+      select coalesce(sum(greatest(coalesce(m2.confirmed_amount, 0) - coalesce(e.executed_amount, 0), 0)), 0)::float8 as v
+      from public.reconciliation_matches m2 left join public.executions e on e.id = m2.execution_id
+      where m2.advice_item_id = ${m.advice_item_id} and m2.id <> ${m.id} and m2.status in ('CONFIRMED', 'PARTIAL')`)[0].v);
+    const handLeft = Math.max(handTotal - priorCover, 0);
+    const slack = Math.max(1, amount * VERIFY_TOLERANCE);
+    // NAV drift: a hand amount within tolerance of this trade counts as the same money.
+    const cover = handLeft >= amount - slack ? amount : handLeft;
+    const coveredSoFar = priorCover + cover;
+    let running = 0;
+    for (const e of hand) {
+      running += e.executed_amount;
+      if (running > coveredSoFar * (1 + VERIFY_TOLERANCE) + 1) break;
+      if (e.verified) continue;
       await tx`update public.executions set cas_verified_at = now(), cas_verification_match_id = ${m.id} where id = ${e.id}`;
-      covered += e.executed_amount;
       verified++;
     }
 
     // 2) The rest becomes a new CAS_VERIFIED execution.
-    const remainingAmount = round2(amount - covered);
-    if (call.status === "EXECUTED" && remainingAmount > Math.max(1, amount * 0.01)) {
+    let remainingAmount = round2(amount - cover);
+    if (remainingAmount <= slack) remainingAmount = 0;
+    if (call.status === "EXECUTED" && remainingAmount > 0) {
       // Already fully done: only hand-recorded executions are left to verify, never a second execution.
       throw new AppError("This call is already fully executed: this trade is more than the part still to verify. Reject the match, or mark it as the client's own.");
     }
-    if (remainingAmount > Math.max(1, amount * 0.01)) {
+    if (remainingAmount > 0) {
       const lastTxn = fromTxn ? [{ d: m.transaction_date }] : await tx<{ d: string | null }[]>`
         select max(t.transaction_date)::text as d
         from public.portfolio_transactions t

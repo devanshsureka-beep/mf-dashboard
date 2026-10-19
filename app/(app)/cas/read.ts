@@ -39,6 +39,10 @@ export async function readClientCas(args: {
   if (args.clientPan && pan && pan !== args.clientPan.toUpperCase()) {
     throw new CasIdentityError(`This CAS is for PAN ${maskPan(pan)} (${parsed.investor.name ?? "another investor"}), not this client.`);
   }
+  // No PAN read from the CAS: it may be anyone's statement, so its mobile number and name must both match.
+  if (args.clientPan && !pan && (!args.client || !casMatchesClient(parsed.investor, args.client))) {
+    throw new CasIdentityError("No PAN could be read from this CAS, and its mobile number and name do not both match this client. Check that it is this client's statement.");
+  }
   return actionTx(async (tx, actor) => {
     // Onboarded without a PAN (from the report alone): the first CAS gives it, unless another client has it.
     if (!args.clientPan && pan) {
@@ -51,7 +55,8 @@ export async function readClientCas(args: {
         // Another client (perhaps one this user cannot see) may hold the PAN: then it is not this client's CAS.
         try {
           await claimPan(tx, args.clientId, pan);
-        } catch {
+        } catch (e) {
+          if ((e as { code?: string } | null)?.code !== "23505") throw e;
           throw new CasIdentityError(`This CAS is for PAN ${maskPan(pan)}, which another client already has.`);
         }
       }

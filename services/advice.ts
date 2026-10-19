@@ -50,6 +50,14 @@ export async function issueAdvice(tx: Tx, actor: Actor, input: IssueAdviceInput)
     if (it.quantity_basis === "UNITS" && !(Number(it.advised_units) > 0)) throw new AppError("Unit-based calls need advised units.");
     const sec = await tx<{ scheme_name: string }[]>`select scheme_name from public.security_master where id = ${it.security_id}`;
     if (!sec[0]) throw new AppError("Unknown security selected.");
+    // A line chosen by the form must be for this fund (or the fund a Switch line moves into).
+    if (it.plan_item_id) {
+      const [line] = await tx<{ security_id: string | null; switch_to_security_id: string | null }[]>`
+        select security_id, switch_to_security_id from public.advisory_plan_items where id = ${it.plan_item_id}`;
+      if (line?.security_id && line.security_id !== it.security_id && line.switch_to_security_id !== it.security_id) {
+        throw new AppError("That plan line is for another fund: pick the line of the fund you are advising.");
+      }
+    }
     // Every call sits on a Buy or Sell line of the active plan (added when the plan has none for this fund).
     const planItemId = it.plan_item_id || (activePlan[0]
       ? await ensurePlanLine(tx, { clientId: input.clientId, securityId: it.security_id, schemeName: it.scheme_name || sec[0].scheme_name, action: it.action, amount: it.advised_amount, why: input.notes })

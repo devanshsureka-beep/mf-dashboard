@@ -105,7 +105,10 @@ export default async function Today(props: PageProps<"/">) {
         ${primaryAdvisor(tx)}
         where (${adv}::uuid is null or adv.advisor_id = ${adv})`)[0],
       calls: await listWaiting(tx, { advisorId: adv, limit: 5 }),
-      openCalls: Number((await tx<{ n: number }[]>`select count(*)::int as n from public.v_pending_executions where (${adv}::uuid is null or advisor_id = ${adv})`)[0]?.n ?? 0),
+      openCalls: Number((await tx<{ n: number }[]>`
+        select count(*)::int as n from public.v_pending_executions p join public.clients c on c.id = p.client_id and c.deleted_at is null
+        ${primaryAdvisor(tx)}
+        where (${adv}::uuid is null or adv.advisor_id = ${adv})`)[0]?.n ?? 0),
       // What the CAS uploads of the last 30 days did on their own, and what they left for a person.
       casStats: (await tx<{ done: number; confirm: number }[]>`
         select count(*) filter (where m.status in ('CONFIRMED', 'PARTIAL') and coalesce(m.resolved_at, r.created_at) > now() - interval '30 days')::int as done,

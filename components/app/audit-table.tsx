@@ -6,13 +6,14 @@ import type { AuditLogRow } from "@/types/domain";
 
 const HIDDEN = new Set(["updated_at", "created_at", "extraction_payload", "status_changed_at"]);
 
-const PAN = /\b[A-Z]{5}[0-9]{4}[A-Z]\b/g;
+// Any case, and next to "_" or other punctuation too (file names like CAS_ABCDE1234F.pdf).
+const PAN = /(?<![A-Za-z0-9])[A-Za-z]{5}[0-9]{4}[A-Za-z](?![A-Za-z0-9])/g;
 
 /** PANs are never shown in full on screen, wherever they sit in a changed value. */
 function show(v: unknown): string {
   if (v === null || v === undefined) return "∅";
   const text = typeof v === "object" ? JSON.stringify(v) : String(v);
-  return text.replace(PAN, (p) => maskPan(p) ?? "");
+  return text.replace(PAN, (p) => maskPan(p.toUpperCase()) ?? "");
 }
 
 /** Immutable audit trail: who changed what, from what, to what, and why. */

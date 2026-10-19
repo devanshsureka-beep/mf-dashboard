@@ -35,10 +35,13 @@ export async function listWaiting(tx: Tx, f: WaitingFilters = {}): Promise<Waiti
            (select max(e.execution_date)::text from public.executions e where e.advice_item_id = p.advice_item_id and e.status in ('EXECUTED', 'PARTIAL')) as done_on,
            exists (select 1 from public.reconciliation_matches m join public.reconciliation_runs r on r.id = m.run_id
                    where m.advice_item_id = p.advice_item_id and m.status = 'SUGGESTED' and r.status <> 'CANCELLED') as to_confirm
-    from public.v_pending_executions p join public.clients c on c.id = p.client_id
+    from public.v_pending_executions p join public.clients c on c.id = p.client_id and c.deleted_at is null
     left join public.v_latest_snapshot l on l.client_id = p.client_id
     where (${f.clientId ?? null}::uuid is null or p.client_id = ${f.clientId ?? null})
-      and (${f.advisorId ?? null}::uuid is null or p.advisor_id = ${f.advisorId ?? null})
+      -- "An advisor's" calls are those of the clients they are primary advisor of (same rule as every other figure).
+      and (${f.advisorId ?? null}::uuid is null or exists (
+            select 1 from public.client_advisor_assignments a
+            where a.client_id = p.client_id and a.is_active and a.assignment_role = 'PRIMARY' and a.advisor_id = ${f.advisorId ?? null}))
       and (${f.status ?? null}::text is null or p.status = ${f.status ?? null})
       and (${f.side ?? null}::text is null or (${f.side ?? null} = 'BUY' and p.action = 'BUY') or (${f.side ?? null} = 'SELL' and p.action <> 'BUY'))
       and (${f.stale ? true : null}::boolean is null or p.age_days > 3)

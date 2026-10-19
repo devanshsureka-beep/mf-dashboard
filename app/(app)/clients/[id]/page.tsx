@@ -246,7 +246,7 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
                 {isAdmin ? (
                   <>
                     <MenuHeading>Admin only</MenuHeading>
-                    <MenuItem href={tabHref("tranches", "#ledger")} hint="When a CAS is wrong or missing: open the call, corrections are on its page">Correct a call / execution</MenuItem>
+                    <MenuItem href={tabHref("tranches", "&view=all#ledger")} hint="When a CAS is wrong or missing: open the call, corrections are on its page">Correct a call / execution</MenuItem>
                     {c.active_plan_id ? <MenuItem href={`/clients/${id}/plans/${c.active_plan_id}`}>Correct a plan line</MenuItem> : null}
                     <MenuItem href={tabHref("file", "&open=details#advisor")}>Reassign advisor</MenuItem>
                     <MenuItem href={`/clients?q=${encodeURIComponent(c.client_code)}`} danger hint="Tick the client on the list, give a reason">Delete client</MenuItem>
