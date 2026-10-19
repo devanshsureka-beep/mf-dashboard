@@ -177,9 +177,9 @@ export async function listDeskClients(tx: Tx, f: DeskFilters = {}): Promise<Desk
            (select app.today_ist() - min((d.created_at at time zone 'Asia/Kolkata')::date) from public.advisory_plans d where d.client_id = s.client_id and d.status = 'DRAFT') as draft_days,
            (select app.today_ist() - max((ab.communicated_at at time zone 'Asia/Kolkata')::date) from public.advice_batches ab where ab.client_id = s.client_id) as last_call_days,
            (select max(ps3.snapshot_date)::text from public.portfolio_snapshots ps3 where ps3.client_id = s.client_id and ps3.review_status = 'PENDING_REVIEW') as pending_cas_date,
-           (select max(ps4.snapshot_date)::text from public.portfolio_snapshots ps4 where ps4.client_id = s.client_id and ps4.review_status = 'CONFIRMED' and not (ps4.source = 'MANUAL' and ps4.holdings_count = 0)) as real_cas_date,
+           (select max(ps4.snapshot_date)::text from public.portfolio_snapshots ps4 where ps4.client_id = s.client_id and ps4.review_status = 'CONFIRMED' and not ps4.is_correction and not (ps4.source = 'MANUAL' and ps4.holdings_count = 0)) as real_cas_date,
            coalesce((select min(rp.plan_date) from public.advisory_plans rp where rp.client_id = s.client_id and rp.status <> 'CANCELLED'), s.onboarding_date)::text as report_date,
-           (select count(*)::int from public.portfolio_snapshots ps2 where ps2.client_id = s.client_id and ps2.review_status = 'CONFIRMED'
+           (select count(*)::int from public.portfolio_snapshots ps2 where ps2.client_id = s.client_id and ps2.review_status = 'CONFIRMED' and not ps2.is_correction
               and ps2.snapshot_date >= coalesce((select b.snapshot_date from public.portfolio_snapshots b where b.client_id = s.client_id and b.is_baseline limit 1), '-infinity'::date)) as cas_count
     from public.v_client_summary s
     left join public.v_client_premium p on p.client_id = s.client_id

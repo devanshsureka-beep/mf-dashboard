@@ -26,15 +26,16 @@ export async function runReconciliation(
   actor: Actor | null,
   args: { clientId: string; currentSnapshotId: string; previousSnapshotId?: string | null },
 ): Promise<{ runId: string; existing: boolean }> {
-  const curr = await tx<{ id: string; client_id: string; snapshot_date: string; created_at: Date; review_status: string; total_current_value: number }[]>`
-    select id, client_id, snapshot_date, created_at, review_status, total_current_value
+  const curr = await tx<{ id: string; client_id: string; snapshot_date: string; created_at: Date; review_status: string; total_current_value: number; is_correction: boolean }[]>`
+    select id, client_id, snapshot_date, created_at, review_status, total_current_value, is_correction
     from public.portfolio_snapshots where id = ${args.currentSnapshotId}`;
   if (!curr[0] || curr[0].client_id !== args.clientId) throw new AppError("Snapshot not found for this client.", "NOT_FOUND");
   if (curr[0].review_status !== "CONFIRMED") throw new AppError("Only CONFIRMED snapshots can be reconciled. Review the extraction first.");
+  if (curr[0].is_correction) throw new AppError("A holdings correction is not a CAS: only a CAS is matched against calls.");
 
   const prev = await tx<{ id: string; snapshot_date: string; total_current_value: number }[]>`
     select id, snapshot_date, total_current_value from public.portfolio_snapshots
-    where client_id = ${args.clientId} and review_status = 'CONFIRMED'
+    where client_id = ${args.clientId} and review_status = 'CONFIRMED' and not is_correction
       and (${args.previousSnapshotId ?? null}::uuid is null and id <> ${args.currentSnapshotId}
              and (snapshot_date, created_at) < (${curr[0].snapshot_date}::date, ${curr[0].created_at})
            or id = ${args.previousSnapshotId ?? null})

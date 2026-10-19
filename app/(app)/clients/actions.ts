@@ -8,6 +8,7 @@ import { AppError } from "@/lib/errors";
 import { actionTx, ADVISORY_ROLES } from "@/lib/server";
 import { createClient, reassignPrimaryAdvisor, updateClient } from "@/services/clients";
 import { deleteClients, restoreClients } from "@/services/client-admin";
+import { saveHoldingCorrection } from "@/services/holding-corrections";
 import { RISK_PROFILES, CLIENT_STATUSES } from "@/types/domain";
 
 const clientSchema = z.object({
@@ -105,5 +106,29 @@ export async function reassignClientsAction(_p: ActionResult | null, fd: FormDat
     revalidatePath("/clients");
     revalidatePath("/");
     return `${n} client(s) moved to the new advisor.`;
+  });
+}
+
+const holdingsSchema = z.object({
+  clientId: z.uuid(),
+  baseSnapshotId: z.uuid(),
+  asOf: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Choose the date the holdings are as of"),
+  reason: z.string().trim().min(3, "Give a reason for the change").max(1000),
+  rows: z.array(z.object({
+    holdingId: z.uuid().nullable(),
+    fundRef: z.string().regex(/^sec:[0-9a-f-]{36}$|^isin:[A-Z]{2}[A-Z0-9]{9}[0-9]$/i).nullable(),
+    folio: z.string().max(40).nullable(),
+    units: z.number().positive("Units must be more than 0 (remove the fund instead)"),
+  })).max(500),
+});
+
+/** Edit holdings: saves a correction snapshot (the CAS stays as it was). */
+export async function saveHoldingsAction(input: unknown): Promise<ActionResult> {
+  return runAction("saveHoldings", async () => {
+    const parsed = holdingsSchema.safeParse(input);
+    if (!parsed.success) throw new AppError(parsed.error.issues[0].message);
+    const { changes } = await actionTx((tx, actor) => saveHoldingCorrection(tx, actor, parsed.data), { roles: ADVISORY_ROLES });
+    revalidatePath(`/clients/${parsed.data.clientId}`);
+    return `Holdings saved · ${changes.length} ${changes.length === 1 ? "change" : "changes"}`;
   });
 }

@@ -11,6 +11,10 @@ import { listRecentTransactions, listSnapshots } from "@/services/portfolio";
 import { getPortfolioViews, planLineFor, type PlanLine } from "@/services/portfolio-views";
 import { getFundRows } from "@/services/client-desk";
 import type { ClientSummary } from "@/types/domain";
+import { getEditableHoldings } from "@/services/holding-corrections";
+import { EditHoldings } from "@/components/app/edit-holdings";
+import { saveHoldingsAction } from "../../actions";
+import { searchFundsAction } from "@/app/(app)/advice/actions";
 import { FundTable } from "./fund-table";
 
 
@@ -69,9 +73,15 @@ function MoneyBox({ c, plan, inFunds, inBank, sipTarget }: { c: ClientSummary; p
   );
 }
 
-export async function PortfolioTab({ client, actor, inBank, sipTarget }: { client: ClientSummary; actor: Actor; inBank: number; sipTarget: number }) {
+export async function PortfolioTab({ client, actor, inBank, sipTarget, edit }: {
+  client: ClientSummary; actor: Actor; inBank: number; sipTarget: number;
+  /** ?edit=holdings (and &fund=<security id> from a row's pencil) opens the holdings editor. */
+  edit: { open: boolean; fund: string | null };
+}) {
   const clientId = client.client_id;
-  const { views, snapshots, txns, desk } = await withUserTx(actor, async (tx) => ({
+  const canEdit = actor.role !== "OPERATIONS";
+  const { views, snapshots, txns, desk, editable } = await withUserTx(actor, async (tx) => ({
+    editable: canEdit ? await getEditableHoldings(tx, clientId) : null,
     desk: await getFundRows(tx, clientId),
     views: await getPortfolioViews(tx, clientId),
     snapshots: await listSnapshots(tx, clientId),
@@ -84,7 +94,12 @@ export async function PortfolioTab({ client, actor, inBank, sipTarget }: { clien
 
   return (
     <div className="space-y-3">
-      <FundTable rows={desk.rows} totals={desk.totals} clientId={clientId} canAdvise={actor.role !== "OPERATIONS"} casDate={desk.casDate} inBank={inBank} />
+      <FundTable rows={desk.rows} totals={desk.totals} clientId={clientId} canAdvise={actor.role !== "OPERATIONS"} casDate={desk.casDate} inBank={inBank}
+        editHref={editable ? `/clients/${clientId}?tab=portfolio&edit=holdings` : null} />
+      {editable && edit.open ? (
+        <EditHoldings clientId={clientId} clientName={client.full_name} data={editable} focus={edit.fund} closeHref={`/clients/${clientId}?tab=portfolio`}
+          search={searchFundsAction} save={saveHoldingsAction} />
+      ) : null}
       <MoneyBox c={client} plan={views.plan} inFunds={client.live_portfolio_value ?? 0} inBank={inBank} sipTarget={sipTarget} />
 
       <details className="group rounded-xl border border-border bg-surface">
@@ -134,7 +149,7 @@ export async function PortfolioTab({ client, actor, inBank, sipTarget }: { clien
           <TBody>
             {snapshots.map((s) => (
               <TR key={s.id}>
-                <TD>{formatDate(s.snapshot_date)} {s.is_baseline ? <span className="ml-1 text-[11px] font-medium text-brand">ONBOARDING</span> : null}</TD>
+                <TD>{formatDate(s.snapshot_date)} {s.is_baseline ? <span className="ml-1 text-[11px] font-medium text-brand">ONBOARDING</span> : null}{s.is_correction ? <span className="ml-1 text-[11px] font-medium text-amber-700" title={s.review_note ?? undefined}>CORRECTED BY HAND</span> : null}</TD>
                 <TD className="text-right"><Money value={s.total_invested_value} /></TD>
                 <TD className="text-right"><Money value={s.total_current_value} /></TD>
                 <TD className={`text-right ${s.total_gain_loss >= 0 ? "text-emerald-700" : "text-red-700"}`}><Money value={s.total_gain_loss} /></TD>

@@ -41,8 +41,8 @@ export async function getClientMix(tx: Tx, clientId: string): Promise<{ holdings
       and e.execution_date > coalesce((select l.snapshot_date from public.v_latest_snapshot l where l.client_id = ${clientId}), '-infinity'::date)
     group by 1, 2, 3`;
   planDeltas.push(...since.filter((r) => Math.abs(r.value) > 0.5));
-  const snaps = await tx<{ date: string; value: number }[]>`
-    select distinct on (p.snapshot_date) p.snapshot_date::text as date, p.total_current_value::float8 as value
+  const snaps = await tx<{ date: string; value: number; cas: boolean }[]>`
+    select distinct on (p.snapshot_date) p.snapshot_date::text as date, p.total_current_value::float8 as value, not p.is_correction as cas
     from public.portfolio_snapshots p
     where p.client_id = ${clientId} and p.review_status = 'CONFIRMED'
       and not (p.source = 'MANUAL' and coalesce(p.total_current_value, 0) = 0)
@@ -51,7 +51,7 @@ export async function getClientMix(tx: Tx, clientId: string): Promise<{ holdings
     order by p.snapshot_date, p.created_at desc`;
   const today = (await tx<{ d: string }[]>`select app.today_ist()::text as d`)[0].d;
   const live = holdings.reduce((t, h) => t + h.value, 0);
-  const history: ValuePoint[] = snaps.map((s) => ({ date: s.date, value: s.value, cas: true }));
+  const history: ValuePoint[] = snaps.map((s) => ({ date: s.date, value: s.value, cas: s.cas }));
   if (history.length && history[history.length - 1].date < today) history.push({ date: today, value: live, cas: false });
   return { holdings, planDeltas, history };
 }

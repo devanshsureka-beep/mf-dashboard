@@ -40,7 +40,8 @@ export async function listWaiting(tx: Tx, f: WaitingFilters = {}): Promise<Waiti
            exists (select 1 from public.reconciliation_matches m join public.reconciliation_runs r on r.id = m.run_id
                    where m.advice_item_id = p.advice_item_id and m.status = 'SUGGESTED' and r.status <> 'CANCELLED') as to_confirm
     from public.v_pending_executions p join public.clients c on c.id = p.client_id and c.deleted_at is null
-    left join public.v_latest_snapshot l on l.client_id = p.client_id
+    left join lateral (select max(s.snapshot_date) as snapshot_date from public.portfolio_snapshots s
+                       where s.client_id = p.client_id and s.review_status = 'CONFIRMED' and not s.is_correction) l on true
     where (${f.clientId ?? null}::uuid is null or p.client_id = ${f.clientId ?? null})
       -- "An advisor's" calls are those of the clients they are primary advisor of (same rule as every other figure).
       and (${f.advisorId ?? null}::uuid is null or exists (

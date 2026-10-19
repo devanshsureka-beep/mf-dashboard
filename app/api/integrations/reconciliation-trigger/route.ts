@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
       if (!c[0]) throw new AppError("Client not found.", "NOT_FOUND");
       const snap = body.data.current_snapshot_id
         ? body.data.current_snapshot_id
-        : (await tx<{ snapshot_id: string }[]>`select snapshot_id from public.v_latest_snapshot where client_id = ${c[0].id}`)[0]?.snapshot_id;
+        : (await tx<{ snapshot_id: string }[]>`select id as snapshot_id from public.portfolio_snapshots where client_id = ${c[0].id} and review_status = 'CONFIRMED' and not is_correction order by snapshot_date desc, created_at desc limit 1`)[0]?.snapshot_id;
       if (!snap) throw new AppError("Client has no confirmed snapshot.");
       return runReconciliation(tx, null, { clientId: c[0].id, currentSnapshotId: snap });
     });

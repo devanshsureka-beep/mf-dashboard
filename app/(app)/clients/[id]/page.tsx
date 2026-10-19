@@ -8,7 +8,7 @@ import { syncSipLinesQuietly } from "@/services/sip-status";
 import { getClientAlerts, getPremium } from "@/services/client-record";
 import { formatDate, formatINRCompact, humanize } from "@/lib/format";
 import { pageData } from "@/lib/server";
-import { cn } from "@/lib/utils";
+import { cn, uuidOrNull } from "@/lib/utils";
 import { getClientSummary } from "@/services/clients";
 import { PAGES } from "@/lib/brand";
 import type { ClientSummary } from "@/types/domain";
@@ -136,7 +136,7 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
   const raw = String(sp.tab ?? "");
   const tab: Tab = (TABS as readonly string[]).includes(raw) ? (raw as Tab) : LEGACY[raw] ?? "portfolio";
   const str = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : null);
-  const { c, bank, extra, unchecked, sip, picture, premium, alerts, casCount, actor } = await pageData(async (tx, who) => ({
+  const { c, bank, extra, unchecked, sip, picture, premium, alerts, casCount, lastCas, actor } = await pageData(async (tx, who) => ({
     // SIP lines the CAS already shows done (started / changed / stopped since the report) are ticked first (advisors / admins).
     synced: who.role === "OPERATIONS" ? 0 : await syncSipLinesQuietly(tx, id),
     c: await getClientSummary(tx, id),
@@ -152,16 +152,19 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
     premium: await getPremium(tx, id),
     alerts: await getClientAlerts(tx, id),
     // Confirmed CAS from onboarding on: CAS n closes tranche n.
-    casCount: Number((await tx<{ n: number; last: string | null }[]>`
+    lastCas: (await tx<{ d: string | null }[]>`
+      select max(snapshot_date)::text as d from public.portfolio_snapshots
+      where client_id = ${id} and review_status = 'CONFIRMED' and not is_correction`)[0]?.d ?? null,
+    casCount: Number((await tx<{ n: number }[]>`
       select count(*)::int as n from public.portfolio_snapshots
-      where client_id = ${id} and review_status = 'CONFIRMED'
+      where client_id = ${id} and review_status = 'CONFIRMED' and not is_correction
         and snapshot_date >= coalesce((select snapshot_date from public.portfolio_snapshots where client_id = ${id} and is_baseline limit 1), '-infinity'::date)`)[0]?.n ?? 0),
     // A CAS read but not yet checked: its holdings count only once confirmed.
     unchecked: (await tx<{ cas_document_id: string; snapshot_date: string }[]>`
       select s.cas_document_id, s.snapshot_date::text as snapshot_date from public.portfolio_snapshots s
       where s.client_id = ${id} and s.review_status = 'PENDING_REVIEW' and s.cas_document_id is not null
         and s.snapshot_date >= coalesce((select max(snapshot_date) from public.portfolio_snapshots
-                                         where client_id = ${id} and review_status = 'CONFIRMED'), '-infinity'::date)
+                                         where client_id = ${id} and review_status = 'CONFIRMED' and not is_correction), '-infinity'::date)
       order by s.snapshot_date desc, s.created_at desc limit 1`)[0] ?? null,
   }));
   const canAdvise = actor.role !== "OPERATIONS";
@@ -280,7 +283,7 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
 
       <Rebalancing
         c={c} sip={sip} x={extra ?? EMPTY_EXTRA}
-        closedBy={casCount > 1 ? `Tranche ${casCount - 1} closed by CAS ${formatDate(c.latest_cas_date)}` : null}
+        closedBy={casCount > 1 ? `Tranche ${casCount - 1} closed by CAS ${formatDate(lastCas)}` : null}
         relink={isAdmin && c.active_plan_id ? (
           <ActionForm action={linkCallsToPlanAction.bind(null, id)} className="inline">
             <SubmitButton size="sm" variant="outline" confirm="Link the calls outside the plan to the plan line of the same fund (Sell or Buy)?">Link calls to plan</SubmitButton>
@@ -306,7 +309,7 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
         ))}
       </nav>
       <div className="mt-3">
-        {tab === "portfolio" && <PortfolioTab client={c} actor={actor} inBank={inBank} sipTarget={sip.sip_monthly_target} />}
+        {tab === "portfolio" && <PortfolioTab client={c} actor={actor} inBank={inBank} sipTarget={sip.sip_monthly_target} edit={{ open: str("edit") === "holdings", fund: uuidOrNull(str("fund")) }} />}
         {tab === "tranches" && <TranchesTab client={c} actor={actor} view={str("view") ?? (str("side") === "PENDING" ? "waiting" : null)} />}
         {tab === "file" && <ClientFileTab client={c} actor={actor} docType={str("doc")} open={str("open")} />}
         {tab === "history" && (

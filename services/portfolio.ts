@@ -318,7 +318,7 @@ export async function confirmSnapshot(
 
   const prev = await tx<{ id: string }[]>`
     select id from public.portfolio_snapshots
-    where client_id = ${snap.client_id} and review_status = 'CONFIRMED' and id <> ${snapshotId}
+    where client_id = ${snap.client_id} and review_status = 'CONFIRMED' and id <> ${snapshotId} and not is_correction
       and (snapshot_date, created_at) < (${snap.snapshot_date}::date, ${snap.created_at})
     order by snapshot_date desc, created_at desc limit 1`;
   // The plan's SIP lines this CAS shows done (started, changed, stopped).

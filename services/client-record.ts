@@ -220,7 +220,8 @@ export async function getTimeline(tx: Tx, clientId: string, opts: { kinds?: stri
       from public.clients c left join public.profiles p on p.id = c.created_by where c.id = ${clientId}
       union all
       select s.created_at, 'CAS',
-             (case when s.is_baseline then 'Onboarding CAS read' else 'CAS read' end) || ' · statement of ' || to_char(s.snapshot_date, 'DD-Mon-YYYY'),
+             (case when s.is_correction then 'Holdings corrected by hand · as of ' || to_char(s.snapshot_date, 'DD-Mon-YYYY') || coalesce(': ' || s.review_note, '')
+                   else (case when s.is_baseline then 'Onboarding CAS read' else 'CAS read' end) || ' · statement of ' || to_char(s.snapshot_date, 'DD-Mon-YYYY') end),
              initcap(replace(s.review_status, '_', ' ')) || ' · ' || s.holdings_count || ' holding(s)',
              s.total_current_value, '/snapshots/' || s.id, p.full_name
       from public.portfolio_snapshots s left join public.profiles p on p.id = s.created_by where s.client_id = ${clientId}

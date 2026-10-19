@@ -133,11 +133,11 @@ export async function getFundRows(tx: Tx, clientId: string): Promise<{ rows: Fun
   const trail = await tx<{ security_id: string; folio_number: string | null; date: string; units: number }[]>`
     select h.security_id, h.folio_number, s.snapshot_date::text as date, sum(h.units) as units
     from public.portfolio_holdings h join public.portfolio_snapshots s on s.id = h.snapshot_id
-    where h.client_id = ${clientId} and s.review_status = 'CONFIRMED' and h.security_id is not null
+    where h.client_id = ${clientId} and s.review_status = 'CONFIRMED' and not s.is_correction and h.security_id is not null
     group by h.security_id, h.folio_number, s.snapshot_date order by s.snapshot_date`;
   const snapDates = [...new Set((await tx<{ date: string }[]>`
     select snapshot_date::text as date from public.portfolio_snapshots
-    where client_id = ${clientId} and review_status = 'CONFIRMED' order by snapshot_date`).map((r) => r.date))];
+    where client_id = ${clientId} and review_status = 'CONFIRMED' and not is_correction order by snapshot_date`).map((r) => r.date))];
 
   const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const short = (d: string) => `${d.slice(8, 10)}-${MON[Number(d.slice(5, 7)) - 1]}`;
@@ -312,7 +312,7 @@ export interface SipLedgerRow {
 export async function getTranches(tx: Tx, clientId: string): Promise<{ tranches: Tranche[]; ledger: LedgerRow[]; sipLedger: SipLedgerRow[]; baseline: { date: string; value: number } | null }> {
   const snaps = await tx<{ id: string; date: string; value: number; is_baseline: boolean }[]>`
     select id, snapshot_date::text as date, total_current_value as value, is_baseline from public.portfolio_snapshots
-    where client_id = ${clientId} and review_status = 'CONFIRMED' order by snapshot_date, created_at`;
+    where client_id = ${clientId} and review_status = 'CONFIRMED' and not is_correction order by snapshot_date, created_at`;
   const bIdx = Math.max(0, snaps.findIndex((s) => s.is_baseline));
   const chain = snaps.slice(bIdx); // onboarding CAS, then every later CAS
   const items = await tx<(LedgerRow & { side: string })[]>`

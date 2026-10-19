@@ -90,7 +90,7 @@ export async function getCasInbox(tx: Tx) {
     from public.clients c
     -- The latest confirmed CAS (a new investor's empty start is not a CAS to wait 30 days from).
     left join lateral (select max(ps.snapshot_date) as snapshot_date from public.portfolio_snapshots ps
-                       where ps.client_id = c.id and ps.review_status = 'CONFIRMED' and not (ps.source = 'MANUAL' and ps.holdings_count = 0)) l on true
+                       where ps.client_id = c.id and ps.review_status = 'CONFIRMED' and not ps.is_correction and not (ps.source = 'MANUAL' and ps.holdings_count = 0)) l on true
     left join (select client_id, sum(pending_amount) as amount from public.v_pending_executions group by client_id) w on w.client_id = c.id
     where c.status <> 'CLOSED' and c.deleted_at is null
     order by c.full_name`;
@@ -182,7 +182,7 @@ export async function getInboxCheckDetail(tx: Tx, snapshotId: string): Promise<I
     where h.snapshot_id = ${snapshotId} order by h.current_value desc`;
   const prev = (await tx<{ date: string; value: number }[]>`
     select snapshot_date::text as date, total_current_value::float8 as value from public.portfolio_snapshots
-    where client_id = ${s.client_id} and review_status = 'CONFIRMED' and id <> ${snapshotId} and not (source = 'MANUAL' and holdings_count = 0)
+    where client_id = ${s.client_id} and review_status = 'CONFIRMED' and id <> ${snapshotId} and not is_correction and not (source = 'MANUAL' and holdings_count = 0)
       and (snapshot_date, created_at) < (${s.snapshot_date}::date, ${s.created_at})
     order by snapshot_date desc, created_at desc limit 1`)[0] ?? null;
   const flags = (await tx<{ has_baseline: boolean; newest_pending: boolean }[]>`

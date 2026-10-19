@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { Pencil } from "lucide-react";
 import { formatDate, formatINR, formatINRCompact, formatNav, formatUnits } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { FundEvent, FundRow, FundTotals } from "@/services/client-desk";
@@ -69,7 +70,7 @@ function UnitsTrail({ r }: { r: FundRow }) {
  * at onboarding), what the plan says, and how far it got. "Done" is what the
  * CAS showed; nothing is recorded by hand.
  */
-export function FundTable({ rows, totals, clientId, canAdvise, casDate, inBank }: { rows: FundRow[]; totals: FundTotals; clientId: string; canAdvise: boolean; casDate: string | null; inBank: number }) {
+export function FundTable({ rows, totals, clientId, canAdvise, casDate, inBank, editHref }: { rows: FundRow[]; totals: FundTotals; clientId: string; canAdvise: boolean; casDate: string | null; inBank: number; editHref: string | null }) {
   const [filter, setFilter] = useState<Filter>("all");
   const [open, setOpen] = useState<string | null>(null);
   const [keepOpen, setKeepOpen] = useState(false);
@@ -99,11 +100,17 @@ export function FundTable({ rows, totals, clientId, canAdvise, casDate, inBank }
               const flag = [r.notHeld ? "not bought yet" : r.isNew ? "new since onboarding" : null, r.exited ? "exited" : null, p?.note].filter(Boolean).join(" · ");
               return (
                 <FragmentRow key={r.key}>
-                  <tr className={cn("align-top text-right", isOpen ? "bg-brand-50/40" : "hover:bg-slate-50/70", r.exited && "text-muted")}>
+                  <tr className={cn("group/row align-top text-right", isOpen ? "bg-brand-50/40" : "hover:bg-slate-50/70", r.exited && "text-muted")}>
                     <td className="max-w-[320px] px-4 py-2.5 text-left">
                       <button type="button" onClick={() => setOpen(isOpen ? null : r.key)} aria-expanded={isOpen} className="text-left font-semibold text-ink hover:text-brand">
                         {r.name} <span className="text-[11px] text-brand" aria-hidden>{isOpen ? "▾" : "▸"}</span>
                       </button>
+                      {editHref && r.securityId && !r.notHeld && !r.exited ? (
+                        <Link href={`${editHref}&fund=${r.securityId}`} scroll={false} title="Edit this holding" aria-label={`Edit holding: ${r.name}`}
+                          className="ml-1 inline-flex h-6 w-6 items-center justify-center rounded-md align-[-5px] text-brand opacity-0 transition-opacity hover:bg-brand-50 focus-visible:opacity-100 group-hover/row:opacity-100">
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Link>
+                      ) : null}
                       <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
                         <CapTag category={r.category} name={r.name} />
                         <PlanTypeBadge t={r.planType} />
@@ -167,6 +174,11 @@ export function FundTable({ rows, totals, clientId, canAdvise, casDate, inBank }
           ))}
         </div>
         {casDate && rows.length ? null : <span className="text-xs text-muted">No mutual funds yet: the first CAS shows the funds bought</span>}
+        {editHref ? (
+          <Link href={editHref} scroll={false} className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-border bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
+            <Pencil className="h-3.5 w-3.5" /> Edit holdings
+          </Link>
+        ) : null}
       </div>
 
       <div className="overflow-x-auto">

@@ -52,7 +52,7 @@ export async function SipTab({ client: c, actor, embedded = false }: { client: C
       where i.client_id = ${c.client_id}
       order by i.transaction_date desc limit 60`,
     lastCas: (await tx<{ d: string | null }[]>`
-      select max(snapshot_date)::text as d from public.portfolio_snapshots where client_id = ${c.client_id} and review_status = 'CONFIRMED'`)[0]?.d ?? null,
+      select max(snapshot_date)::text as d from public.portfolio_snapshots where client_id = ${c.client_id} and review_status = 'CONFIRMED' and not is_correction`)[0]?.d ?? null,
   }));
   const invested = Object.fromEntries(d.progress.map((r) => [r.sip_item_id, r]));
   const canAdvise = actor.role !== "OPERATIONS" && Boolean(c.active_plan_id);

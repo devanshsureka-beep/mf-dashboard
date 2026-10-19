@@ -272,6 +272,8 @@ export interface SnapshotRow {
   reviewed_at: Date | null;
   review_note: string | null;
   is_baseline: boolean;
+  /** Holdings corrected by hand (not a CAS): counts as the latest holdings, never as a CAS. */
+  is_correction: boolean;
   holdings_count: number;
   created_at: Date;
 }

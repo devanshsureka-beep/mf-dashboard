@@ -61,7 +61,7 @@ export default async function SnapshotPage(props: PageProps<"/snapshots/[snapsho
     <>
       <div className="mb-4">
         <div className="text-xs text-muted"><Link href={`/clients/${s.client_id}?tab=portfolio`} className="hover:underline">{c.full_name}</Link> / Snapshot</div>
-        <h1 className="mt-0.5 flex items-center gap-2 text-xl font-semibold">Portfolio snapshot · {formatDate(s.snapshot_date)} <StatusBadge status={s.review_status} />{s.is_baseline ? <span className="text-xs font-medium text-brand">BASELINE</span> : null}</h1>
+        <h1 className="mt-0.5 flex items-center gap-2 text-xl font-semibold">Portfolio snapshot · {formatDate(s.snapshot_date)} <StatusBadge status={s.review_status} />{s.is_baseline ? <span className="text-xs font-medium text-brand">BASELINE</span> : null}{s.is_correction ? <span className="text-xs font-medium text-amber-700">CORRECTED BY HAND</span> : null}</h1>
         <div className="mt-1 flex flex-wrap gap-x-4 text-sm text-muted">
           <span>Source {humanize(s.source)}</span><span>Extraction {humanize(s.extraction_method)}</span><span>Created {formatDateTime(s.created_at)}</span>
           {cas ? <Link className="text-brand hover:underline" href={`/cas/${cas.id}`}>{casLabel(cas.valuation_date)}</Link> : null}

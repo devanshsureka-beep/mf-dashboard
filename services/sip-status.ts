@@ -31,7 +31,7 @@ export interface SipStatusView {
 export async function getSipStatus(tx: Tx, clientId: string): Promise<SipStatusView> {
   const snaps = await tx<{ snapshot_date: string }[]>`
     select snapshot_date::text from public.portfolio_snapshots
-    where client_id = ${clientId} and review_status = 'CONFIRMED'
+    where client_id = ${clientId} and review_status = 'CONFIRMED' and not is_correction
     group by snapshot_date order by snapshot_date desc limit 2`;
   const latest = snaps[0]?.snapshot_date ?? null;
   const previous = snaps[1]?.snapshot_date ?? null;
