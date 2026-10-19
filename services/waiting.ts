@@ -8,6 +8,8 @@ import type { AdviceItemView } from "@/types/domain";
 
 export interface WaitingCall {
   advice_item_id: string; client_id: string; client_code: string; client_name: string; advisor_id: string; advisor_name: string | null;
+  /** The client's primary advisor today (the one the advisor filter uses); may differ from who issued the call. */
+  primary_advisor_name: string | null;
   batch_code: string; security_id: string; scheme_name: string; action: AdviceItemView["action"]; quantity_basis: "AMOUNT" | "UNITS";
   advised_amount: number; advised_units: number | null; executed_amount: number; executed_units: number; pending_amount: number;
   pending_units: number | null; status: string; communicated_at: Date; communication_channel: string; age_days: number;
@@ -31,6 +33,8 @@ export interface WaitingFilters {
 export async function listWaiting(tx: Tx, f: WaitingFilters = {}): Promise<WaitingCall[]> {
   return tx<WaitingCall[]>`
     select p.*, c.phone,
+           (select pr.full_name from public.client_advisor_assignments a join public.profiles pr on pr.id = a.advisor_id
+            where a.client_id = p.client_id and a.is_active and a.assignment_role = 'PRIMARY' limit 1) as primary_advisor_name,
            case when l.snapshot_date >= (p.communicated_at at time zone 'Asia/Kolkata')::date then l.snapshot_date::text end as cas_after,
            (select max(e.execution_date)::text from public.executions e where e.advice_item_id = p.advice_item_id and e.status in ('EXECUTED', 'PARTIAL')) as done_on,
            exists (select 1 from public.reconciliation_matches m join public.reconciliation_runs r on r.id = m.run_id

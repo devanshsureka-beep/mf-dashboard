@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { advisoryReportResultSchema } from "@/lib/integrations/contracts";
 import { answerReportQuestion, approvePlan, ingestAdvisoryReport, listReportQuestions, updatePlanItem } from "@/services/plans";
+import { issueAdvice } from "@/services/advice";
 import { clientWithActivePlan, scenario, sql, TEST_DB } from "./harness";
 
 const describeDb = TEST_DB ? describe : describe.skip;
@@ -38,6 +39,9 @@ describeDb("Questions from the report", () => {
       expect(await ctx.expectError("advisor", (t) => answerReportQuestion(t, ctx.users.advisor, x.id, { action: "SELL", percent: 33, explanation: " " }))).toMatch(/Explain/);
       await ctx.as("advisor", (t) => answerReportQuestion(t, ctx.users.advisor, x.id, { action: "SELL", percent: 33, explanation: "Advisor confirmed: sell a third" }));
       await ctx.as("advisor", (t) => answerReportQuestion(t, ctx.users.advisor, y.id, { action: "RETAIN", explanation: "Trim deferred to next tranche" }));
+
+      // Answered once: a second answer is refused (the first already rewrote the line).
+      expect(await ctx.expectError("advisor", (t) => answerReportQuestion(t, ctx.users.advisor, y.id, { action: "SELL", percent: 50, explanation: "changed my mind" }))).toMatch(/already answered/);
 
       qs = await ctx.as("advisor", (t) => listReportQuestions(t, planId));
       expect(qs.every((q) => !q.open)).toBe(true);
@@ -112,6 +116,54 @@ describeDb("Report + a newer CAS: a difference answered as already done", () => 
       const bank = (await ctx.as("advisor", (t) => t<{ in_bank: number; cash_at_onboarding: number }[]>`
         select in_bank::float8, cash_at_onboarding::float8 from public.v_client_bank where client_id = ${p.clientId}`))[0];
       expect(bank).toEqual({ in_bank: 0, cash_at_onboarding: 0 });
+    });
+  });
+});
+
+describeDb("Additional plan with a part already done", () => {
+  it("merging into the active plan keeps the answer and records the done part", async () => {
+    await scenario(async (ctx) => {
+      const p = await clientWithActivePlan(ctx);
+      const y = (await ctx.tx<{ scheme_name: string }[]>`select scheme_name from public.security_master where id = ${ctx.sec.Y}`)[0];
+      const payload = advisoryReportResultSchema.parse({
+        client_id: p.clientId, status: "PARSED", plan: { plan_name: "Top-up", plan_kind: "ADDITIONAL", fresh_money: 200000 },
+        items: [{
+          action: "BUY", scheme_name: y.scheme_name, target_amount: 200000, current_amount: 0, reason: "Buy",
+          question: "Already bought?", report_diff: { kind: "BUY_HELD", report_amount: 200000, cas_value: 50000, sold_since: 0, bought_since: 50000, suggest: "BUY", done_amount: 50000, done_date: "2026-09-05" },
+        }],
+      });
+      const draft = await ctx.as("advisor", (t) => ingestAdvisoryReport(t, payload, ctx.users.advisor.id, { extractionSource: "IMPORT", securityIds: { [y.scheme_name.toLowerCase()]: ctx.sec.Y } }));
+      const [q] = await ctx.as("advisor", (t) => listReportQuestions(t, draft.planId!));
+      await ctx.as("advisor", (t) => answerReportQuestion(t, ctx.users.advisor, q.id, { action: "BUY", amount: 200000, explanation: "₹50k bought on our advice", done: { amount: 50000, date: "2026-09-05" } }));
+      expect(await ctx.as("advisor", (t) => approvePlan(t, ctx.users.advisor, draft.planId!, "top-up"))).toBe("MERGED");
+      const merged = (await ctx.tx<{ id: string; report_answer: string | null; report_diff: { done_call_id?: string } | null }[]>`
+        select id, report_answer, report_diff from public.advisory_plan_items where plan_id = ${p.planId} and tranche_plan_id = ${draft.planId!}`)[0];
+      expect(merged.report_answer).toBe("₹50k bought on our advice");
+      expect(merged.report_diff?.done_call_id).toBeTruthy();
+      const prog = (await ctx.tx<{ advised_amount: number; executed_amount: number }[]>`
+        select advised_amount::float8, executed_amount::float8 from public.v_plan_item_progress where plan_item_id = ${merged.id}`)[0];
+      expect(prog).toEqual({ advised_amount: 50000, executed_amount: 50000 });
+    });
+  });
+});
+
+describeDb("Editing an active plan line", () => {
+  it("keeps its notes, and refuses a new action or fund once it has calls", async () => {
+    await scenario(async (ctx) => {
+      const p = await clientWithActivePlan(ctx);
+      await ctx.tx`update public.advisory_plan_items set notes = 'client asked to wait' where id = ${p.sellItem}`;
+      const line = { security_id: ctx.sec.X, scheme_name: "X", action: "SELL" as const, target_amount: 900000 };
+      await ctx.as("advisor", (t) => updatePlanItem(t, p.sellItem, line, "smaller sell"));
+      expect((await ctx.tx<{ notes: string }[]>`select notes from public.advisory_plan_items where id = ${p.sellItem}`)[0].notes).toBe("client asked to wait");
+
+      await ctx.as("advisor", (t) => issueAdvice(t, ctx.users.advisor, {
+        clientId: p.clientId, communicatedAt: new Date("2026-09-10T10:00:00+05:30"), channel: "PHONE",
+        items: [{ plan_item_id: p.sellItem, security_id: ctx.sec.X, action: "SELL", quantity_basis: "AMOUNT", advised_amount: 100000 }],
+      }));
+      expect(await ctx.expectError("advisor", (t) => updatePlanItem(t, p.sellItem, { ...line, action: "BUY" }, "flip"))).toMatch(/already has calls/);
+      expect(await ctx.expectError("advisor", (t) => updatePlanItem(t, p.sellItem, { ...line, security_id: ctx.sec.Y }, "other fund"))).toMatch(/already has calls/);
+      // The amount can still change.
+      await ctx.as("advisor", (t) => updatePlanItem(t, p.sellItem, { ...line, target_amount: 800000 }, "smaller again"));
     });
   });
 });

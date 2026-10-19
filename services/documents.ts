@@ -4,7 +4,9 @@ import type { DocumentRow } from "@/types/domain";
 
 export async function listDocuments(tx: Tx, clientId: string): Promise<DocumentRow[]> {
   return tx<DocumentRow[]>`
-    select d.*, p.full_name as uploader_name, cd.valuation_date::text as valuation_date
+    -- Signed agreement copies are stored as OTHER: shown (and filtered) as Agreements.
+    select d.*, case when exists (select 1 from public.client_agreements ag where ag.document_id = d.id) then 'AGREEMENT' else d.document_type end as document_type,
+           p.full_name as uploader_name, cd.valuation_date::text as valuation_date
     from public.documents d left join public.profiles p on p.id = d.created_by
     left join public.cas_documents cd on cd.document_id = d.id
     where d.client_id = ${clientId} and d.deleted_at is null

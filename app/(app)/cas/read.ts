@@ -19,7 +19,7 @@ export class CasIdentityError extends AppError {}
 export async function readClientCas(args: {
   clientId: string;
   clientPan: string | null;
-  /** For a client without a PAN: the CAS must show their mobile and name before its PAN is taken. */
+  /** A CAS without a PAN, or a client without one: the CAS must show their mobile and name. */
   client?: { phone: string | null; full_name: string };
   bytes: Uint8Array;
   file: StoredFile;
@@ -40,7 +40,7 @@ export async function readClientCas(args: {
     throw new CasIdentityError(`This CAS is for PAN ${maskPan(pan)} (${parsed.investor.name ?? "another investor"}), not this client.`);
   }
   // No PAN read from the CAS: it may be anyone's statement, so its mobile number and name must both match.
-  if (args.clientPan && !pan && (!args.client || !casMatchesClient(parsed.investor, args.client))) {
+  if (!pan && (!args.client || !casMatchesClient(parsed.investor, args.client))) {
     throw new CasIdentityError("No PAN could be read from this CAS, and its mobile number and name do not both match this client. Check that it is this client's statement.");
   }
   return actionTx(async (tx, actor) => {

@@ -53,6 +53,9 @@ describe("AMFI NAV file", () => {
     expect(planTypeFromName("X Fund - Direct Plan - IDCW")).toBe("DIRECT");
     expect(optionTypeFromName("X Fund - Direct Plan - IDCW")).toBe("IDCW");
     expect(optionTypeFromName("X Fund - Growth")).toBe("GROWTH");
+    expect(optionTypeFromName("ICICI Prudential Dividend Yield Equity Fund - Direct Plan - Growth")).toBe("GROWTH");
+    expect(optionTypeFromName("X Dividend Yield Fund - IDCW Payout")).toBe("IDCW");
+    expect(optionTypeFromName("X Fund - Dividend")).toBe("IDCW");
   });
 
   it("reads the file with Plan and Option columns (AMFI layout from Oct 2026)", async () => {

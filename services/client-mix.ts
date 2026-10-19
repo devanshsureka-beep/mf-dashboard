@@ -7,7 +7,7 @@ export interface ValuePoint { date: string; value: number; cas: boolean }
  * The client's portfolio picture for the page top:
  * - holdings: the latest confirmed CAS, units × today's NAV (v_holding_live);
  * - planDeltas: what each line of the active plan still has to do (waiting + left to advise),
- *   signed: a sell takes money out of its fund, a buy puts it in;
+ *   signed: a sell takes money out of its fund, a buy puts it in; plus trades recorded since the latest CAS;
  * - history: money in funds at each confirmed CAS since onboarding, then today at the latest NAV.
  */
 export async function getClientMix(tx: Tx, clientId: string): Promise<{ holdings: MixRow[]; planDeltas: MixRow[]; history: ValuePoint[] }> {
@@ -29,6 +29,18 @@ export async function getClientMix(tx: Tx, clientId: string): Promise<{ holdings
     where v.client_id = ${clientId} and v.plan_status = 'ACTIVE' and v.side in ('SELL', 'BUY')
       and v.item_status <> 'CANCELLED'
       and coalesce(v.pending_amount, 0) + coalesce(v.yet_to_advise_amount, 0) > 0.5`;
+  // Trades recorded after the latest CAS are not in its holdings yet (nor in "waiting"): they count towards "after".
+  const since = await tx<MixRow[]>`
+    select coalesce(sm.scheme_name, '') as name, coalesce(m.category, sm.category) as category, coalesce(m.amc, sm.amc) as amc,
+           sum(case when a.action = 'BUY' then e.executed_amount else -e.executed_amount end)::float8 as value
+    from public.executions e
+    join public.advice_items a on a.id = e.advice_item_id
+    join public.security_master sm on sm.id = e.security_id
+    left join public.mf_schemes m on m.isin = sm.isin
+    where e.client_id = ${clientId} and e.status in ('EXECUTED', 'PARTIAL') and e.executed_amount > 0
+      and e.execution_date > coalesce((select l.snapshot_date from public.v_latest_snapshot l where l.client_id = ${clientId}), '-infinity'::date)
+    group by 1, 2, 3`;
+  planDeltas.push(...since.filter((r) => Math.abs(r.value) > 0.5));
   const snaps = await tx<{ date: string; value: number }[]>`
     select distinct on (p.snapshot_date) p.snapshot_date::text as date, p.total_current_value::float8 as value
     from public.portfolio_snapshots p

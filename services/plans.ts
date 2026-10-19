@@ -194,6 +194,14 @@ export async function updatePlanItem(tx: Tx, itemId: string, item: PlanItemInput
   const plan = await assertPlanStatus(tx, rows[0].plan_id, ["DRAFT", "ACTIVE"]);
   if (plan.status === "ACTIVE") {
     if (!reason?.trim()) throw new AppError("Amending an ACTIVE plan requires a reason.");
+    // Calls count on their line by the line's action and fund: changing either would move
+    // what is already advised and done to the other side. Cancel the line and add a new one instead.
+    const [cur] = await tx<{ action: string; security_id: string | null; calls: number }[]>`
+      select i.action, i.security_id, (select count(*)::int from public.advice_items a where a.plan_item_id = i.id) as calls
+      from public.advisory_plan_items i where i.id = ${itemId}`;
+    if (cur.calls > 0 && (cur.action !== item.action || (cur.security_id !== null && cur.security_id !== item.security_id))) {
+      throw new AppError("This line already has calls: its action and fund cannot change. Cancel the line and add a new one.");
+    }
     await setAuditReason(tx, reason);
   }
   await tx`
@@ -201,7 +209,9 @@ export async function updatePlanItem(tx: Tx, itemId: string, item: PlanItemInput
       security_id = ${item.security_id}, scheme_name = ${item.scheme_name}, folio_number = ${item.folio_number ?? null},
       action = ${item.action}, target_amount = ${item.target_amount}, target_units = ${item.target_units ?? null},
       current_amount = ${item.current_amount ?? null}, target_weight = ${item.target_weight ?? null},
-      reason = ${item.reason ?? null}, priority = ${item.priority ?? 100}, notes = ${item.notes ?? null},
+      reason = ${item.reason ?? null}, priority = ${item.priority ?? 100},
+      -- The editor has no notes field: keep the line's notes unless new ones are given.
+      notes = coalesce(${item.notes ?? null}, notes),
       -- A report question stays open (and blocks approval) until it is answered on the plan.
       needs_review = case when ${item.security_id}::uuid is null then needs_review
                           else (report_question is not null and report_answer is null) end
@@ -319,11 +329,19 @@ async function mergeAdditionalPlan(
   await tx`
     insert into public.advisory_plan_items
       (plan_id, client_id, security_id, scheme_name, folio_number, action, switch_to_security_id, target_amount, target_units,
-       current_amount, target_weight, reason, priority, notes, status, needs_review, created_by, tranche_plan_id)
+       current_amount, target_weight, reason, priority, notes, status, needs_review, created_by, tranche_plan_id,
+       report_question, report_answer, report_diff)
     select ${p.activePlanId}, client_id, security_id, scheme_name, folio_number, action, switch_to_security_id, target_amount, target_units,
-           current_amount, target_weight, reason, priority + 10000, notes, 'OPEN', false, ${actor.id}, plan_id
+           current_amount, target_weight, reason, priority + 10000, notes, 'OPEN', false, ${actor.id}, plan_id,
+           report_question, report_answer, report_diff
     from public.advisory_plan_items
     where plan_id = ${p.planId} and status <> 'CANCELLED' and action <> 'RETAIN'`;
+  // Parts the desk said were already done (answered on the draft): their calls and executions, as on approval.
+  const doneLines = await tx<{ id: string }[]>`
+    select id from public.advisory_plan_items
+    where plan_id = ${p.activePlanId} and tranche_plan_id = ${p.planId} and status = 'OPEN'
+      and report_diff ? 'done_answer' and not report_diff ? 'done_call_id'`;
+  for (const d of doneLines) await recordDoneBeforeOnboarding(tx, actor, d.id);
   await tx`
     insert into public.sip_plan_items
       (client_id, plan_id, security_id, scheme_name, folio_number, action, old_amount, new_amount, frequency, debit_day,
@@ -648,11 +666,12 @@ export async function answerReportQuestion(tx: Tx, actor: Actor, itemId: string,
   if (actor.role === "OPERATIONS") throw new AppError("Only an advisor or admin can answer a question on the plan.", "FORBIDDEN");
   const explanation = a.explanation.trim();
   if (!explanation) throw new AppError("Explain what the report means for this fund.");
-  const it = (await tx<{ plan_id: string; scheme_name: string; security_id: string | null; current_amount: number | null; report_question: string | null; reason: string | null; status: string }[]>`
-    select plan_id, scheme_name, security_id, current_amount::float8 as current_amount, report_question, reason, status
+  const it = (await tx<{ plan_id: string; scheme_name: string; security_id: string | null; current_amount: number | null; report_question: string | null; report_answer: string | null; reason: string | null; status: string }[]>`
+    select plan_id, scheme_name, security_id, current_amount::float8 as current_amount, report_question, report_answer, reason, status
     from public.advisory_plan_items where id = ${itemId} for update`)[0];
   if (!it || !it.report_question) throw new AppError("Question not found.", "NOT_FOUND");
   if (it.status !== "OPEN") throw new AppError("This plan line is closed.");
+  if (it.report_answer) throw new AppError("This question is already answered.");
   const plan = await assertPlanStatus(tx, it.plan_id, ["DRAFT", "ACTIVE"]);
   const done = a.done && Number(a.done.amount) > 0 ? { amount: Math.round(Number(a.done.amount) * 100) / 100, date: a.done.date } : null;
   if (done) {

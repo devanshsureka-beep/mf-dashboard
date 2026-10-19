@@ -32,6 +32,12 @@ describe("marketCap", () => {
     expect(marketCap("Index Funds - Equity Funds", "Groww Nifty Total Market Index Fund")).toBe("Flexi / multi");
     expect(marketCap("Fund of Funds Scheme (Domestic) - Fund of Funds Scheme (Domestic)", "Groww Nifty Capital Markets ETF FOF")).toBe("Sectoral");
     expect(marketCap(null, "Altiva Equity Ex-Top 100 Long-Short Fund - Regular Plan Growth")).toBe("Flexi / multi");
+    expect(marketCap("Other Scheme - Index Funds", "Motilal Oswal Nifty Midsmallcap 400 Index Fund")).toBe("Flexi / multi");
+    expect(marketCap("Other Scheme - Index Funds", "UTI Nifty200 Momentum 30 Index Fund")).toBe("Sectoral");
+    expect(marketCap("Other Scheme - Index Funds", "X Nifty 200 Momentum 30 Index Fund")).toBe("Sectoral");
+    expect(marketCap("Other Scheme - Index Funds", "X Nifty Commodities Index Fund")).toBe("Sectoral");
+    expect(marketCap("Other Scheme - Index Funds", "X Nifty 50 Index Fund - Dividend")).toBe("Large cap");
+    expect(marketCap("Other Scheme - Index Funds", "X Nifty 50 Equal Weight Index Fund")).toBe("Sectoral");
   });
 });
 

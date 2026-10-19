@@ -314,6 +314,13 @@ async function saveTxnProposals(
       await tx`update public.reconciliation_matches set auto_confirmed = false,
                  system_note = left(concat_ws(' · ', system_note, ${`Not auto-confirmed: ${why}`}), 1000)
                where id = ${id}`;
+      // It now needs a person: the run stays open (and shows on the inbox) until they resolve it.
+      await tx`update public.reconciliation_runs
+               set status = 'OPEN', completed_at = null,
+                   summary = summary || jsonb_build_object(
+                     'auto_confirmed', greatest(coalesce((summary->>'auto_confirmed')::int, 0) - 1, 0),
+                     'needs_review', coalesce((summary->>'needs_review')::int, 0) + 1)
+               where id = ${runId} and status in ('OPEN', 'COMPLETED')`;
     }
   }
 }

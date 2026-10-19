@@ -89,7 +89,7 @@ export async function gatherClientExport(tx: Tx, clientId: string): Promise<Clie
   tables.sort((a, b) => a.file.localeCompare(b.file));
 
   const docs = await tx<{ id: string; document_type: string; file_path: string; file_name: string; created_at: Date; valuation_date: string | null }[]>`
-    select d.id, d.document_type, d.file_path, d.file_name, d.created_at, cd.valuation_date
+    select d.id, case when exists (select 1 from public.client_agreements ag where ag.document_id = d.id) then 'AGREEMENT' else d.document_type end as document_type, d.file_path, d.file_name, d.created_at, cd.valuation_date
     from public.documents d left join public.cas_documents cd on cd.document_id = d.id
     where d.client_id = ${clientId} and d.deleted_at is null
     order by d.created_at`;

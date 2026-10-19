@@ -208,10 +208,14 @@ export function IssueAdviceForm({
       const lines = sells.filter((p) => p.security_id === id);
       if (!lines.length) continue;
       viaPlan.add(id);
-      // Lines that each exit their own folio are all taken (a fund held in two folios has two);
-      // a line without a folio exit already sells everything the CAS holds, so only one of those.
+      // Lines that each exit their own folio are all taken (a fund held in two folios has two),
+      // when together they sell every unit the CAS holds. Otherwise a line without a folio exit
+      // sells everything the CAS holds, so only one of those.
       const perFolio = lines.filter((p) => Number(p.full_exit_units ?? 0) > 0);
-      planIds.push(...(perFolio.length ? perFolio : lines.slice(0, 1)).map((p) => p.id));
+      const whole = lines.find((p) => !(Number(p.full_exit_units ?? 0) > 0));
+      const folioUnits = perFolio.reduce((t, p) => t + Number(p.full_exit_units), 0);
+      const covers = perFolio.length > 0 && folioUnits >= (unitsOf.get(id) ?? 0) - 0.001;
+      planIds.push(...(covers || !whole ? perFolio : [whole]).map((p) => p.id));
     }
     setMany(planIds, () => ({ include: true, mode: "FULL" }));
     const already = new Set(off.map((o) => secOf(o.fund?.value)).filter(Boolean));

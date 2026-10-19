@@ -50,7 +50,7 @@ export default async function PendingExecutionsPage(props: PageProps<"/execution
   const groups: Group[] = [];
   for (const r of rows) {
     let g = groups.find((x) => x.client_id === r.client_id);
-    if (!g) groups.push((g = { client_id: r.client_id, client_name: r.client_name, client_code: r.client_code, phone: r.phone, advisor: r.advisor_name, rows: [], advised: 0, done: 0, waiting: 0, oldest: 0, toConfirm: false }));
+    if (!g) groups.push((g = { client_id: r.client_id, client_name: r.client_name, client_code: r.client_code, phone: r.phone, advisor: r.primary_advisor_name ?? r.advisor_name, rows: [], advised: 0, done: 0, waiting: 0, oldest: 0, toConfirm: false }));
     g.rows.push(r);
     g.advised += r.advised_amount;
     g.done += r.executed_amount;

@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { formatINRCompact } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { MixBy, MixSlice } from "@/lib/domain/market-cap";
+import { ASSET_CLASSES } from "@/lib/domain/book";
+import { CAP_BUCKETS, type MixBy, type MixSlice } from "@/lib/domain/market-cap";
 
 /** Categorical slots in a fixed order (validated for colour-blind separation); "Other" is always grey. */
 export const MIX_SLOTS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"];
@@ -23,7 +24,10 @@ export function ClientAllocation({ views, hasPlan }: { views: Record<MixBy, MixV
   const [by, setBy] = useState<MixBy>("cap");
   const v = views[by];
   // Market cap and asset class keep a fixed colour per group (so the same group is the same colour on every client).
-  const colorOf = (s: MixSlice, i: number) => mixColor(s.label, i);
+  const colorOf = (s: MixSlice, i: number) => {
+    const fixed = by === "cap" ? (CAP_BUCKETS as readonly string[]).indexOf(s.label) : by === "class" ? (ASSET_CLASSES as readonly string[]).indexOf(s.label) : -1;
+    return mixColor(s.label, fixed >= 0 ? fixed : i);
+  };
   const r = 40, c = 2 * Math.PI * r;
   const shown = v.slices.filter((s) => s.now >= 0.5);
   const starts = shown.map((_, i) => shown.slice(0, i).reduce((t, s) => t + s.nowShare * c, 0));

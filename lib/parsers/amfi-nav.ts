@@ -53,8 +53,11 @@ export function planTypeFromName(name: string): "DIRECT" | "REGULAR" | null {
 
 export function optionTypeFromName(name: string): "GROWTH" | "IDCW" | "OTHER" {
   const n = name.toLowerCase();
-  if (/idcw|dividend|payout|reinvest|bonus/.test(n)) return "IDCW";
-  if (/growth|\bgr\b|cumulative/.test(n)) return "GROWTH";
+  // "Dividend Yield" is a fund type, not an option: a "… Dividend Yield Fund - Growth" is Growth.
+  const rest = n.replace(/dividend\s+yield/g, "");
+  if (/idcw|payout|reinvest|bonus|income distribution/.test(rest)) return "IDCW";
+  if (/growth|\bgr\b|cumulative/.test(rest)) return "GROWTH";
+  if (/dividend/.test(rest)) return "IDCW";
   return "OTHER";
 }
 

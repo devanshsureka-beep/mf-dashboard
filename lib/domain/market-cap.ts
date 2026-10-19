@@ -24,12 +24,15 @@ function capFromIndexName(n: string): CapBucket | null {
   const s = n.toLowerCase();
   // "Ex-Top 100" long-short funds hold everything outside the largest companies.
   if (/ex[- ]?top/.test(s)) return "Flexi / multi";
+  // Factor and thematic indices first: "Nifty 200 Momentum 30" is a factor fund, not the Nifty 200.
+  if (/bank|financial|capital markets?|power|\bit\b|tech|pharma|health|fmcg|consumption|auto|infra|psu|cpse|energy|realty|metal|commodit|manufacturing|defence|digital|tourism|momentum|quality|value|alpha|low vol|dividend (yield|opportunit)|esg|equal weight/.test(s)) return "Sectoral";
   if (/large ?(&|and)? ?mid ?cap|largemidcap|nifty large ?mid/.test(s)) return "Large & mid";
+  // "Midsmallcap 400" holds mid and small companies together.
+  if (/mid ?small ?cap|midsmallcap/.test(s)) return "Flexi / multi";
   if (/small ?cap|smallcap|microcap|micro ?cap/.test(s)) return "Small cap";
   if (/mid ?cap|midcap/.test(s)) return "Mid cap";
-  if (/nifty 500|nifty500|total market|multi ?cap|multicap|nifty 200\b|bse 500|flexi/.test(s)) return "Flexi / multi";
-  if (/\bnifty index\b|nifty 50\b|nifty50|nifty next 50|next 50|nifty 100\b|sensex|bse 100\b|large ?cap|largecap|bluechip|top 100/.test(s)) return "Large cap";
-  if (/bank|financial|capital markets?|power|it\b|tech|pharma|health|fmcg|consumption|auto|infra|psu|energy|realty|metal|manufacturing|defence|digital|momentum|quality|value|alpha|low vol|dividend|esg/.test(s)) return "Sectoral";
+  if (/nifty ?500|total market|multi ?cap|multicap|nifty ?200\b|bse ?500|flexi/.test(s)) return "Flexi / multi";
+  if (/\bnifty index\b|nifty ?50\b|nifty next 50|next 50|nifty ?100\b|sensex|bse ?100\b|large ?cap|largecap|bluechip|top 100/.test(s)) return "Large cap";
   return null;
 }
 
