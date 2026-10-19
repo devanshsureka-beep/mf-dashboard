@@ -88,7 +88,7 @@ export async function issueAdviceAction(clientId: string, _p: ActionResult | nul
   // A round from Find clients: straight on to the next client, same time and channel.
   const round = fd.has("queue_done") ? queueNext(fd, 1, clientId) : null;
   if (round) redirect(round);
-  redirect(batchId ? `/advice?client=${clientId}&issued=${batchId}` : `/clients/${clientId}?tab=sip`);
+  redirect(batchId ? `/advice?client=${clientId}&issued=${batchId}` : `/clients/${clientId}?tab=tranches#sip-lines`);
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

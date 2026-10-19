@@ -142,11 +142,7 @@ export function FundTable({ rows, totals, clientId, canAdvise, casDate, inBank }
 
   return (
     <section className="overflow-hidden rounded-xl border border-border bg-surface">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-2.5">
-        <div>
-          <div className="text-sm font-semibold">Every fund and what&apos;s left on it</div>
-          <div className="text-xs text-muted">{casDate && rows.length ? <>Units from CAS {formatDate(casDate)} · valued at today&apos;s NAV · click a fund for its history</> : "No mutual funds yet: the first CAS shows the funds bought"}</div>
-        </div>
+      <div className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-2.5">
         <div className="flex flex-wrap items-center gap-1.5 text-xs">
           {(["all", "sell", "buy", "keep", "exited"] as Filter[]).filter((f) => f !== "exited" || counts.exited > 0).map((f) => (
             <button key={f} type="button" onClick={() => setFilter(f)} aria-pressed={filter === f}
@@ -155,6 +151,7 @@ export function FundTable({ rows, totals, clientId, canAdvise, casDate, inBank }
             </button>
           ))}
         </div>
+        {casDate && rows.length ? null : <span className="text-xs text-muted">No mutual funds yet: the first CAS shows the funds bought</span>}
       </div>
 
       <div className="overflow-x-auto">

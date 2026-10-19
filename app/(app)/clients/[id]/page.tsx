@@ -14,18 +14,17 @@ import { PAGES } from "@/lib/brand";
 import type { ClientSummary } from "@/types/domain";
 import { PortfolioTab } from "./_tabs/portfolio";
 import { TranchesTab } from "./_tabs/tranches";
-import { SipTab } from "./_tabs/sip";
 import { ClientFileTab } from "./_tabs/client-file";
 import { TimelineTab } from "./_tabs/timeline";
 import { AuditTab } from "./_tabs/audit";
 import { ActionForm, SubmitButton } from "@/components/app/action-form";
 import { linkCallsToPlanAction } from "./actions";
 
-const TABS = ["portfolio", "tranches", "sip", "file", "history"] as const;
+const TABS = ["portfolio", "tranches", "file", "history"] as const;
 type Tab = (typeof TABS)[number];
 // Links from elsewhere in the app still use the old tab names.
 const LEGACY: Record<string, Tab> = {
-  overview: "portfolio", plan: "tranches", calls: "tranches", executions: "tranches", cas: "tranches",
+  overview: "portfolio", plan: "tranches", calls: "tranches", executions: "tranches", cas: "tranches", sip: "tranches",
   agreements: "file", reports: "file", documents: "file", notes: "file", timeline: "history", audit: "history",
 };
 
@@ -182,7 +181,7 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
   const openTranche = Math.max(1, casCount);
   const tabHref = (t: Tab, extra = "") => `/clients/${id}?tab=${t}${extra}`;
   const LABEL: Record<Tab, string> = {
-    portfolio: "Portfolio & plan", tranches: `Tranches · ${openTranche}`, sip: "SIP",
+    portfolio: "Portfolio & plan", tranches: "Tranches & SIPs",
     file: alerts.followUpsDue ? `Client file & notes · ${alerts.followUpsDue}` : "Client file & notes", history: "History",
   };
 
@@ -229,7 +228,7 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
                 <DropMenu label="Issue call" primary>
                   <MenuItem href={`/advice/new?client=${id}&side=SELL`} hint={`${formatINRCompact(c.yet_to_advise_sell)} of sells left to advise`}><b className="text-red-700">Sell call</b></MenuItem>
                   <MenuItem href={`/advice/new?client=${id}&side=BUY`} hint={`${formatINRCompact(c.yet_to_advise_buy)} of buys left to advise`}><b className="text-blue-700">Buy call</b></MenuItem>
-                  <MenuItem href={tabHref("sip")} hint={`Start / stop / change a SIP · ${formatINRCompact(sip.sip_monthly_yet_to_advise)}/mo left`}><b className="text-violet-700">SIP</b></MenuItem>
+                  <MenuItem href={tabHref("tranches", "#sip-lines")} hint={`Start / stop / change a SIP · ${formatINRCompact(sip.sip_monthly_yet_to_advise)}/mo left`}><b className="text-violet-700">SIP</b></MenuItem>
                 </DropMenu>
               ) : null}
               <LinkButton href={`/clients/${id}/cas/upload`} variant="outline" size="sm">Upload CAS</LinkButton>
@@ -289,14 +288,14 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
             )}
           >
             {LABEL[t]}
+            {t === "tranches" && c.open_calls > 0 ? <span className="ml-1 rounded-full bg-orange-100 px-1.5 text-[10px] font-medium text-orange-800">{c.open_calls} waiting</span> : null}
             {t === "tranches" && alerts.unadvised ? <span className="ml-1 rounded-full bg-red-100 px-1.5 text-[10px] text-red-700">{alerts.unadvised.count}</span> : null}
           </Link>
         ))}
       </nav>
       <div className="mt-3">
         {tab === "portfolio" && <PortfolioTab client={c} actor={actor} inBank={inBank} sipTarget={sip.sip_monthly_target} />}
-        {tab === "tranches" && <TranchesTab client={c} actor={actor} sipLeft={sip.sip_monthly_yet_to_advise} side={["SELL", "BUY", "PENDING"].includes(str("side") ?? "") ? str("side") : null} />}
-        {tab === "sip" && <SipTab client={c} actor={actor} />}
+        {tab === "tranches" && <TranchesTab client={c} actor={actor} view={str("view") ?? (str("side") === "PENDING" ? "waiting" : null)} />}
         {tab === "file" && <ClientFileTab client={c} actor={actor} docType={str("doc")} open={str("open")} />}
         {tab === "history" && (
           <div className="space-y-2">

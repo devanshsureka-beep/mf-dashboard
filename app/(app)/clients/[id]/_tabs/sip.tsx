@@ -36,8 +36,11 @@ function Kpi({ label, value, tone }: { label: string; value: number; tone?: stri
   );
 }
 
-/** The client's SIPs: one summary row, one table whose status comes from the CAS, and the instalments folded away. */
-export async function SipTab({ client: c, actor }: { client: ClientSummary; actor: Actor }) {
+/**
+ * The client's SIPs: one table whose status comes from the CAS, and the instalments folded away.
+ * Shown inside the Tranches & SIPs tab (`embedded`: the Rebalancing table above already has the SIP totals).
+ */
+export async function SipTab({ client: c, actor, embedded = false }: { client: ClientSummary; actor: Actor; embedded?: boolean }) {
   const d = await withUserTx(actor, async (tx) => ({
     sip: await getClientSip(tx, c.client_id),
     lines: c.active_plan_id ? await getSipItems(tx, c.active_plan_id) : [],
@@ -59,7 +62,7 @@ export async function SipTab({ client: c, actor }: { client: ClientSummary; acto
 
   return (
     <div className="space-y-3">
-      <section className="rounded-xl border border-border bg-surface px-4 py-3.5">
+      {embedded ? null : <section className="rounded-xl border border-border bg-surface px-4 py-3.5">
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <Kpi label="SIP target" value={s.sip_monthly_target} />
           <Kpi label="Advised" value={s.sip_monthly_advised} tone="text-blue-700" />
@@ -67,9 +70,9 @@ export async function SipTab({ client: c, actor }: { client: ClientSummary; acto
           <Kpi label="Left to advise" value={s.sip_monthly_yet_to_advise} />
         </div>
         <div className="mt-3 h-1.5 rounded-full bg-slate-100"><div className="h-1.5 rounded-full bg-emerald-500" style={{ width: `${pct}%` }} /></div>
-      </section>
+      </section>}
 
-      <section className="overflow-hidden rounded-xl border border-border bg-surface">
+      <section id="sip-lines" className="scroll-mt-14 overflow-hidden rounded-xl border border-border bg-surface">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-2.5">
           <h3 className="text-sm font-semibold">SIPs in the plan · {lines.length}</h3>
           <div className="flex flex-wrap items-center gap-3">
@@ -155,7 +158,7 @@ export async function SipTab({ client: c, actor }: { client: ClientSummary; acto
           </div>
         ) : <p className="border-t border-border px-4 py-3 text-sm text-muted">None yet.{d.lastCas ? ` Latest CAS ${formatDate(d.lastCas)}; the next CAS will show what changed.` : ""}</p>}
       </details>
-      <p className="text-xs text-muted">Status updates by itself from each new CAS. Advising a SIP is the only step done by hand.</p>
+      {embedded ? null : <p className="text-xs text-muted">Status updates by itself from each new CAS. Advising a SIP is the only step done by hand.</p>}
     </div>
   );
 }

@@ -91,7 +91,7 @@ describeDb("A new investor with no mutual funds yet (no CAS)", () => {
         select id, security_id, scheme_name from public.advisory_plan_items where plan_id = ${plan.planId} and target_amount = 300000`)[0];
       const today = (await ctx.tx<{ d: string }[]>`select app.today_ist()::text as d`)[0].d;
       const call = await ctx.as("advisor", (t) => issueAdvice(t, ctx.users.advisor, {
-        clientId: client.id, communicatedAt: new Date(`${today}T09:00:00+05:30`), channel: "PHONE",
+        clientId: client.id, communicatedAt: new Date(`${today}T00:05:00+05:30`), channel: "PHONE",
         items: [{ plan_item_id: line.id, security_id: line.security_id, action: "BUY", quantity_basis: "AMOUNT", advised_amount: 300000 }],
       }));
       const snap = await ctx.as("ops", async (t) => {
