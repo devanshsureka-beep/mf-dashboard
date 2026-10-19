@@ -22,12 +22,14 @@ const tailOf = (category: string) => (category.includes(" - ") ? category.split(
 /** An index fund / ETF by the index it tracks. */
 function capFromIndexName(n: string): CapBucket | null {
   const s = n.toLowerCase();
+  // "Ex-Top 100" long-short funds hold everything outside the largest companies.
+  if (/ex[- ]?top/.test(s)) return "Flexi / multi";
   if (/large ?(&|and)? ?mid ?cap|largemidcap|nifty large ?mid/.test(s)) return "Large & mid";
   if (/small ?cap|smallcap|microcap|micro ?cap/.test(s)) return "Small cap";
   if (/mid ?cap|midcap/.test(s)) return "Mid cap";
   if (/nifty 500|nifty500|total market|multi ?cap|multicap|nifty 200\b|bse 500|flexi/.test(s)) return "Flexi / multi";
-  if (/nifty 50\b|nifty50|nifty next 50|next 50|nifty 100\b|sensex|bse 100\b|large ?cap|largecap|bluechip|top 100/.test(s)) return "Large cap";
-  if (/bank|financial|it\b|tech|pharma|health|fmcg|consumption|auto|infra|psu|energy|realty|metal|manufacturing|defence|digital|momentum|quality|value|alpha|low vol|dividend|esg/.test(s)) return "Sectoral";
+  if (/\bnifty index\b|nifty 50\b|nifty50|nifty next 50|next 50|nifty 100\b|sensex|bse 100\b|large ?cap|largecap|bluechip|top 100/.test(s)) return "Large cap";
+  if (/bank|financial|capital markets?|power|it\b|tech|pharma|health|fmcg|consumption|auto|infra|psu|energy|realty|metal|manufacturing|defence|digital|momentum|quality|value|alpha|low vol|dividend|esg/.test(s)) return "Sectoral";
   return null;
 }
 

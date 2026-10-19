@@ -27,6 +27,11 @@ describe("marketCap", () => {
     expect(marketCap("Other Scheme - Index Funds", "Nippon India Nifty Smallcap 250 Index")).toBe("Small cap");
     expect(marketCap("Other Scheme - Index Funds", "Edelweiss Nifty Large Mid Cap 250 Index")).toBe("Large & mid");
     expect(marketCap(null, "Navi Nifty Bank Index Fund")).toBe("Sectoral");
+    expect(marketCap("Other Scheme - Index Funds", "SBI Nifty Index Fund - Direct Plan - Growth")).toBe("Large cap");
+    expect(marketCap(null, "HDFC BSE Sensex Index Fund - Direct Plan")).toBe("Large cap");
+    expect(marketCap("Index Funds - Equity Funds", "Groww Nifty Total Market Index Fund")).toBe("Flexi / multi");
+    expect(marketCap("Fund of Funds Scheme (Domestic) - Fund of Funds Scheme (Domestic)", "Groww Nifty Capital Markets ETF FOF")).toBe("Sectoral");
+    expect(marketCap(null, "Altiva Equity Ex-Top 100 Long-Short Fund - Regular Plan Growth")).toBe("Flexi / multi");
   });
 });
 
