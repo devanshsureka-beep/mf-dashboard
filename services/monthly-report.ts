@@ -44,7 +44,7 @@ export async function getMonthlyReport(tx: Tx, clientId: string, ym: string): Pr
 
   const snap = (cmp: "before" | "upto") => tx<{ id: string; snapshot_date: string; value: number }[]>`
     select id, snapshot_date::text, total_current_value::float8 as value from public.portfolio_snapshots
-    where client_id = ${clientId} and review_status = 'CONFIRMED'
+    where client_id = ${clientId} and review_status = 'CONFIRMED' and not is_correction
       and (case when ${cmp} = 'before' then snapshot_date < ${start}::date else snapshot_date <= ${end}::date end)
     order by snapshot_date desc, created_at desc limit 1`;
   const [s0, s1] = await Promise.all([snap("before"), snap("upto")]);

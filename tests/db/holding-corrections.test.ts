@@ -88,7 +88,7 @@ describeDb("Edit holdings", () => {
     });
   });
 
-  it("keeps the known cost of unchanged lines", async () => {
+  it("keeps the cost only when every line's cost is known", async () => {
     await scenario(async (ctx) => {
       const p = await clientWithActivePlan(ctx);
       const y = (await ctx.tx<{ isin: string; scheme_name: string }[]>`select isin, scheme_name from public.security_master where id = ${ctx.sec.Y}`)[0];
@@ -104,10 +104,18 @@ describeDb("Edit holdings", () => {
       const x = (await ctx.as("advisor", (t) => getEditableHoldings(t, p.clientId)))!.rows[0];
       const { snapshotId } = await ctx.as("advisor", (t) => saveHoldingCorrection(t, ctx.users.advisor, {
         clientId: p.clientId, baseSnapshotId: snap, asOf: "2026-09-06", reason: "Holds Y elsewhere",
-        rows: [{ holdingId: x.holding_id, fundRef: null, folio: x.folio_number, units: 10000 }, { holdingId: null, fundRef: `sec:${ctx.sec.Y}`, folio: null, units: 10 }],
+        rows: [{ holdingId: x.holding_id, fundRef: null, folio: x.folio_number, units: 8000 }],
       }));
+      // Sold down to 80%: the cost of what is left, in proportion.
       const s = (await ctx.tx<{ v: number }[]>`select total_invested_value::float8 as v from public.portfolio_snapshots where id = ${snapshotId}`)[0];
-      expect(s.v).toBe(1200000);
+      expect(s.v).toBe(960000);
+      // A fund added by hand has no known cost: the version's cost is unknown (0), never a partial sum.
+      const kept = (await ctx.as("advisor", (t) => getEditableHoldings(t, p.clientId)))!.rows.map((h) => ({ holdingId: h.holding_id, fundRef: null, folio: h.folio_number, units: h.units }));
+      const again = await ctx.as("advisor", (t) => saveHoldingCorrection(t, ctx.users.advisor, {
+        clientId: p.clientId, baseSnapshotId: snapshotId, asOf: "2026-09-07", reason: "Holds Y elsewhere",
+        rows: [{ holdingId: null, fundRef: `sec:${ctx.sec.Y}`, folio: null, units: 10 }, ...kept],
+      }));
+      expect((await ctx.tx<{ v: number }[]>`select total_invested_value::float8 as v from public.portfolio_snapshots where id = ${again.snapshotId}`)[0].v).toBe(0);
     });
   });
 

@@ -98,7 +98,7 @@ export async function runReconciliation(
 
   const txns = await tx<{ security_id: string | null; isin: string | null; scheme_name: string; transaction_type: string; units: number | null; transaction_date: string }[]>`
     select security_id, isin, scheme_name, public.txn_effective_type(transaction_type, description, units) as transaction_type, units, transaction_date
-    from public.portfolio_transactions
+    from public.v_cas_transactions
     where client_id = ${args.clientId}
       and transaction_date > ${prev[0].snapshot_date}::date and transaction_date <= ${curr[0].snapshot_date}::date`;
   const transactions: CasTxnLine[] = txns.map((t) => ({
@@ -609,7 +609,7 @@ export async function resolveMatch(
     if (remainingAmount > 0) {
       const lastTxn = fromTxn ? [{ d: m.transaction_date }] : await tx<{ d: string | null }[]>`
         select max(t.transaction_date)::text as d
-        from public.portfolio_transactions t
+        from public.v_cas_transactions t
         join public.reconciliation_runs r on r.id = ${m.run_id}
         join public.portfolio_snapshots ps on ps.id = r.previous_snapshot_id
         where t.client_id = ${m.client_id} and t.security_id = ${m.security_id}

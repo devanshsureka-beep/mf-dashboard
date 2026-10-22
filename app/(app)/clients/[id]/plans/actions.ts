@@ -227,9 +227,14 @@ export async function approveReportLinesAction(clientId: string, planId: string,
       const amount = percent === null && raw ? Number(raw) : null;
       if ((percent !== null && !Number.isFinite(percent)) || (amount !== null && !Number.isFinite(amount))) throw new AppError("Enter the amount as ₹ or a percentage.");
       const done = a.done && Number(a.done.amount) > 0 && typeof a.done.date === "string" ? { amount: Number(a.done.amount), date: a.done.date } : null;
-      await actionTx((tx, actor) => answerReportQuestion(tx, actor, a.itemId, {
-        action: a.action, amount, percent, explanation: String(a.note ?? "").slice(0, 1000) || "Approved in the report check.", done,
-      }), opts);
+      if (percent !== null && a.action !== "SELL") throw new AppError("A percentage works only for a Sell: enter the amount in rupees.");
+      await actionTx(async (tx, actor) => {
+        const own = (await tx<{ plan_id: string }[]>`select plan_id from public.advisory_plan_items where id = ${a.itemId}`)[0];
+        if (!own || own.plan_id !== planId) throw new AppError("That line is not on this plan.", "NOT_FOUND");
+        await answerReportQuestion(tx, actor, a.itemId, {
+          action: a.action, amount, percent, explanation: String(a.note ?? "").slice(0, 1000) || "Approved in the report check.", done,
+        });
+      }, opts);
     });
     if (r.ok) ok++;
     else failed.push({ itemId: a.itemId, error: r.error });
@@ -242,7 +247,11 @@ export async function approveReportLinesAction(clientId: string, planId: string,
 /** Undo an approved line on a draft plan. */
 export async function reopenReportLineAction(clientId: string, planId: string, itemId: string): Promise<ActionResult> {
   return runAction("reopenReportLine", async () => {
-    await actionTx((tx, actor) => reopenReportQuestion(tx, actor, itemId), opts);
+    await actionTx(async (tx, actor) => {
+      const own = (await tx<{ plan_id: string }[]>`select plan_id from public.advisory_plan_items where id = ${itemId}`)[0];
+      if (!own || own.plan_id !== planId) throw new AppError("That line is not on this plan.", "NOT_FOUND");
+      await reopenReportQuestion(tx, actor, itemId);
+    }, opts);
     refresh(clientId, planId);
     return "Answer undone.";
   });

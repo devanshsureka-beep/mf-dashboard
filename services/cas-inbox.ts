@@ -11,7 +11,7 @@ import { explainCasWarnings, type ReviewHolding, type ReviewPoint } from "@/lib/
 export interface InboxReading { cas_id: string; client_id: string; client_name: string; uploaded_at: Date; status: string; error: string | null }
 export interface InboxCheck { snapshot_id: string; cas_id: string | null; client_id: string; client_name: string; client_code: string; snapshot_date: string; value: number; funds: number; warnings: number }
 export interface InboxUnadvised { run_id: string; client_id: string; client_name: string; client_code: string; snapshot_date: string; trades: number; amount: number; matched: number }
-export interface InboxDone { client_id: string; client_name: string; snapshot_date: string; run_id: string | null; verified: number; unadvised_reviewed: number }
+export interface InboxDone { snapshot_id: string; client_id: string; client_name: string; snapshot_date: string; run_id: string | null; verified: number; unadvised_reviewed: number }
 export interface InboxConfirm { run_id: string; client_id: string; client_name: string; client_code: string; snapshot_date: string; matches: number; first: string | null }
 export interface InboxCollect { client_id: string; client_name: string; client_code: string; phone: string | null; latest_cas: string | null; waiting_amount: number; unverified_amount: number; days: number | null }
 
@@ -64,7 +64,7 @@ export async function getCasInbox(tx: Tx) {
   // Confirmed CAS of the last 30 days with nothing left to review.
   const done = await tx<InboxDone[]>`
     select * from (
-    select distinct on (s.id) s.client_id, c.full_name as client_name, s.snapshot_date::text as snapshot_date, r.id as run_id,
+    select distinct on (s.id) s.id as snapshot_id, s.client_id, c.full_name as client_name, s.snapshot_date::text as snapshot_date, r.id as run_id,
            coalesce(s.reviewed_at, s.created_at) as done_at,
            (select count(*)::int from public.reconciliation_matches m where m.run_id = r.id and m.classification = 'ADVICE_MATCH' and m.status in ('CONFIRMED', 'PARTIAL')) as verified,
            (select count(*)::int from public.reconciliation_matches m where m.run_id = r.id and m.classification = 'UNADVISED' and (m.reviewed_at is not null or m.status not in ('UNEXPLAINED', 'SUGGESTED'))) as unadvised_reviewed

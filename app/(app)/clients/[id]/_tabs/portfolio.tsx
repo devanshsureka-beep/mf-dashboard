@@ -150,9 +150,10 @@ export async function PortfolioTab({ client, actor, inBank, sipTarget, edit }: {
             {snapshots.map((s) => (
               <TR key={s.id}>
                 <TD>{formatDate(s.snapshot_date)} {s.is_baseline ? <span className="ml-1 text-[11px] font-medium text-brand">ONBOARDING</span> : null}{s.is_correction ? <span className="ml-1 text-[11px] font-medium text-amber-700" title={s.review_note ?? undefined}>CORRECTED BY HAND</span> : null}</TD>
-                <TD className="text-right"><Money value={s.total_invested_value} /></TD>
+                {/* No cost in the statement: no invested amount and no gain (it would just repeat the value). */}
+                <TD className="text-right">{Number(s.total_invested_value) > 0 ? <Money value={s.total_invested_value} /> : <span className="text-muted">—</span>}</TD>
                 <TD className="text-right"><Money value={s.total_current_value} /></TD>
-                <TD className={`text-right ${s.total_gain_loss >= 0 ? "text-emerald-700" : "text-red-700"}`}><Money value={s.total_gain_loss} /></TD>
+                <TD className={`text-right ${s.total_gain_loss >= 0 ? "text-emerald-700" : "text-red-700"}`}>{Number(s.total_invested_value) > 0 ? <Money value={s.total_gain_loss} /> : <span className="text-muted">—</span>}</TD>
                 <TD className="num text-xs">{s.holdings_count}</TD>
                 <TD><StatusBadge status={s.review_status} /></TD>
                 <TD><Link className="text-xs text-brand hover:underline" href={`/snapshots/${s.id}`}>Open</Link></TD>

@@ -56,8 +56,10 @@ export async function updateSipAmounts(
   tx: Tx, sipId: string, s: { oldAmount: number | null; newAmount: number | null; debitDay: number | null }, reason: string,
 ): Promise<void> {
   if (!reason.trim()) throw new AppError("A reason is required to change a SIP line.");
-  const cur = (await tx<{ action: string; status: string }[]>`select action, status from public.sip_plan_items where id = ${sipId}`)[0];
+  const cur = (await tx<{ action: string; status: string; plan_status: string }[]>`
+    select s.action, s.status, p.status as plan_status from public.sip_plan_items s join public.advisory_plans p on p.id = s.plan_id where s.id = ${sipId}`)[0];
   if (!cur) throw new AppError("SIP line not found.", "NOT_FOUND");
+  if (cur.plan_status !== "ACTIVE" && cur.plan_status !== "DRAFT") throw new AppError("This plan is closed: its SIP lines cannot change.");
   if (cur.status === "CANCELLED") throw new AppError("This SIP line is cancelled.");
   if (cur.action !== "STOP" && !(Number(s.newAmount) > 0)) throw new AppError("Enter the SIP amount.");
   await setAuditReason(tx, reason);

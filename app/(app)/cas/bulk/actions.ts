@@ -9,7 +9,7 @@ import { AppError, logServerError, toUserMessage } from "@/lib/errors";
 import { actionTx } from "@/lib/server";
 import { maskPan } from "@/lib/format";
 import { objectPath, uploadAsUser, fileFromForm, formFileName } from "@/lib/storage";
-import { findClientForCas, ingestParsedCas, isDuplicateCas, knownClientPhones } from "@/services/cas-intake";
+import { claimPan, findClientByPan, findClientForCas, ingestParsedCas, isDuplicateCas, knownClientPhones } from "@/services/cas-intake";
 
 export interface BulkCasRow {
   ok: boolean;
@@ -47,7 +47,8 @@ export async function processCasFileAction(fd: FormData): Promise<BulkCasRow> {
     });
     const { parsed, passwordProtected } = await readCasAnyPdf(file.bytes, candidates, { timeoutMs: 220_000 }); // leaves time to save within 300 s
 
-    const client = await actionTx((tx) => findClientForCas(tx, parsed.investor, { claim: true }));
+    // Found without taking the PAN yet: it is taken with the CAS, in one transaction, so a CAS that fails to save leaves no PAN behind.
+    const client = await actionTx((tx) => findClientForCas(tx, parsed.investor));
     if (!client) {
       return {
         ok: false, fileName, outcome: "NO_CLIENT",
@@ -71,13 +72,19 @@ export async function processCasFileAction(fd: FormData): Promise<BulkCasRow> {
 
     const path = unread?.path ?? objectPath(client.id, "CAS", file);
     if (!unread) await uploadAsUser(path, file);
-    const out = await actionTx((tx, actor) => ingestParsedCas(tx, actor, {
+    const out = await actionTx(async (tx, actor) => {
+      if (!client.pan && parsed.investor.pan && !(await claimPan(tx, client.id, parsed.investor.pan))) {
+        const now = await findClientByPan(tx, parsed.investor.pan);
+        if (now?.id !== client.id) throw new AppError("This client got a different PAN in the meantime: check that the CAS is theirs.");
+      }
+      return ingestParsedCas(tx, actor, {
       clientId: client.id,
       file: { fileName: file.fileName, mimeType: file.mimeType, size: file.size, sha256: file.sha256, path },
       parsed,
       passwordProtected,
       existingCasDocumentId: unread?.casId,
-    }));
+      });
+    });
 
     const common = { ...clientInfo, valuationDate: out.valuationDate, snapshotId: out.snapshotId, runId: out.runId, summary: out.summary };
     if (out.snapshotStatus === "PENDING_REVIEW") {

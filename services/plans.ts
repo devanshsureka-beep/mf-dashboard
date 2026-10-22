@@ -668,8 +668,9 @@ export async function answerReportQuestion(tx: Tx, actor: Actor, itemId: string,
   if (actor.role === "OPERATIONS") throw new AppError("Only an advisor or admin can answer a question on the plan.", "FORBIDDEN");
   const explanation = a.explanation.trim();
   if (!explanation) throw new AppError("Explain what the report means for this fund.");
-  const it = (await tx<{ plan_id: string; scheme_name: string; security_id: string | null; current_amount: number | null; report_question: string | null; report_answer: string | null; reason: string | null; status: string }[]>`
-    select plan_id, scheme_name, security_id, current_amount::float8 as current_amount, report_question, report_answer, reason, status
+  const it = (await tx<{ plan_id: string; scheme_name: string; security_id: string | null; current_amount: number | null; report_question: string | null; report_answer: string | null; reason: string | null; status: string; action: string; target_amount: number; needs_review: boolean }[]>`
+    select plan_id, scheme_name, security_id, current_amount::float8 as current_amount, report_question, report_answer, reason, status,
+           action, target_amount::float8 as target_amount, needs_review
     from public.advisory_plan_items where id = ${itemId} for update`)[0];
   if (!it || !it.report_question) throw new AppError("Question not found.", "NOT_FOUND");
   if (it.status !== "OPEN") throw new AppError("This plan line is closed.");
@@ -683,6 +684,7 @@ export async function answerReportQuestion(tx: Tx, actor: Actor, itemId: string,
     if (done.date > today) throw new AppError("The date it was done cannot be in the future.");
   }
   let target = 0;
+  if (a.action === "BUY" && Number(a.percent) > 0) throw new AppError("A percentage works only for a Sell: enter the amount to buy in rupees.");
   if (a.action !== "RETAIN") {
     const pct = Number(a.percent) > 0 ? Number(a.percent) : null;
     if (pct && a.action === "SELL") {
@@ -706,6 +708,8 @@ export async function answerReportQuestion(tx: Tx, actor: Actor, itemId: string,
   await tx`
     update public.advisory_plan_items set
       action = ${a.action}, target_amount = ${target}, report_answer = ${explanation.slice(0, 2000)},
+      -- The line as it was, so an Undo on the draft puts it back exactly.
+      report_before = ${tx.json({ action: it.action, target_amount: Number(it.target_amount), reason: it.reason, needs_review: it.needs_review })},
       reason = ${`${it.reason ?? "Report"} → ${what}: ${explanation}`.slice(0, 4000)},
       needs_review = (security_id is null and ${a.action} <> 'RETAIN'),
       report_diff = case when ${done ? tx.json(done) : null}::jsonb is null then report_diff
@@ -720,20 +724,23 @@ export async function answerReportQuestion(tx: Tx, actor: Actor, itemId: string,
  */
 export async function reopenReportQuestion(tx: Tx, actor: Actor, itemId: string): Promise<void> {
   if (actor.role === "OPERATIONS") throw new AppError("Only an advisor or admin can change an answer.", "FORBIDDEN");
-  const it = (await tx<{ plan_id: string; report_question: string | null; report_answer: string | null; reason: string | null; status: string; report_diff: { done_call_id?: string } | null }[]>`
-    select plan_id, report_question, report_answer, reason, status, report_diff
+  const it = (await tx<{ plan_id: string; report_question: string | null; report_answer: string | null; reason: string | null; status: string; report_diff: { done_call_id?: string } | null; report_before: { action: string; target_amount: number; reason: string | null } | null }[]>`
+    select plan_id, report_question, report_answer, reason, status, report_diff, report_before
     from public.advisory_plan_items where id = ${itemId} for update`)[0];
   if (!it || !it.report_question) throw new AppError("Question not found.", "NOT_FOUND");
   if (!it.report_answer) return;
   await assertPlanStatus(tx, it.plan_id, ["DRAFT"]);
   if (it.status !== "OPEN" || it.report_diff?.done_call_id) throw new AppError("This answer is already recorded: it cannot be undone.");
-  // The answer was appended to the reason as " → Sell ₹… / Buy ₹… / Keep: <note>": take it off again.
+  const before = it.report_before;
+  // Older answers have no copy of the line: take the answer off the reason (" → Sell ₹… / Buy ₹… / Keep: …").
   const cut = Math.max(...[" → Keep", " → Sell ₹", " → Buy ₹"].map((m) => it.reason?.lastIndexOf(m) ?? -1));
-  const reason = it.reason && cut >= 0 ? it.reason.slice(0, cut) : it.reason;
+  const reason = before ? before.reason : it.reason && cut >= 0 ? it.reason.slice(0, cut) : it.reason;
   await setAuditReason(tx, "Report question reopened (answer undone on the draft)");
   await tx`
     update public.advisory_plan_items set
-      action = 'RETAIN', target_amount = 0, report_answer = null, reason = ${reason}, needs_review = true,
+      action = ${before?.action ?? "RETAIN"}, target_amount = ${before?.target_amount ?? 0}, report_answer = null, reason = ${reason},
+      -- Open again: the question blocks approval until it is answered.
+      needs_review = true, report_before = null,
       report_diff = case when report_diff is null then null else report_diff - 'done_answer' end
     where id = ${itemId}`;
 }

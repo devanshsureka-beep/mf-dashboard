@@ -45,6 +45,14 @@ describeDb("Questions from the report", () => {
       const back = (await ctx.tx<{ action: string; target_amount: number; report_answer: string | null; reason: string; needs_review: boolean }[]>`
         select action, target_amount::float8, report_answer, reason, needs_review from public.advisory_plan_items where id = ${y.id}`)[0];
       expect(back).toEqual({ action: "RETAIN", target_amount: 0, report_answer: null, reason: before, needs_review: true });
+      // A percentage is for a Sell only.
+      expect(await ctx.expectError("advisor", (t) => answerReportQuestion(t, ctx.users.advisor, y.id, { action: "BUY", percent: 33, explanation: "x" }))).toMatch(/only for a Sell/);
+      // A line that was a Sell with an amount comes back as that Sell.
+      await ctx.tx`update public.advisory_plan_items set action = 'SELL', target_amount = 40000 where id = ${y.id}`;
+      await ctx.as("advisor", (t) => answerReportQuestion(t, ctx.users.advisor, y.id, { action: "RETAIN", explanation: "keep" }));
+      await ctx.as("advisor", (t) => reopenReportQuestion(t, ctx.users.advisor, y.id));
+      expect((await ctx.tx<{ action: string; target_amount: number }[]>`select action, target_amount::float8 from public.advisory_plan_items where id = ${y.id}`)[0])
+        .toEqual({ action: "SELL", target_amount: 40000 });
       await ctx.as("advisor", (t) => answerReportQuestion(t, ctx.users.advisor, y.id, { action: "RETAIN", explanation: "Trim deferred to next tranche" }));
 
       // Answered once: a second answer is refused (the first already rewrote the line).

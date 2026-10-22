@@ -393,12 +393,15 @@ export async function createNewInvestor(
   const phone = (args.who.phone ?? "").replace(/\D/g, "").slice(-10);
   // Without a PAN: the same person is the same mobile AND the same name (family members share mobiles).
   const name = newInvestorName(args.who, args.report);
+  // One new investor per mobile at a time (two tabs, or two advisors onboarding the same person).
+  if (phone) await tx`select pg_advisory_xact_lock(hashtextextended(${`new-investor:${phone}`}, 0))`;
+  // Every client with this mobile, also other advisors' (their own clients are all an advisor can see).
   const existing = pan ? await findClientByPan(tx, pan)
     : (await tx<{ id: string; client_code: string; full_name: string }[]>`
-        select id, client_code, full_name from public.clients
-        where deleted_at is null and right(regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g'), 10) = ${phone}
-        order by created_at`).find((c) => sameInvestor(c.full_name, name)) ?? null;
+        select id, client_code, full_name from app.clients_with_mobile(${phone})`).find((c) => sameInvestor(c.full_name, name)) ?? null;
   if (existing) {
+    const visible = (await tx<{ ok: boolean }[]>`select exists (select 1 from public.clients where id = ${existing.id}) as ok`)[0]?.ok;
+    if (!visible) throw new AppError(`This person (same name and mobile number) is already a client of another advisor (${existing.client_code}). Ask an admin to assign them to you.`);
     // An earlier attempt that stopped after creating the client (no plan, no CAS yet): carry on with it.
     const unfinished = (await tx<{ ok: boolean }[]>`
       select not exists (select 1 from public.advisory_plans where client_id = ${existing.id})

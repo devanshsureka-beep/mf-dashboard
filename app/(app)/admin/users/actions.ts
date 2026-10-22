@@ -99,9 +99,17 @@ export async function assignClientAction(_p: ActionResult | null, fd: FormData):
     const userId = reqStr(fd, "user_id", "User");
     const role = reqStr(fd, "assignment_role") as "SECONDARY" | "OPERATIONS";
     if (!["SECONDARY", "OPERATIONS"].includes(role)) throw new AppError("Use the client page to change the PRIMARY advisor.");
-    await actionTx((tx, actor) => tx`
-      insert into public.client_advisor_assignments (client_id, advisor_id, assignment_role, created_by)
-      values (${clientId}, ${userId}, ${role}, ${actor.id})`, { roles: ["ADMIN"], reason: "Additional assignment by admin" });
+    await actionTx(async (tx, actor) => {
+      const who = (await tx<{ role: string; is_active: boolean }[]>`select role, is_active from public.profiles where id = ${userId}`)[0];
+      if (!who || !who.is_active) throw new AppError("Choose an active team member.");
+      // A second advisor is an advisor or admin; an operations assignment is an operations member.
+      if (role === "SECONDARY" ? who.role === "OPERATIONS" : who.role !== "OPERATIONS") {
+        throw new AppError(role === "SECONDARY" ? "A second advisor must be an advisor or admin." : "An operations assignment must be an operations team member.");
+      }
+      await tx`
+        insert into public.client_advisor_assignments (client_id, advisor_id, assignment_role, created_by)
+        values (${clientId}, ${userId}, ${role}, ${actor.id})`;
+    }, { roles: ["ADMIN"], reason: "Additional assignment by admin" });
     revalidatePath("/admin/users");
     return "Assignment added.";
   });

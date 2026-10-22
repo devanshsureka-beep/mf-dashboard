@@ -166,7 +166,7 @@ export default async function CasInboxPage(props: PageProps<"/reconciliation">) 
               const det = d.run_id ? details[d.run_id] : undefined;
               const ticked = Boolean(det && (det.done.length || det.sip_lines_ticked));
               return (
-                <li key={`${d.client_id}-${d.snapshot_date}`} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5">
+                <li key={d.snapshot_id} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5">
                   <Link href={`/clients/${d.client_id}`} className="w-48 truncate font-medium hover:underline">{d.client_name}</Link>
                   <span className="w-28 text-xs text-muted">CAS {formatDate(d.snapshot_date)}</span>
                   <span className="flex flex-1 flex-wrap gap-1.5 text-xs">

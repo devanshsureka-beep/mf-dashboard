@@ -18,9 +18,20 @@ describe("checkLine", () => {
     expect(l.done).toEqual({ amount: 40000, date: "2026-10-02", doneFor: "SELL" });
   });
 
-  it("a sell done in full is marked as done", () => {
+  it("a sell done in full is marked as done; the amount never starts below the part done", () => {
     const l = checkLine(q(d({ kind: "SELL_GONE", sold_since: 99500, cas_value: 0, done_amount: 99500, done_date: "2026-09-25" })));
     expect([l.issue, l.fix]).toEqual(["Sold since the report", "mark as done"]);
+    // ₹10,400 sold against ₹10,000 in the report: the line starts at ₹10,400 so the done part fits.
+    const more = checkLine(q(d({ kind: "SELL_GONE", report_amount: 10000, sold_since: 10400, cas_value: 0, done_amount: 10400, done_date: "2026-09-25" })));
+    expect(more.start.amount).toBe(10400);
+    const buy = checkLine(q(d({ kind: "BUY_HELD", report_amount: 10000, bought_since: 10300, suggest: "BUY", done_amount: 10300, done_date: "2026-09-25" })));
+    expect(buy.start.amount).toBe(10300);
+  });
+
+  it("a Sell the reader took from the report keeps its action and amount", () => {
+    const l = checkLine(q(null, { action: "SELL", target_amount: 50000, reason: "Report: Exit (review section)" }));
+    expect(l.report).toMatchObject({ action: "SELL", amount: 50000 });
+    expect(l.start).toEqual({ action: "SELL", amount: 50000 });
   });
 
   it("a keep that was sold is the client's own sale, and starts as Keep", () => {

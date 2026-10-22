@@ -58,6 +58,17 @@ export function checkLine(q: CheckQuestion): CheckLine {
   if (!d) {
     // The report's words could not be read as Buy, Sell or Keep.
     const amt = Number(q.target_amount) > 0 ? Number(q.target_amount) : null;
+    // A Sell / Buy the reader took from the report (e.g. its review section) keeps that action.
+    if ((q.action === "SELL" || q.action === "BUY") && amt) {
+      return {
+        report: { action: q.action, amount: amt, words },
+        cas: Number(q.current_amount) > 0 ? `Holds ${L(Number(q.current_amount))}` : "Not held",
+        issue: words ? `Report says "${words}"` : "Check the report's line",
+        fix: `${q.action === "SELL" ? "sell" : "buy"} ${L(amt)} as the report says`,
+        start: { action: q.action, amount: amt },
+        done: null,
+      };
+    }
     return {
       report: { action: null, amount: amt, words },
       cas: Number(q.current_amount) > 0 ? `Holds ${L(Number(q.current_amount))}` : "Not held",
@@ -77,7 +88,8 @@ export function checkLine(q: CheckQuestion): CheckLine {
     case "SELL_GONE":
     case "SELL_CHANGED": {
       const r = reportAs("SELL");
-      const start = { action: "SELL" as const, amount: A > 0 ? A : S > 0 ? S : null };
+      // Never less than the part done (the CAS can show a little more sold than the report said).
+      const start = { action: "SELL" as const, amount: Math.max(A, S) || null };
       if (S > 0 && A > 0 && !same(S, A) && S < A) return { report: r, cas, issue: `${L(A - S)} not sold yet`, fix: `count ${L(S)} as done`, start, done };
       if (S > 0) return { report: r, cas, issue: "Sold since the report", fix: "mark as done", start, done };
       if (d.kind === "SELL_GONE") return { report: r, cas, issue: "No longer in the CAS", fix: "check: sold elsewhere, or keep the sell", start, done };
@@ -94,7 +106,7 @@ export function checkLine(q: CheckQuestion): CheckLine {
     }
     case "BUY_HELD": {
       const r = reportAs("BUY");
-      const start = { action: "BUY" as const, amount: A > 0 ? A : B > 0 ? B : null };
+      const start = { action: "BUY" as const, amount: Math.max(A, B) || null };
       if (B > 0 && A > 0 && !same(B, A) && B < A) return { report: r, cas, issue: `${L(A - B)} not bought yet`, fix: `count ${L(B)} as done`, start, done };
       if (B > 0) return { report: r, cas, issue: "Bought since the report", fix: "mark as done", start, done };
       return { report: r, cas, issue: "Already holds this fund", fix: "check: bought earlier, or buy as advised", start, done };

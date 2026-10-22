@@ -140,8 +140,8 @@ export default async function MonthlyReportPage(props: PageProps<"/clients/[id]/
             {r.holdings.length ? (
               <div className="mt-3 border-t border-slate-100 pt-2">
                 <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Largest holdings</div>
-                {r.holdings.slice(0, 6).map((h) => (
-                  <div key={h.scheme_name} className="flex justify-between gap-3 text-[12px]"><span className="truncate">{h.scheme_name}</span><span className="shrink-0 font-medium">{(h.weight * 100).toFixed(1)}%</span></div>
+                {r.holdings.slice(0, 6).map((h, hi) => (
+                  <div key={`${h.scheme_name}-${hi}`} className="flex justify-between gap-3 text-[12px]"><span className="truncate">{h.scheme_name}</span><span className="shrink-0 font-medium">{(h.weight * 100).toFixed(1)}%</span></div>
                 ))}
               </div>
             ) : null}
@@ -198,8 +198,8 @@ export default async function MonthlyReportPage(props: PageProps<"/clients/[id]/
             <Row label="Invested via SIP this month" value={`${formatINR(r.sip.amount)} · ${r.sip.instalments} instalment(s)`} />
             <Row label="SIP plan (monthly)" value={`${formatINRCompact(sip.sip_monthly_target)} planned · ${formatINRCompact(sip.sip_monthly_started)} running`} />
             <Row label="SIP invested since advised" value={formatINR(sip.sip_invested)} />
-            {r.sip.byFund.slice(0, 5).map((f) => (
-              <div key={f.scheme_name} className="flex justify-between gap-3 text-[12px] text-slate-600"><span className="truncate">{f.scheme_name}</span><span>{formatINR(f.amount)}</span></div>
+            {r.sip.byFund.slice(0, 5).map((f, fi) => (
+              <div key={`${f.scheme_name}-${fi}`} className="flex justify-between gap-3 text-[12px] text-slate-600"><span className="truncate">{f.scheme_name}</span><span>{formatINR(f.amount)}</span></div>
             ))}
           </Section>
         </div>

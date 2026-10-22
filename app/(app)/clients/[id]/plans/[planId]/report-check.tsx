@@ -50,12 +50,14 @@ export function ReportCheck({
 
   const toggle = (id: string) => setPicked((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const pickAll = () => setPicked(allPicked ? new Set() : new Set(shown.map(({ r }) => r.id)));
+  const pickFilter = (f: Filter) => { setFilter(f); setPicked(new Set()); };
 
   function approveSelected() {
     setMsg(null);
     const errs: Record<string, string> = {};
     const answers: CheckAnswer[] = [];
-    for (const { r, l } of open) {
+    // Only lines you can see: a filter never hides a ticked line that would be approved.
+    for (const { r, l } of shown) {
       if (!picked.has(r.id)) continue;
       const c = choice[r.id];
       if (!c?.action) { errs[r.id] = "Choose Sell, Buy or Keep first."; continue; }
@@ -109,7 +111,7 @@ export function ReportCheck({
             {([["all", `All ${open.length}`], ["SELL", `Report: Sell ${count("SELL")}`], ["BUY", `Buy ${count("BUY")}`], ["RETAIN", `Keep ${count("RETAIN")}`], ["none", `Not in report / unclear ${count("none")}`]] as [Filter, string][])
               .filter(([f]) => f === "all" || count(f) > 0)
               .map(([f, t]) => (
-                <button key={f} type="button" onClick={() => setFilter(f)} aria-pressed={filter === f}
+                <button key={f} type="button" onClick={() => pickFilter(f)} aria-pressed={filter === f}
                   className={cn("rounded-full px-2.5 py-0.5 ring-1", filter === f ? "bg-ink text-white ring-ink" : "bg-white ring-border hover:bg-slate-50")}>{t}</button>
               ))}
           </div>
@@ -161,7 +163,7 @@ export function ReportCheck({
                       </select>
                       <input value={c?.action === "RETAIN" ? "" : c?.size ?? ""} disabled={c?.action === "RETAIN"} inputMode="decimal"
                         onChange={(e) => setChoice((s) => ({ ...s, [r.id]: { ...s[r.id], size: e.target.value } }))}
-                        placeholder={c?.action === "RETAIN" ? "—" : "₹ or 33%"} aria-label={`Amount for ${r.scheme_name}`}
+                        placeholder={c?.action === "RETAIN" ? "—" : c?.action === "SELL" ? "₹ or 33%" : "₹"} aria-label={`Amount for ${r.scheme_name}`}
                         className="h-8 w-[110px] rounded-md border border-border bg-white px-2 text-right text-[12.5px] num disabled:bg-slate-50" />
                     </span>
                   ) : <span className="text-muted">—</span>}

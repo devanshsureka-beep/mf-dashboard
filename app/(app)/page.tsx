@@ -112,7 +112,9 @@ export default async function Today(props: PageProps<"/">) {
       // What the CAS uploads of the last 30 days did on their own, and what they left for a person.
       casStats: (await tx<{ done: number; confirm: number }[]>`
         select count(*) filter (where m.status in ('CONFIRMED', 'PARTIAL') and coalesce(m.resolved_at, r.created_at) > now() - interval '30 days')::int as done,
-               count(*) filter (where m.status = 'SUGGESTED')::int as confirm
+               -- As the CAS inbox counts them: a cancelled, revised or expired call has nothing to confirm.
+               count(*) filter (where m.status = 'SUGGESTED' and exists (select 1 from public.advice_items a where a.id = m.advice_item_id
+                                  and a.status in ('ISSUED', 'PARTIALLY_EXECUTED', 'EXECUTED')))::int as confirm
         from public.reconciliation_matches m join public.reconciliation_runs r on r.id = m.run_id
         join public.clients c on c.id = m.client_id and c.deleted_at is null
         ${primaryAdvisor(tx)}

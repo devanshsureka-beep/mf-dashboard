@@ -113,7 +113,10 @@ export async function saveHoldingCorrection(tx: Tx, actor: Actor, input: Holding
       out.push({
         holdingId: r.holdingId, security_id: b.security_id, scheme_name: b.scheme_name, amc: s.amc, folio_number: folio, isin: s.isin,
         plan_type: s.plan_type, category: s.category,
-        units, cost_value: roundUnits(b.units) === units ? s.cost_value : null, nav: b.nav, nav_date: b.nav_date,
+        // Fewer units: the cost of what is left, in proportion. More units: the new part's cost is not known.
+        units, cost_value: s.cost_value == null ? null : roundUnits(b.units) === units ? s.cost_value
+          : units < b.units ? Math.round(s.cost_value * (units / b.units) * 100) / 100 : null,
+        nav: b.nav, nav_date: b.nav_date,
       });
       continue;
     }
@@ -148,8 +151,8 @@ export async function saveHoldingCorrection(tx: Tx, actor: Actor, input: Holding
 
   const values = out.map((r) => Math.round(r.units * r.nav * 100) / 100);
   const total = Math.round(values.reduce((t, v) => t + v, 0) * 100) / 100;
-  // Cost as far as it is known (as for a CAS): a line whose units changed has none.
-  const invested = Math.round(out.reduce((t, r) => t + (r.cost_value ?? 0), 0) * 100) / 100;
+  // Cost only when every line's cost is known: a partial cost would show the rest of the value as gain.
+  const invested = out.every((r) => r.cost_value != null) ? Math.round(out.reduce((t, r) => t + (r.cost_value ?? 0), 0) * 100) / 100 : 0;
   await setAuditReason(tx, `Holdings corrected: ${reason}`);
   const snap = (await tx<{ id: string }[]>`
     insert into public.portfolio_snapshots

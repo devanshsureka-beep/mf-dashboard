@@ -306,9 +306,11 @@ export async function confirmSnapshot(
   snapshotId: string,
   note: string | null,
 ): Promise<{ previousSnapshotId: string | null; isBaseline: boolean }> {
-  const snap = await getSnapshot(tx, snapshotId);
   // Same lock as a holdings correction: a correction saved at this moment waits for this CAS.
-  await lockClientHoldings(tx, snap.client_id);
+  // Taken before reading the snapshot, so a second confirm at the same moment sees it confirmed.
+  const owner = (await tx<{ client_id: string }[]>`select client_id from public.portfolio_snapshots where id = ${snapshotId}`)[0];
+  if (owner) await lockClientHoldings(tx, owner.client_id);
+  const snap = await getSnapshot(tx, snapshotId);
   if (snap.review_status !== "PENDING_REVIEW") throw new AppError(`Snapshot is already ${snap.review_status}.`);
 
   const hasBaseline = await tx<{ id: string }[]>`
