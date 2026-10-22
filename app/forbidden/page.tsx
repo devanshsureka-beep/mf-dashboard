@@ -9,7 +9,7 @@ export default function Forbidden() {
         <BrandMark tone="light" className="mb-6 justify-center" />
         <h1 className="text-lg font-semibold">Not allowed</h1>
         <p className="mt-1 text-sm text-muted">Your role does not have access to this page, or your account is inactive.</p>
-        <Link href="/" className="mt-4 inline-block text-sm text-brand hover:underline">Back to {PAGES.overview}</Link>
+        <Link href="/" className="mt-4 inline-block text-sm text-brand hover:underline">Back to {PAGES.today}</Link>
       </div>
     </main>
   );

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { LayoutDashboard, Users, PhoneCall, Inbox, ScrollText, ShieldCheck, LogOut, UserPlus, Menu, X } from "lucide-react";
+import { BarChart3, LayoutDashboard, Users, PhoneCall, Inbox, ScrollText, ShieldCheck, LogOut, UserPlus, Menu, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PAGES, ROLE_LABELS } from "@/lib/brand";
 import { BrandMark } from "@/components/app/brand-mark";
@@ -20,7 +20,8 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
   {
     title: "Work",
     items: [
-      { href: "/", label: PAGES.overview, icon: LayoutDashboard, exact: true },
+      { href: "/overview", label: PAGES.overview, icon: BarChart3 },
+      { href: "/", label: PAGES.today, icon: LayoutDashboard, exact: true },
       { href: "/clients", label: PAGES.clients, icon: Users },
       { href: "/advice/find", label: PAGES.calls, icon: PhoneCall, also: ["/advice", "/executions"], badge: "calls" },
       { href: "/reconciliation", label: PAGES.casInbox, icon: Inbox, also: ["/cas", "/snapshots"], badge: "cas" },

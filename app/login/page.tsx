@@ -9,7 +9,8 @@ import { signIn } from "./actions";
 export const metadata = { title: "Sign in" };
 
 export default async function LoginPage() {
-  if (await getCurrentActor()) redirect("/");
+  const actor = await getCurrentActor();
+  if (actor) redirect(actor.role === "ADMIN" ? "/overview" : "/");
   return (
     <main className="grid min-h-screen lg:grid-cols-[1.1fr_1fr]">
       <section className="relative hidden overflow-hidden bg-sidebar p-12 text-white lg:flex lg:flex-col lg:justify-between">
