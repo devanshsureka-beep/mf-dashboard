@@ -1,11 +1,12 @@
 import type { Tx } from "@/lib/db/tx";
+import { listApprovedMissing } from "./cas-inbox";
 
 /** Sidebar badges: open calls, and clients the CAS inbox "Needs you" tab lists (same rules as getCasInbox). */
 export async function getNavCounts(tx: Tx): Promise<{ awaitingExecution: number; casInbox: number }> {
-  const r = (await tx<{ calls: number; inbox: number }[]>`
+  const r = (await tx<{ calls: number; inbox: string[] }[]>`
     select
       (select count(*)::int from public.v_advice_items v where v.is_open) as calls,
-      (select count(distinct client_id)::int from (
+      (select coalesce(array_agg(distinct client_id), '{}') from (
         select s.client_id from public.portfolio_snapshots s where s.review_status = 'PENDING_REVIEW'
         union all
         select m.client_id from public.reconciliation_matches m join public.reconciliation_runs r on r.id = m.run_id
@@ -19,5 +20,7 @@ export async function getNavCounts(tx: Tx): Promise<{ awaitingExecution: number;
         where cd.parse_status in ('UPLOADED', 'PROCESSING', 'FAILED') and cd.uploaded_at > now() - interval '14 days'
           and not exists (select 1 from public.portfolio_snapshots s where s.cas_document_id = cd.id)
       ) x) as inbox`)[0];
-  return { awaitingExecution: r?.calls ?? 0, casInbox: r?.inbox ?? 0 };
+  // Plus approved trades the latest CAS does not show (the inbox lists those clients too).
+  const ids = new Set([...(r?.inbox ?? []), ...(await listApprovedMissing(tx)).map((m) => m.client_id)]);
+  return { awaitingExecution: r?.calls ?? 0, casInbox: ids.size };
 }

@@ -20,6 +20,7 @@ const dayLabel = (d: string) => `${d.slice(8, 10)}-${MON[Number(d.slice(5, 7)) -
 const SORTS = [{ key: "behind", label: "Behind first" }, { key: "pending", label: "Most pending" }, { key: "idle", label: "Most idle cash" }, { key: "name", label: "Name" }] as const;
 const PROOF_TONE: Record<Proof, string> = {
   CAS: "border-emerald-600 text-emerald-700", APPROVED: "border-blue-600 text-blue-700", PRE: "border-slate-400 text-slate-600", OFF: "border-red-600 text-red-700",
+  OPEN: "border-amber-500 text-amber-700",
 };
 const STATUS_TONE: Record<BookRow["status"]["tone"], string> = {
   red: "bg-red-50 text-red-700", amber: "bg-amber-50 text-amber-800", orange: "bg-orange-50 text-orange-800",
@@ -72,7 +73,7 @@ export default async function OverviewPage(props: PageProps<"/overview">) {
   const q = s("q").trim().toLowerCase();
   const txClient = UUID_RE.test(s("tc")) ? s("tc") : "";
   const txSide = s("side") === "SELL" || s("side") === "BUY" ? s("side") : "";
-  const txProof = (["CAS", "APPROVED", "PRE", "OFF"] as const).find((p) => p === s("proof")) ?? "";
+  const txProof = (["CAS", "APPROVED", "PRE", "OFF", "OPEN"] as const).find((p) => p === s("proof")) ?? "";
   const txMonth = /^\d{4}-\d{2}$/.test(s("tm")) ? s("tm") : "";
   const range = periodRange(period, todayIST());
 
@@ -85,7 +86,8 @@ export default async function OverviewPage(props: PageProps<"/overview">) {
       return {
         advisorId, advisors, overview: null,
         holdings: await getBookHoldings(tx, advisorId),
-        trend: await getBookTrend(tx, advisorId, live.reduce((t, c) => t + (c.live_portfolio_value ?? 0), 0), live.filter((c) => (c.live_portfolio_value ?? 0) > 0).length),
+        // This month ends on "in funds now" (live value moved by approved trades), as on every other screen.
+        trend: await getBookTrend(tx, advisorId, live.reduce((t, c) => t + Math.max(0, (c.live_portfolio_value ?? 0) + c.funds_adjust), 0), live.filter((c) => (c.live_portfolio_value ?? 0) > 0).length),
       };
     }
     return { advisorId, advisors, overview: await getOverview(tx, { advisorId, ...range }), holdings: [], trend: [] };
@@ -166,14 +168,14 @@ export default async function OverviewPage(props: PageProps<"/overview">) {
       {header}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
         <Kpi label="Clients" value={k.clients} sub={<>agreements signed <b className="text-ink">{k.agreementsSigned}</b> · {k.onPlan} on a plan</>} />
-        <Kpi label="Sell executed" value={L(k.sell.executed)} tone="text-red-700" sub={<>of <b className="text-ink">{L(k.sell.target)}</b> advised · {pct(k.sell.executed, k.sell.target)}</>} />
+        <Kpi label="Sell executed" value={L(k.sell.executed)} tone="text-red-700" sub={<>plan: {L(k.sell.planExecuted)} of <b className="text-ink">{L(k.sell.target)}</b> · {pct(k.sell.planExecuted, k.sell.target)}{k.sell.executed - k.sell.planExecuted >= 0.5 ? <> · +{L(k.sell.executed - k.sell.planExecuted)} outside plans</> : null}</>} />
         <Kpi warn label="Sell pending" value={L(k.sell.waiting + k.sell.notAdvised)} tone="text-amber-700" sub={<>{L(k.sell.waiting)} waiting · {L(k.sell.notAdvised)} not advised</>} />
-        <Kpi label="Buy executed" value={L(k.buy.executed)} tone="text-blue-700" sub={<>of <b className="text-ink">{L(k.buy.target)}</b> advised · {pct(k.buy.executed, k.buy.target)}</>} />
+        <Kpi label="Buy executed" value={L(k.buy.executed)} tone="text-blue-700" sub={<>plan: {L(k.buy.planExecuted)} of <b className="text-ink">{L(k.buy.target)}</b> · {pct(k.buy.planExecuted, k.buy.target)}{k.buy.executed - k.buy.planExecuted >= 0.5 ? <> · +{L(k.buy.executed - k.buy.planExecuted)} outside plans</> : null}</>} />
         <Kpi warn label="Buy pending" value={L(k.buy.waiting + k.buy.notAdvised)} tone="text-amber-700" sub={<>{L(k.buy.waiting)} waiting · {L(k.buy.notAdvised)} not advised</>} />
         <Kpi warn label="Idle in bank" value={L(k.idle.amount)} tone="text-red-700" sub={<>sold + fresh − bought · {k.idle.clients} client{k.idle.clients === 1 ? "" : "s"}</>} />
         <Kpi warn label="SIP gap" value={<>{L(Math.max(0, k.sip.target - k.sip.running))}<span className="text-sm font-semibold">/mo</span></>} tone="text-amber-700" sub={<>of {L(k.sip.target)} advised, not running</>} />
       </div>
-      <p className="mt-1.5 text-[11px] text-muted">Figures above are as of today on the active plans. Charts, activity and trades below cover {periodOf(period).label.toLowerCase()} ({dayLabel(range.from)} – {dayLabel(range.to)}).</p>
+      <p className="mt-1.5 text-[11px] text-muted">Figures above are as of today: executed counts every trade done; waiting every call not done yet; not advised and % from the active plans. Charts, activity and trades below cover {periodOf(period).label.toLowerCase()} ({dayLabel(range.from)} – {dayLabel(range.to)}).</p>
 
       <div className="mt-4 grid items-start gap-4 xl:grid-cols-2">
         <section className="rounded-xl border border-border bg-surface p-4">
@@ -277,7 +279,7 @@ export default async function OverviewPage(props: PageProps<"/overview">) {
         </div>
         <p className="border-t border-border px-4 py-2 text-xs text-muted">
           {txns.length > shownTx.length ? `Showing the latest ${shownTx.length} of ${txns.length} (Export CSV has all). ` : ""}
-          Proof: CAS verified = matched to a CAS transaction · Approved = the desk approved it, the next CAS confirms it · Before onboarding = done on the report before onboarding, the CAS is the proof · Off-plan = the client traded on their own.
+          Proof: CAS verified = matched to a CAS transaction · Approved = the desk approved it, the next CAS confirms it · Before onboarding = done on the report before onboarding, the CAS is the proof · Off-plan = the client traded on their own · Decide in CAS inbox = a CAS trade no call explains, not decided yet.
         </p>
       </section>
     </>

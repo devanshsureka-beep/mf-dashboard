@@ -24,8 +24,8 @@ describeDb("Overview", () => {
 
       const o = await ctx.as("advisor", (t) => getOverview(t, { advisorId: ctx.users.advisor.id, from: "2026-08-01", to: "2026-10-22" }));
       expect(o.kpis.clients).toBe(1);
-      expect(o.kpis.sell).toEqual({ target: 1000000, executed: 400000, waiting: 0, notAdvised: 600000 });
-      expect(o.kpis.buy).toEqual({ target: 600000, executed: 0, waiting: 100000, notAdvised: 500000 });
+      expect(o.kpis.sell).toEqual({ target: 1000000, executed: 400000, planExecuted: 400000, waiting: 0, notAdvised: 600000 });
+      expect(o.kpis.buy).toEqual({ target: 600000, executed: 0, planExecuted: 0, waiting: 100000, notAdvised: 500000 });
       expect(o.kpis.idle).toEqual({ amount: 400000, clients: 1 });
 
       const row = o.book.find((b) => b.client_id === p.clientId)!;

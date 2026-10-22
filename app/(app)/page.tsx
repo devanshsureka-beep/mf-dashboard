@@ -11,6 +11,7 @@ import { listDeskClients } from "@/services/clients";
 import { listDraftPlans } from "@/services/plans";
 import { getBookHoldings, primaryAdvisor } from "@/services/book";
 import { listWaiting } from "@/services/waiting";
+import { listApprovedMissing } from "@/services/cas-inbox";
 import { askCasHref } from "@/lib/ask-cas";
 
 export const metadata = { title: PAGES.today };
@@ -69,7 +70,7 @@ export default async function Today(props: PageProps<"/">) {
   const sp = await props.searchParams;
   const mine = sp.mine === "1";
   const day = todayIst();
-  const { all, waiting, draftPlans, casConfirm, holdings, actor } = await pageData(async (tx, a) => {
+  const { all, waiting, draftPlans, casConfirm, holdings, approvedMissing: missingAll, actor } = await pageData(async (tx, a) => {
     const adv = mine ? a.id : null;
     return {
       all: await listDeskClients(tx, mine ? { advisorId: a.id } : {}),
@@ -85,6 +86,7 @@ export default async function Today(props: PageProps<"/">) {
           and exists (select 1 from public.advice_items ai where ai.id = m.advice_item_id and ai.status in ('ISSUED', 'PARTIALLY_EXECUTED', 'EXECUTED'))
           and (${adv}::uuid is null or adv.advisor_id = ${adv})`)[0]?.n ?? 0),
       holdings: await getBookHoldings(tx, adv),
+      approvedMissing: await listApprovedMissing(tx),
     };
   });
   const adv = mine ? actor.id : null;
@@ -93,11 +95,13 @@ export default async function Today(props: PageProps<"/">) {
   const canAdvise = actor.role !== "OPERATIONS";
   const name = (id: string) => all.find((c) => c.client_id === id)?.full_name ?? "";
 
-  // 1. CAS inbox
-  const casClients = all.filter((c) => c.cas_to_review > 0 || c.unadvised_to_review > 0);
+  // 1. CAS inbox (approved trades the latest CAS does not show are asked there too)
+  const missing = new Map(missingAll.filter((m) => all.some((c) => c.client_id === m.client_id)).map((m) => [m.client_id, m.trades]));
+  const casClients = all.filter((c) => c.cas_to_review > 0 || c.unadvised_to_review > 0 || missing.has(c.client_id));
   const casRows: Row[] = casClients.map((c) => ({
     key: c.client_id, clientId: c.client_id, name: c.full_name,
-    what: [c.cas_to_review ? "new CAS to check" : null, c.unadvised_to_review ? `${c.unadvised_to_review} trade${c.unadvised_to_review === 1 ? "" : "s"} to decide` : null].filter(Boolean).join(" · "),
+    what: [c.cas_to_review ? "new CAS to check" : null, c.unadvised_to_review ? `${c.unadvised_to_review} trade${c.unadvised_to_review === 1 ? "" : "s"} to decide` : null,
+      missing.has(c.client_id) ? `${missing.get(c.client_id)} approved, not in the CAS` : null].filter(Boolean).join(" · "),
     when: c.pending_cas_date ? `CAS of ${formatDate(c.pending_cas_date)}` : "",
     cta: <Link href={`/reconciliation?c=${c.client_id}`} className="hover:underline">Open →</Link>,
   }));
@@ -172,7 +176,7 @@ export default async function Today(props: PageProps<"/">) {
 
   const items = [
     { id: "cas", n: casCount, tone: "amber" as const, title: PAGES.casInbox, tile: "CAS inbox", value: String(casCount), href: "/reconciliation", cta: "Open inbox", rows: casRows,
-      sub: <>{all.filter((c) => c.cas_to_review).length} CAS to check · {casConfirm} call{casConfirm === 1 ? "" : "s"} the CAS seems to show · {all.filter((c) => c.unadvised_to_review).length} with trades to decide</> },
+      sub: <>{all.filter((c) => c.cas_to_review).length} CAS to check · {casConfirm} call{casConfirm === 1 ? "" : "s"} the CAS seems to show · {all.filter((c) => c.unadvised_to_review).length} with trades to decide{missing.size ? ` · ${missing.size} with approved trades not in their CAS` : ""}</> },
     { id: "approve", n: waitClients.length, tone: "green" as const, title: "Approve waiting", tile: "Approve waiting", value: `${waiting.length} call${waiting.length === 1 ? "" : "s"}`, href: withAdv("/executions/pending"), cta: "Open list", rows: waitRows,
       sub: <>{waiting.length} call{waiting.length === 1 ? "" : "s"} · <Money value={waiting.reduce((t, w) => t + Number(w.pending_amount), 0)} /> advised, not in a CAS yet — mark what clients have done</> },
     { id: "ask", n: stale.length, tone: "red" as const, title: "Ask for a CAS", tile: "Waiting 30+ days", value: String(stale.length), href: withAdv("/executions/pending"), cta: "See all", rows: staleRows,

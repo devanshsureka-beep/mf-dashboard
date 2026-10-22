@@ -48,9 +48,10 @@ export type BookStatus = { label: string; tone: "red" | "amber" | "orange" | "in
 
 /** Behind = a call waiting more than 30 days. Rank: lower comes first in "Behind first". */
 export function clientStatus(c: BookClient): BookStatus {
-  if (!c.has_plan) return c.has_draft ? { label: "Draft", tone: "indigo", rank: 3 } : { label: "No plan", tone: "grey", rank: 6 };
   if (c.pending >= 0.5 && (c.oldest_wait_days ?? 0) > 30) return { label: `Behind · ${c.oldest_wait_days} days`, tone: "red", rank: 0 };
   if (c.pending >= 0.5) return c.executed >= 0.5 ? { label: "Part done", tone: "amber", rank: 1 } : { label: "Waiting", tone: "orange", rank: 2 };
+  // Calls can wait on a client with no active plan (advised outside a plan): those come first.
+  if (!c.has_plan) return c.has_draft ? { label: "Draft", tone: "indigo", rank: 3 } : { label: "No plan", tone: "grey", rank: 6 };
   if (c.left_to_advise >= 0.5) return { label: "Next tranche", tone: "indigo", rank: 4 };
   return { label: "Done", tone: "green", rank: 5 };
 }
@@ -76,12 +77,13 @@ export function nextAction(c: BookClient): string {
   return "—";
 }
 
-export type Proof = "CAS" | "APPROVED" | "PRE" | "OFF";
+export type Proof = "CAS" | "APPROVED" | "PRE" | "OFF" | "OPEN";
 export const PROOF_LABEL: Record<Proof, string> = {
   CAS: "CAS verified",
   APPROVED: "Approved · waiting for CAS",
   PRE: "Before onboarding (CAS)",
   OFF: "Off-plan (client's own)",
+  OPEN: "Not ours? Decide in CAS inbox",
 };
 
 /** Proof of a recorded execution: a CAS verified it, a person approved it, or it was done before onboarding (CAS as proof). */
