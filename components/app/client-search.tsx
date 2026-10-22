@@ -1,5 +1,6 @@
 "use client";
 
+import { ActiveDot } from "@/components/app/active-dot";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Search } from "lucide-react";
@@ -87,7 +88,7 @@ export function ClientSearch() {
               onClick={() => go(`/clients/${h.client_id}`)}
               className={cn("block w-full px-3 py-2 text-left", i === active ? "bg-brand-50" : "bg-white")}
             >
-              <div className="truncate text-sm font-medium">{h.full_name}</div>
+              <div className="truncate text-sm font-medium"><ActiveDot active={h.is_active} since={h.first_advised_at} />{h.full_name}</div>
               <div className="truncate text-[11px] text-muted">{h.client_code}{h.advisor_name ? ` · ${h.advisor_name}` : ""}{h.status !== "ACTIVE" ? ` · ${h.status.toLowerCase()}` : ""}</div>
             </button>
           )) : (

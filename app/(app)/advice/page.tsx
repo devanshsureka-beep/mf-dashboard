@@ -11,7 +11,8 @@ import { HubTabs } from "@/components/app/hub-tabs";
 import { PAGES } from "@/lib/brand";
 import { pageData } from "@/lib/server";
 import { listAdviceLedger } from "@/services/advice";
-import { listAdvisors } from "@/services/clients";
+import { getActivityMap, listAdvisors } from "@/services/clients";
+import { ActiveDot } from "@/components/app/active-dot";
 import type { AdviceItemView } from "@/types/domain";
 import { AutoForm } from "./find/find-search";
 
@@ -53,13 +54,13 @@ export default async function TranchesPage(props: PageProps<"/advice">) {
     : new Date(new Date(`${today}T00:00:00Z`).getTime() - Number(period) * 86_400_000).toISOString().slice(0, 10));
   const f = { q: one("q"), state: one("state"), advisor: uuidOrNull(one("advisor")), client: uuidOrNull(one("client")), side: one("side") };
 
-  const { rows, advisors, actor } = await pageData(async (tx) => ({
-    rows: await listAdviceLedger(tx, {
+  const { rows, advisors, act, actor } = await pageData(async (tx) => {
+    const rows = await listAdviceLedger(tx, {
       from, to: isoDateOrNull(one("to")), advisorId: f.advisor, clientId: f.client,
       side: f.side === "BUY" || f.side === "SELL" ? f.side : null, limit: 2000,
-    }),
-    advisors: await listAdvisors(tx),
-  }));
+    });
+    return { rows, advisors: await listAdvisors(tx), act: await getActivityMap(tx, rows.map((r) => r.client_id)) };
+  });
 
   // One tranche = one advice batch: everything told to one client at one moment.
   const byBatch = new Map<string, Row[]>();
@@ -154,7 +155,7 @@ export default async function TranchesPage(props: PageProps<"/advice">) {
                       <summary className="grid cursor-pointer list-none items-center gap-x-4 gap-y-2 px-4 py-3 md:grid-cols-[96px_minmax(0,2fr)_minmax(0,1.8fr)_minmax(0,2fr)_120px_40px] [&::-webkit-details-marker]:hidden">
                         <span><b className="block text-sm">{timeIST(first.communicated_at)}</b><span className="text-xs text-muted">{humanize(first.communication_channel)}</span></span>
                         <span className="min-w-0">
-                          <Link href={`/clients/${first.client_id}`} className="text-[15px] font-semibold hover:underline">{first.client_name}</Link>
+                          <Link href={`/clients/${first.client_id}`} className="text-[15px] font-semibold hover:underline"><ActiveDot active={act[first.client_id]?.is_active} since={act[first.client_id]?.first_advised_at} />{first.client_name}</Link>
                           <span className="block truncate text-xs text-muted">{first.client_code}{first.advisor_name ? ` · ${first.advisor_name}` : ""} · {first.batch_code}{offPlan ? " · off-plan" : ""}</span>
                         </span>
                         <span className="text-[13px]">

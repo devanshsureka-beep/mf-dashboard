@@ -10,6 +10,7 @@ import { CHANNELS } from "@/types/domain";
 import { confirmCasInInboxAction, confirmMatchFromInboxAction, decideTradeAction, rejectCasInInboxAction } from "./actions";
 import { approvedNotInCasAction } from "../clients/[id]/waiting/actions";
 import type { ApprovedVsCas } from "@/services/waiting-approve";
+import { ActiveDot } from "@/components/app/active-dot";
 
 /** Every open item of one client, from the inbox lists. */
 export interface ClientCard {
@@ -120,8 +121,9 @@ function CheckStep({ n, x, d }: { n: number; x: InboxCheck; d: InboxCheckDetail 
   );
 }
 
-export function InboxCase({ c, details, checks, summary, inBank, approved, next, canAdvise }: {
+export function InboxCase({ c, act, details, checks, summary, inBank, approved, next, canAdvise }: {
   c: ClientCard;
+  act?: { is_active: boolean; first_advised_at: string | null };
   details: Record<string, InboxRunDetail>;
   checks: Record<string, InboxCheckDetail | null>;
   summary: ClientSummary | null;
@@ -147,7 +149,7 @@ export function InboxCase({ c, details, checks, summary, inBank, approved, next,
   return (
     <div className="rounded-xl border border-border bg-surface">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-5 py-3.5">
-        <Link href={`/clients/${c.client_id}`} className="text-lg font-semibold hover:underline">{c.client_name}</Link>
+        <Link href={`/clients/${c.client_id}`} className="text-lg font-semibold hover:underline"><ActiveDot active={act?.is_active} since={act?.first_advised_at} />{c.client_name}</Link>
         {open ? <span className={cn("rounded-full px-2.5 py-0.5 text-xs font-semibold", TONE.review)}>Needs review · {plural(open, "point")}</span> : null}
         <span className="text-xs text-muted">{c.client_code}{c.snapshot_date ? ` · CAS ${formatDate(c.snapshot_date)}` : ""}</span>
         <Link href={`/clients/${c.client_id}`} className="ml-auto text-xs font-medium text-brand hover:underline">Open client →</Link>

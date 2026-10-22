@@ -10,6 +10,7 @@ import { cn, UUID_RE } from "@/lib/utils";
 import { getBookHoldings, getBookTrend } from "@/services/book";
 import { getOverview, listOverviewAdvisors, type BookRow, type MonthRow } from "@/services/overview";
 import { listDeskClients } from "@/services/clients";
+import { ActiveDot } from "@/components/app/active-dot";
 
 export const metadata = { title: PAGES.overview };
 
@@ -151,6 +152,7 @@ export default async function OverviewPage(props: PageProps<"/overview">) {
   const k = o.kpis;
   const pct = (a: number, b: number) => (b > 0 ? `${Math.round((a / b) * 100)}%` : "—");
   const rank = (r: BookRow) => r.status.rank;
+  const bookOf = new Map(o.book.map((r) => [r.client_id, r]));
   const book = o.book
     .filter((r) => !q || r.name.toLowerCase().includes(q) || r.code.toLowerCase().includes(q))
     .sort((a, b) => sort === "name" ? a.name.localeCompare(b.name)
@@ -218,7 +220,7 @@ export default async function OverviewPage(props: PageProps<"/overview">) {
             <tbody className="divide-y divide-border">
               {book.map((r) => (
                 <tr key={r.client_id} className="hover:bg-slate-50">
-                  <td className="px-3 py-2"><Link href={`/clients/${r.client_id}`} className="font-semibold hover:underline">{r.name}</Link></td>
+                  <td className="px-3 py-2"><Link href={`/clients/${r.client_id}`} className="font-semibold hover:underline"><ActiveDot active={r.active} since={r.active_since} />{r.name}</Link></td>
                   <td className="px-3 py-2 text-slate-600">{r.advisor?.split(" ")[0] ?? "—"}</td>
                   <td className="px-3 py-2"><span className={cn("whitespace-nowrap rounded-full px-2 py-0.5 text-[11.5px] font-semibold", STATUS_TONE[r.status.tone])}>{r.status.label}</span></td>
                   <td className="px-3 py-2 text-right num">{r.sold >= 0.5 ? L(r.sold) : "—"}</td>
@@ -265,7 +267,7 @@ export default async function OverviewPage(props: PageProps<"/overview">) {
               {shownTx.map((t, i) => (
                 <tr key={`${t.date}${t.client_id}${i}`}>
                   <td className="whitespace-nowrap px-3 py-2">{dayLabel(t.date)}</td>
-                  <td className="px-3 py-2"><Link href={`/clients/${t.client_id}`} className="hover:underline">{t.client}</Link></td>
+                  <td className="px-3 py-2"><Link href={`/clients/${t.client_id}`} className="hover:underline"><ActiveDot active={bookOf.get(t.client_id)?.active} since={bookOf.get(t.client_id)?.active_since} />{t.client}</Link></td>
                   <td className={cn("px-3 py-2 font-semibold", t.side === "SELL" ? "text-red-700" : "text-blue-700")}>{t.side === "SELL" ? "Sell" : "Buy"}</td>
                   <td className="max-w-[360px] truncate px-3 py-2" title={t.fund}>{t.fund}</td>
                   <td className="px-3 py-2 text-right num">{L(t.amount)}</td>

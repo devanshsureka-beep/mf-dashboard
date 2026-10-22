@@ -12,6 +12,7 @@ import { filterDeskRows, fundAudience, listDeskRows, readyCounts, type DeskFilte
 import { listAdvisors } from "@/services/clients";
 import { RISK_PROFILES, type RiskProfile } from "@/types/domain";
 import { AutoForm, FindSearch } from "./find-search";
+import { ActiveDot } from "@/components/app/active-dot";
 import { DeskTable, FundTable } from "./find-tables";
 
 export const metadata = { title: "Find clients" };
@@ -39,6 +40,7 @@ export default async function FindClientsPage(props: PageProps<"/advice/find">) 
     last: (["7", "30", "never"] as const).find((x) => x === one("last")) ?? null,
     // Clients with calls still waiting are left out unless asked for.
     hideWaiting: one("waiting") !== "show",
+    act: (["active", "inactive"] as const).find((x) => x === one("act")) ?? null,
   };
 
   const { rows, fund, advisors, actor } = await pageData(async (tx) => ({
@@ -160,6 +162,20 @@ export default async function FindClientsPage(props: PageProps<"/advice/find">) 
               <input type="checkbox" name="waiting" value="show" defaultChecked={!f.hideWaiting} className="h-4 w-4 accent-brand" />
               Include clients with calls still waiting
             </label>
+            {f.act ? <input type="hidden" name="act" value={f.act} /> : null}
+            <span className="flex items-center gap-1 self-center text-xs" aria-label="Active or inactive">
+              {(() => {
+                // Counts with every other filter applied (only active / inactive left out).
+                const base = filterDeskRows(rows, { ...f, act: null });
+                return ([[null, "All", base.length], ["active", "Active", base.filter((r) => r.is_active).length], ["inactive", "Inactive", base.filter((r) => !r.is_active).length]] as const).map(([k, label, n]) => (
+                  <Link key={label} href={keep({ act: k })} aria-current={f.act === k ? "page" : undefined}
+                    title={k === "active" ? "Advised at least once" : k === "inactive" ? "Not advised yet" : undefined}
+                    className={cn("inline-flex items-center rounded-full px-2.5 py-1 ring-1", f.act === k ? "bg-brand-50 font-semibold text-brand-700 ring-brand" : "bg-white text-slate-700 ring-border hover:ring-brand-200")}>
+                    {k ? <ActiveDot active={k === "active"} className="mr-1" /> : null}{label} <b className="ml-1">{n}</b>
+                  </Link>
+                ));
+              })()}
+            </span>
             <span className="flex-1" />
             <Link href={`/advice/find?list=${list}`} className="pb-2.5 text-xs text-muted hover:underline">Reset filters</Link>
           </AutoForm>

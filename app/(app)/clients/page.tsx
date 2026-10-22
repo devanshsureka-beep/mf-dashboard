@@ -20,6 +20,7 @@ import { deleteClientsAction, reassignClientsAction, restoreClientsAction } from
 import { ClientList, type ListRow, type ListTag } from "./client-list";
 import { LiveSearch } from "./live-search";
 import { Suspense } from "react";
+import { ActiveDot } from "@/components/app/active-dot";
 
 export const metadata = { title: "Premium clients" };
 
@@ -77,19 +78,25 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
     month: /^\d{4}-(0[1-9]|1[0-2])$/.test(one("month") ?? "") ? one("month") : null, sort: pick(one("sort"), ["name", "value", "pending", "onboarded", "renewal", "code", "action", "left"] as const) ?? "action",
   };
   const showDeleted = one("deleted") === "1";
+  // Active = advised at least once (v_client_activity). Applied like the search: tiles count within it.
+  const act = pick(one("act"), ["active", "inactive"] as const);
+  const byAct = <T extends { is_active: boolean }>(rows: T[]) => (act ? rows.filter((c) => c.is_active === (act === "active")) : rows);
   const draftView = f.plan === "draft";
   // The tiles count within the search, advisor, risk and month picked; only the view itself is left out.
   const base: DeskFilters = { ...f, attention: undefined, plan: undefined, premium: undefined, agreement: undefined };
-  const { clients, all, everyone, advisors, deleted, drafts, actor } = await pageData(async (tx, a) => {
+  const { clients, all, allActs, everyone, advisors, deleted, drafts, actor } = await pageData(async (tx, a) => {
     const canAdvise = a.role !== "OPERATIONS";
-    const clients = await listDeskClients(tx, { ...f, canAdvise });
+    const clients = byAct(await listDeskClients(tx, { ...f, canAdvise }));
     // The Drafts view lists the drafts of exactly the clients its tile counts (same search and filters).
     const ids = new Set(clients.map((c) => c.client_id));
     return {
       clients,
       drafts: draftView ? (await listDraftPlans(tx, { advisorId: f.advisorId })).filter((d) => ids.has(d.client_id)) : [],
-      all: await listDeskClients(tx, { ...base, canAdvise }),
-      everyone: f.month ? await listDeskClients(tx, { ...base, month: null, canAdvise }) : null,
+      ...(await (async () => {
+        const allActs = await listDeskClients(tx, { ...base, canAdvise });
+        return { allActs, all: byAct(allActs) };
+      })()),
+      everyone: f.month ? byAct(await listDeskClients(tx, { ...base, month: null, canAdvise })) : null,
       advisors: await listAdvisors(tx),
       deleted: a.role === "ADMIN" ? await listDeletedClients(tx) : [],
     };
@@ -177,7 +184,16 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
           <option value="action">Needs action first</option><option value="left">Most left to advise</option><option value="value">Value (high first)</option>
           <option value="pending">Waiting (high first)</option><option value="name">Name</option><option value="onboarded">Newest report first</option>
         </AutoSelect>
-        {(["status", "plan", "premium", "attention", "agreement", "min", "max"] as const).map((k) => one(k) ? <input key={k} type="hidden" name={k} value={one(k)} /> : null)}
+        {(["status", "plan", "premium", "attention", "agreement", "min", "max", "act"] as const).map((k) => one(k) ? <input key={k} type="hidden" name={k} value={one(k)} /> : null)}
+        <span className="flex items-center gap-1 text-xs" aria-label="Active or inactive">
+          {([[undefined, "All", allActs.length], ["active", "Active", allActs.filter((c) => c.is_active).length], ["inactive", "Inactive", allActs.filter((c) => !c.is_active).length]] as const).map(([k, label, n]) => (
+            <Link key={label} href={qs({ act: k })} aria-current={act === k ? "page" : undefined}
+              title={k === "active" ? "Advised at least once" : k === "inactive" ? "Not advised yet" : undefined}
+              className={cn("inline-flex items-center rounded-full px-2.5 py-1 ring-1", act === k ? "bg-brand-50 font-semibold text-brand-700 ring-brand" : "bg-white text-slate-700 ring-border hover:ring-brand-200")}>
+              {k ? <ActiveDot active={k === "active"} className="mr-1" /> : null}{label} <b className="ml-1">{n}</b>
+            </Link>
+          ))}
+        </span>
         <noscript><Button type="submit" variant="outline" size="sm">Apply</Button></noscript>
         {activeFilters ? <Link href="/clients" className="text-xs text-muted hover:underline">Clear filters</Link> : null}
         <span className="ml-auto text-[11px] text-muted">To-dos under each name are in the order to do them; the first is a button · tick clients for one action on all · click a column to sort</span>
@@ -221,7 +237,7 @@ function toRow(c: Row, canAdvise: boolean): ListRow {
   if (c.follow_ups_due) todos.push({ text: `${c.follow_ups_due} follow-up${c.follow_ups_due === 1 ? "" : "s"} due`, tone: "grey", href: `/clients/${c.client_id}?tab=file#notes` });
   if (c.agreement_status !== "VALID") todos.push({ text: c.agreement_status === "EXPIRED" ? "Renew agreement" : "Upload agreement", tone: "grey", href: `/clients/${c.client_id}?tab=file` });
   return {
-    id: c.client_id, name: c.full_name, code: c.client_code, tag, todos, casToCheck: c.cas_to_review > 0, openCalls: c.open_calls,
+    id: c.client_id, name: c.full_name, code: c.client_code, active: c.is_active, activeSince: c.first_advised_at, tag, todos, casToCheck: c.cas_to_review > 0, openCalls: c.open_calls,
     month: MON[Number(c.report_date.slice(5, 7)) - 1] ?? "", reportDate: c.report_date, pendingCas: c.pending_cas_date,
     advisor: c.advisor_name ?? "—", risk: c.risk_profile ? humanize(c.risk_profile) : "—",
     valueToday: inFunds == null && inBank < 0.5 ? null : (inFunds ?? 0) + inBank,

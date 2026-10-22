@@ -8,6 +8,7 @@ import { pageData } from "@/lib/server";
 import { cn } from "@/lib/utils";
 import { insights } from "@/lib/domain/book";
 import { listDeskClients } from "@/services/clients";
+import { ActiveDot } from "@/components/app/active-dot";
 import { listDraftPlans } from "@/services/plans";
 import { getBookHoldings, primaryAdvisor } from "@/services/book";
 import { listWaiting } from "@/services/waiting";
@@ -35,8 +36,9 @@ const TONES = {
 } as const;
 
 /** One kind of work: what it is, one button for all of it, and every client with their own button. */
-function Work({ id, n, tone, title, sub, href, cta, rows, more }: {
+function Work({ id, n, tone, title, sub, href, cta, rows, more, act }: {
   id: string; n: number; tone: keyof typeof TONES; title: string; sub: React.ReactNode; href: string; cta: string; rows: Row[]; more: number;
+  act: Map<string, { is_active: boolean; first_advised_at: string | null }>;
 }) {
   return (
     <section id={id} className={cn("scroll-mt-14 overflow-hidden rounded-xl bg-surface ring-1", TONES[tone].ring)}>
@@ -49,7 +51,7 @@ function Work({ id, n, tone, title, sub, href, cta, rows, more }: {
         <ul className="divide-y divide-slate-100 border-t border-slate-100 text-[13px]">
           {rows.map((r) => (
             <li key={r.key} className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1.7fr)_minmax(0,0.9fr)_auto] items-center gap-3 py-2 pl-14 pr-4">
-              <Link href={`/clients/${r.clientId}`} className="truncate font-semibold hover:underline">{r.name}</Link>
+              <Link href={`/clients/${r.clientId}`} className="truncate font-semibold hover:underline"><ActiveDot active={act.get(r.clientId)?.is_active} since={act.get(r.clientId)?.first_advised_at} />{r.name}</Link>
               <span className="truncate text-slate-600">{r.what}</span>
               <span className="truncate text-xs text-muted">{r.when}</span>
               <span className="text-right text-[12.5px] font-semibold text-brand">{r.cta}</span>
@@ -93,6 +95,7 @@ export default async function Today(props: PageProps<"/">) {
   /** A link that keeps "My clients" on the page it opens. */
   const withAdv = (u: string) => (adv ? `${u}${u.includes("?") ? "&" : "?"}advisor=${adv}` : u);
   const canAdvise = actor.role !== "OPERATIONS";
+  const act = new Map(all.map((c) => [c.client_id, c]));
   const name = (id: string) => all.find((c) => c.client_id === id)?.full_name ?? "";
 
   // 1. CAS inbox (approved trades the latest CAS does not show are asked there too)
@@ -237,7 +240,7 @@ export default async function Today(props: PageProps<"/">) {
       <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_330px]">
         <div className="space-y-3">
           {open.map((i, idx) => (
-            <Work key={i.id} id={i.id} n={idx + 1} tone={i.tone} title={i.title} sub={i.sub} href={i.href} cta={i.cta} rows={i.rows.slice(0, SHOW)} more={Math.max(0, i.rows.length - SHOW)} />
+            <Work key={i.id} id={i.id} n={idx + 1} tone={i.tone} title={i.title} sub={i.sub} href={i.href} cta={i.cta} rows={i.rows.slice(0, SHOW)} more={Math.max(0, i.rows.length - SHOW)} act={act} />
           ))}
           {!open.length ? <p className="rounded-xl border border-border bg-surface p-6 text-center text-sm text-muted">All clear. Nothing waiting for you right now.</p> : null}
           {clear.length && open.length ? <p className="px-1 text-xs text-emerald-700">All clear: {clear.map((i) => i.title.toLowerCase()).join(", ")}</p> : null}

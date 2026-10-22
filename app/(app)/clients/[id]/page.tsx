@@ -9,7 +9,8 @@ import { getClientAlerts, getPremium } from "@/services/client-record";
 import { formatDate, formatINRCompact, humanize } from "@/lib/format";
 import { pageData } from "@/lib/server";
 import { cn, uuidOrNull } from "@/lib/utils";
-import { getClientSummary } from "@/services/clients";
+import { getClientActivity, getClientSummary } from "@/services/clients";
+import { ActiveDot } from "@/components/app/active-dot";
 import { PAGES } from "@/lib/brand";
 import type { ClientSummary } from "@/types/domain";
 import { PortfolioTab } from "./_tabs/portfolio";
@@ -137,10 +138,11 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
   const raw = String(sp.tab ?? "");
   const tab: Tab = (TABS as readonly string[]).includes(raw) ? (raw as Tab) : LEGACY[raw] ?? "portfolio";
   const str = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : null);
-  const { c, bank, extra, unchecked, sip, picture, premium, alerts, casCount, lastCas, actor } = await pageData(async (tx, who) => ({
+  const { c, act, bank, extra, unchecked, sip, picture, premium, alerts, casCount, lastCas, actor } = await pageData(async (tx, who) => ({
     // SIP lines the CAS already shows done (started / changed / stopped since the report) are ticked first (advisors / admins).
     synced: who.role === "OPERATIONS" ? 0 : await syncSipLinesQuietly(tx, id),
     c: await getClientSummary(tx, id),
+    act: await getClientActivity(tx, id),
     extra: (await tx<RebalanceExtra[]>`
       select off_plan_sell_advised::float8 as off_plan_sell_advised, off_plan_sell_executed::float8 as off_plan_sell_executed, off_plan_sell_pending::float8 as off_plan_sell_pending,
              off_plan_buy_advised::float8 as off_plan_buy_advised, off_plan_buy_executed::float8 as off_plan_buy_executed, off_plan_buy_pending::float8 as off_plan_buy_pending
@@ -210,7 +212,7 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
         <div className="flex flex-col gap-4 p-4 lg:flex-row lg:items-stretch">
           <div className="flex min-w-0 flex-1 flex-col gap-2">
             <h1 className="flex flex-wrap items-center gap-2 text-xl font-semibold tracking-tight">
-              {c.full_name}
+              <span><ActiveDot active={act.is_active} since={act.first_advised_at} />{c.full_name}</span>
               <span className="rounded-md bg-brand-50 px-2 py-0.5 font-mono text-xs font-semibold text-brand-700 ring-1 ring-brand-100" title="Client ID">{c.client_code}</span>
               <StatusBadge status={c.status} />
             </h1>

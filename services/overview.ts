@@ -43,6 +43,9 @@ export interface BookRow {
   name: string;
   code: string;
   advisor: string | null;
+  /** Advised at least once (v_client_activity). */
+  active: boolean;
+  active_since: string | null;
   status: BookStatus;
   sold: number;
   sell_pending: number;
@@ -132,6 +135,7 @@ export async function getOverview(tx: Tx, f: OverviewFilter): Promise<Overview> 
     const s = sipOf.get(c.client_id);
     return {
       client_id: c.client_id, name: c.full_name, code: c.client_code, advisor: c.advisor_name ?? null,
+      active: c.is_active, active_since: c.first_advised_at,
       status: clientStatus(facts),
       sold: doneOf.get(c.client_id)?.sold ?? 0, sell_pending: waitOf(c.client_id, "SELL") + n(c.yet_to_advise_sell),
       bought: doneOf.get(c.client_id)?.bought ?? 0, buy_pending: waitOf(c.client_id, "BUY") + n(c.yet_to_advise_buy),

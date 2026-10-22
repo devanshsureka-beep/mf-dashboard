@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { ActiveDot } from "@/components/app/active-dot";
 import { formatDayMonth, formatINRCompact, formatUnits, humanize } from "@/lib/format";
 import type { DeskRow, FundAudienceRow, FundAdvised } from "@/services/advise-desk";
 
@@ -88,7 +89,7 @@ export function DeskTable({ rows, caption }: { rows: DeskRow[]; caption: string 
                     <tr key={r.client_id} onClick={() => toggle(r.client_id)} className={cn("cursor-pointer border-t border-slate-100 align-top", on ? "bg-brand-50/60" : "hover:bg-slate-50")}>
                       <td className="px-4 py-2.5" onClick={(e) => e.stopPropagation()}><Check on={on} label={`Select ${r.full_name}`} onChange={() => toggle(r.client_id)} /></td>
                       <td className="px-2 py-2.5">
-                        <Link href={`/clients/${r.client_id}`} onClick={(e) => e.stopPropagation()} className="font-semibold hover:underline">{r.full_name}</Link>
+                        <ActiveDot active={r.is_active} since={r.first_advised_at} /><Link href={`/clients/${r.client_id}`} onClick={(e) => e.stopPropagation()} className="font-semibold hover:underline">{r.full_name}</Link>
                         <div className="text-[11.5px] text-muted">{r.client_code} · {humanize(r.risk_profile)}{r.advisor_name ? ` · ${r.advisor_name}` : ""}</div>
                       </td>
                       <td className="px-2 py-2.5 text-right num">{L(r.value)}</td>
@@ -227,7 +228,7 @@ export function FundTable({ rows, securityId }: { rows: FundAudienceRow[]; secur
                     <tr key={r.row.client_id} onClick={() => toggle(r.row.client_id)} className={cn("cursor-pointer border-t border-slate-100 align-top", on ? "bg-brand-50/60" : "hover:bg-slate-50")}>
                       <td className="px-4 py-2.5" onClick={(e) => e.stopPropagation()}><Check on={on} label={`Select ${r.row.full_name}`} onChange={() => toggle(r.row.client_id)} /></td>
                       <td className="px-2 py-2.5">
-                        <Link href={`/clients/${r.row.client_id}`} onClick={(e) => e.stopPropagation()} className="font-semibold hover:underline">{r.row.full_name}</Link>
+                        <ActiveDot active={r.row.is_active} since={r.row.first_advised_at} /><Link href={`/clients/${r.row.client_id}`} onClick={(e) => e.stopPropagation()} className="font-semibold hover:underline">{r.row.full_name}</Link>
                         <div className="text-[11.5px] text-muted">{r.row.client_code} · {humanize(r.row.risk_profile)}</div>
                       </td>
                       <td className="px-2 py-2.5 text-right">

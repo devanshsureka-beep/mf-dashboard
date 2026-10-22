@@ -1,5 +1,6 @@
 "use client";
 
+import { ActiveDot } from "@/components/app/active-dot";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Search } from "lucide-react";
@@ -91,7 +92,7 @@ export function FindSearch({ initial = "" }: { initial?: string }) {
           {shown.map((h, i) => h.kind !== "client" ? null : (
             <button key={h.c.client_id} type="button" role="option" aria-selected={i === active} onMouseEnter={() => setActive(i)} onClick={() => go(h)}
               className={cn("flex w-full items-baseline justify-between gap-2 px-4 py-2.5 text-left", i === active && "bg-brand-50")}>
-              <span className="font-medium">{h.c.full_name}</span>
+              <span className="font-medium"><ActiveDot active={h.c.is_active} since={h.c.first_advised_at} />{h.c.full_name}</span>
               <span className="text-xs text-muted">{h.c.client_code}{h.c.advisor_name ? ` · ${h.c.advisor_name}` : ""}</span>
             </button>
           ))}

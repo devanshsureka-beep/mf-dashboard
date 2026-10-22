@@ -24,6 +24,21 @@ export async function listClientSummaries(tx: Tx, f: ClientFilters = {}): Promis
   `;
 }
 
+/** Active = advised at least once (v_client_activity); for pages that show one client. */
+export async function getClientActivity(tx: Tx, clientId: string): Promise<{ is_active: boolean; first_advised_at: string | null }> {
+  const [a] = await tx<{ is_active: boolean; first_advised_at: string | null }[]>`
+    select is_active, first_advised_at::text as first_advised_at from public.v_client_activity where client_id = ${clientId}`;
+  return a ?? { is_active: false, first_advised_at: null };
+}
+
+/** Activity of many clients at once (lists that do not come from listDeskClients). */
+export async function getActivityMap(tx: Tx, clientIds: string[]): Promise<Record<string, { is_active: boolean; first_advised_at: string | null }>> {
+  if (!clientIds.length) return {};
+  const rows = await tx<{ client_id: string; is_active: boolean; first_advised_at: string | null }[]>`
+    select client_id, is_active, first_advised_at::text as first_advised_at from public.v_client_activity where client_id = any(${[...new Set(clientIds)]}::uuid[])`;
+  return Object.fromEntries(rows.map((r) => [r.client_id, { is_active: r.is_active, first_advised_at: r.first_advised_at }]));
+}
+
 export async function getClientSummary(tx: Tx, clientId: string): Promise<ClientSummary> {
   const rows = await tx<ClientSummary[]>`select * from public.v_client_summary where client_id = ${clientId}`;
   if (!rows[0]) throw new AppError("Client not found or you do not have access.", "NOT_FOUND");
@@ -160,6 +175,9 @@ export type DeskClient = ClientSummary & {
   in_bank: number;
   /** What approved trades (not in a CAS yet) move into funds: approved buys − approved sells. Add to live_portfolio_value. */
   funds_adjust: number;
+  /** Active = advised at least once (v_client_activity), and since when. */
+  is_active: boolean;
+  first_advised_at: string | null;
 };
 
 export async function listDeskClients(tx: Tx, f: DeskFilters = {}): Promise<DeskClient[]> {
@@ -172,6 +190,7 @@ export async function listDeskClients(tx: Tx, f: DeskFilters = {}): Promise<Desk
            coalesce(sp.sip_monthly_target, 0)::float8 as sip_monthly_target, coalesce(sp.sip_invested, 0)::float8 as sip_invested,
            coalesce(bk.in_bank, 0)::float8 as in_bank,
            coalesce(bk.approved_bought - bk.approved_sold, 0)::float8 as funds_adjust,
+           coalesce(act.is_active, false) as is_active, act.first_advised_at::text as first_advised_at,
            coalesce(un.n, 0)::int as unadvised_to_review, coalesce(cr.n, 0)::int as cas_to_review, coalesce(fu.n, 0)::int as follow_ups_due,
            exists (select 1 from public.advisory_plans d where d.client_id = s.client_id and d.status = 'DRAFT') as has_draft_plan,
            (select d.id from public.advisory_plans d where d.client_id = s.client_id and d.status = 'DRAFT' order by d.created_at desc limit 1) as draft_plan_id,
@@ -188,6 +207,7 @@ export async function listDeskClients(tx: Tx, f: DeskFilters = {}): Promise<Desk
     left join public.v_client_premium p on p.client_id = s.client_id
     left join public.v_client_sip sp on sp.client_id = s.client_id
     left join public.v_client_bank bk on bk.client_id = s.client_id
+    left join public.v_client_activity act on act.client_id = s.client_id
     left join lateral (
       select count(*) as n from public.reconciliation_matches m join public.reconciliation_runs r on r.id = m.run_id
       where m.client_id = s.client_id and r.status <> 'CANCELLED' and m.classification = 'UNADVISED'
@@ -251,7 +271,7 @@ export async function listDeskClients(tx: Tx, f: DeskFilters = {}): Promise<Desk
   return out.sort(by[f.sort ?? "name"]);
 }
 
-export interface ClientHit { client_id: string; full_name: string; client_code: string; phone: string | null; status: string; advisor_name: string | null }
+export interface ClientHit { client_id: string; full_name: string; client_code: string; phone: string | null; status: string; advisor_name: string | null; is_active: boolean; first_advised_at: string | null }
 
 /**
  * Clients as the desk types: every word in the name ("rah bha" finds Rahul
@@ -265,8 +285,9 @@ export async function searchClients(tx: Tx, query: string, limit = 8): Promise<C
   const digits = q.replace(/\D/g, "");
   const like = `%${q}%`;
   return tx<ClientHit[]>`
-    select client_id, full_name, client_code, phone, status, advisor_name
-    from public.v_client_summary s
+    select s.client_id, full_name, client_code, phone, status, advisor_name,
+           coalesce(act.is_active, false) as is_active, act.first_advised_at::text as first_advised_at
+    from public.v_client_summary s left join public.v_client_activity act on act.client_id = s.client_id
     where (select bool_and(s.full_name ilike '%' || w || '%') from unnest(${words}::text[]) w)
        or s.client_code ilike ${like} or s.pan ilike ${like} or s.email ilike ${like}
        or (length(${digits}) >= 4 and regexp_replace(coalesce(s.phone, ''), '\\D', '', 'g') like '%' || ${digits} || '%')

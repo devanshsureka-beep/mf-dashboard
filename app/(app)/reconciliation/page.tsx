@@ -16,6 +16,8 @@ import { getCasInbox, getInboxCheckDetail, getInboxRunDetails, type InboxCheckDe
 import type { ClientSummary } from "@/types/domain";
 import { InboxCase, reasons, TONE, type ClientCard } from "./inbox-case";
 import { listCasDocuments } from "@/services/portfolio";
+import { getActivityMap } from "@/services/clients";
+import { ActiveDot } from "@/components/app/active-dot";
 import { listRuns } from "@/services/reconciliation";
 import { getApprovedVsCas } from "@/services/waiting-approve";
 import { BulkUploader } from "../cas/bulk/bulk-uploader";
@@ -96,7 +98,7 @@ export default async function CasInboxPage(props: PageProps<"/reconciliation">) 
   const sp = await props.searchParams;
   const view = sp.view === "done" || sp.view === "collect" ? sp.view : "needs";
   const want = typeof sp.c === "string" && UUID_RE.test(sp.c) ? sp.c : null;
-  const { inbox, runs, docs, details, cards, selected, checks, summary, inBank, approved, wantedName, actor } = await pageData(async (tx) => {
+  const { inbox, runs, docs, details, cards, selected, checks, summary, inBank, approved, wantedName, act, actor } = await pageData(async (tx) => {
     const inbox = await getCasInbox(tx);
     const runIds = [...new Set([...inbox.confirm, ...inbox.unadvised].map((x) => x.run_id).concat(inbox.done.flatMap((d) => (d.run_id ? [d.run_id] : []))))];
     const cards = cardsFromInbox(inbox);
@@ -104,15 +106,16 @@ export default async function CasInboxPage(props: PageProps<"/reconciliation">) 
     const selected = want ? cards.find((c) => c.client_id === want) ?? null : cards[0] ?? null;
     const checks: Record<string, InboxCheckDetail | null> = {};
     for (const x of cards.flatMap((c) => c.check)) checks[x.snapshot_id] = await getInboxCheckDetail(tx, x.snapshot_id);
+    const runs = await listRuns(tx);
+    const docs = await listCasDocuments(tx);
     return {
-      inbox, cards, selected, checks,
+      inbox, cards, selected, checks, runs, docs,
+      act: await getActivityMap(tx, [...cards, ...inbox.done, ...inbox.collect, ...runs, ...docs].map((x) => x.client_id)),
       summary: selected ? (await tx<ClientSummary[]>`select * from public.v_client_summary where client_id = ${selected.client_id}`)[0] ?? null : null,
       inBank: selected ? Number((await tx<{ in_bank: number }[]>`select in_bank::float8 as in_bank from public.v_client_bank where client_id = ${selected.client_id}`)[0]?.in_bank ?? 0) : 0,
       // Trades approved by hand against this CAS (only once it is confirmed: the matching has run).
       approved: selected?.snapshot_date && !selected.check.length ? await getApprovedVsCas(tx, selected.client_id, selected.snapshot_date, selected.runIds) : [],
       wantedName: want && !selected ? ((await tx<{ full_name: string }[]>`select full_name from public.clients where id = ${want}`)[0]?.full_name ?? null) : null,
-      runs: await listRuns(tx),
-      docs: await listCasDocuments(tx),
       details: await getInboxRunDetails(tx, runIds),
     };
   });
@@ -149,7 +152,7 @@ export default async function CasInboxPage(props: PageProps<"/reconciliation">) 
                     <li key={c.client_id}>
                       <Link href={`/reconciliation?c=${c.client_id}`} aria-current={on ? "true" : undefined}
                         className={cn("block border-l-[3px] px-4 py-2.5 hover:bg-slate-50", on ? "border-amber-500 bg-amber-50/70" : "border-transparent")}>
-                        <span className="flex items-baseline justify-between gap-2"><b className="truncate text-sm">{c.client_name}</b><span className="shrink-0 text-[11px] text-muted">{c.snapshot_date ? `CAS ${formatDate(c.snapshot_date)}` : ""}</span></span>
+                        <span className="flex items-baseline justify-between gap-2"><b className="truncate text-sm"><ActiveDot active={act[c.client_id]?.is_active} since={act[c.client_id]?.first_advised_at} />{c.client_name}</b><span className="shrink-0 text-[11px] text-muted">{c.snapshot_date ? `CAS ${formatDate(c.snapshot_date)}` : ""}</span></span>
                         <span className="mt-1 flex flex-wrap gap-1">{reasons(c, details, checks).map((t, i) => <span key={i} className={cn("rounded-full px-2 py-0.5 text-[11px] font-medium", TONE[t.tone])}>{t.label}</span>)}</span>
                       </Link>
                     </li>
@@ -158,7 +161,7 @@ export default async function CasInboxPage(props: PageProps<"/reconciliation">) 
               </ul>
               <div className="border-t border-border px-4 py-2 text-[11px] text-muted">CAS files that passed every check counted by themselves; they are under <Link href="/reconciliation?view=done" className="text-brand hover:underline">Done</Link>.</div>
             </nav>
-            {selected ? <InboxCase c={selected} details={details} checks={checks} summary={summary} inBank={inBank} approved={approved} next={nextCard} canAdvise={canAdvise} /> : (
+            {selected ? <InboxCase c={selected} act={act[selected.client_id]} details={details} checks={checks} summary={summary} inBank={inBank} approved={approved} next={nextCard} canAdvise={canAdvise} /> : (
               <div className="rounded-xl border border-dashed border-border bg-white p-6 text-center text-sm text-muted">
                 <p>Nothing is open for <b className="text-ink">{wantedName ?? "this client"}</b> in the inbox: their CAS is checked and every trade decided.</p>
                 {nextCard ? <Link href={`/reconciliation?c=${nextCard.client_id}`} className="mt-3 inline-block rounded-md bg-ink px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800">Next: {nextCard.client_name} →</Link> : null}
@@ -176,7 +179,7 @@ export default async function CasInboxPage(props: PageProps<"/reconciliation">) 
               const ticked = Boolean(det && (det.done.length || det.sip_lines_ticked));
               return (
                 <li key={d.snapshot_id} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5">
-                  <Link href={`/clients/${d.client_id}`} className="w-48 truncate font-medium hover:underline">{d.client_name}</Link>
+                  <Link href={`/clients/${d.client_id}`} className="w-48 truncate font-medium hover:underline"><ActiveDot active={act[d.client_id]?.is_active} since={act[d.client_id]?.first_advised_at} />{d.client_name}</Link>
                   <span className="w-28 text-xs text-muted">CAS {formatDate(d.snapshot_date)}</span>
                   <span className="flex flex-1 flex-wrap gap-1.5 text-xs">
                     <DoneChips d={det} />
@@ -205,7 +208,7 @@ export default async function CasInboxPage(props: PageProps<"/reconciliation">) 
               <TBody>
                 {inbox.collect.map((c) => (
                   <TR key={c.client_id}>
-                    <TD><Link href={`/clients/${c.client_id}`} className="font-medium hover:underline">{c.client_name}</Link> <span className="text-xs text-muted">{c.client_code}</span></TD>
+                    <TD><Link href={`/clients/${c.client_id}`} className="font-medium hover:underline"><ActiveDot active={act[c.client_id]?.is_active} since={act[c.client_id]?.first_advised_at} />{c.client_name}</Link> <span className="text-xs text-muted">{c.client_code}</span></TD>
                     <TD className="text-xs">{c.latest_cas ? `${formatDate(c.latest_cas)} (${c.days} days ago)` : "None yet"}</TD>
                     <TD className="text-xs">{c.waiting_amount >= 0.5 ? <><Money value={c.waiting_amount} /> advised, not seen in a CAS yet</> : c.unverified_amount >= 0.5 ? <><Money value={c.unverified_amount} /> recorded by hand, not yet seen in a CAS</> : c.latest_cas ? `${c.days} days without a CAS` : "No CAS uploaded"}</TD>
                     <TD className="whitespace-nowrap text-right text-xs">
@@ -241,7 +244,7 @@ export default async function CasInboxPage(props: PageProps<"/reconciliation">) 
                 <TBody>
                   {runs.map((r) => (
                     <TR key={r.id}>
-                      <TD className="whitespace-nowrap"><Link href={`/clients/${r.client_id}`} className="hover:underline">{r.client_name}</Link><div className="text-[11px] text-muted">{formatDateTime(r.created_at)}</div></TD>
+                      <TD className="whitespace-nowrap"><Link href={`/clients/${r.client_id}`} className="hover:underline"><ActiveDot active={act[r.client_id]?.is_active} since={act[r.client_id]?.first_advised_at} />{r.client_name}</Link><div className="text-[11px] text-muted">{formatDateTime(r.created_at)}</div></TD>
                       <TD className="text-xs">{formatDate(r.previous_snapshot_date)} → {formatDate(r.current_snapshot_date)}</TD>
                       <TD className="text-right"><Money value={r.previous_value} /></TD>
                       <TD className="text-right"><Money value={r.current_value} /></TD>
@@ -264,7 +267,7 @@ export default async function CasInboxPage(props: PageProps<"/reconciliation">) 
                   {docs.map((d) => (
                     <TR key={d.id}>
                       <TD className="whitespace-nowrap text-xs">{formatDateTime(d.uploaded_at)}</TD>
-                      <TD className="whitespace-nowrap">{d.client_name}</TD>
+                      <TD className="whitespace-nowrap"><ActiveDot active={act[d.client_id]?.is_active} since={act[d.client_id]?.first_advised_at} />{d.client_name}</TD>
                       <TD className="max-w-60 truncate text-xs"><Link className="text-brand hover:underline" href={`/cas/${d.id}`}>{casLabel(d.valuation_date)}</Link></TD>
                       <TD className="text-xs">{humanize(d.source)}</TD>
                       <TD className="text-xs">{formatDate(d.valuation_date)}</TD>

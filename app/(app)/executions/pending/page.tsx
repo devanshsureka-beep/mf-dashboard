@@ -12,7 +12,8 @@ import { cn, uuidOrNull } from "@/lib/utils";
 import { PAGES } from "@/lib/brand";
 import { HubTabs } from "@/components/app/hub-tabs";
 import { pageData } from "@/lib/server";
-import { listAdvisors } from "@/services/clients";
+import { getActivityMap, listAdvisors } from "@/services/clients";
+import { ActiveDot } from "@/components/app/active-dot";
 import { listWaiting, type WaitingCall } from "@/services/waiting";
 import { AutoForm } from "../../advice/find/find-search";
 import { closeAdviceAction, followUpNoteAction } from "../../advice/actions";
@@ -28,10 +29,10 @@ export default async function PendingExecutionsPage(props: PageProps<"/execution
   const sp = await props.searchParams;
   const one = (k: string) => (typeof sp[k] === "string" && sp[k] ? (sp[k] as string) : null);
   const f = { q: one("q"), advisor: uuidOrNull(one("advisor")), status: one("status"), side: one("side"), age: one("age"), open: one("open") };
-  const { all, advisors, actor } = await pageData(async (tx) => ({
-    all: await listWaiting(tx, { advisorId: f.advisor }),
-    advisors: await listAdvisors(tx),
-  }));
+  const { all, advisors, act, actor } = await pageData(async (tx) => {
+    const all = await listWaiting(tx, { advisorId: f.advisor });
+    return { all, advisors: await listAdvisors(tx), act: await getActivityMap(tx, all.map((r) => r.client_id)) };
+  });
   const canAdvise = actor.role !== "OPERATIONS";
 
   // The tiles count everything waiting; the chips and search narrow the list below.
@@ -125,7 +126,7 @@ export default async function PendingExecutionsPage(props: PageProps<"/execution
               <details key={g.client_id} open={f.open === g.client_id || (groups.length <= 3 && gi === 0) || undefined} className="group overflow-hidden rounded-xl border border-border bg-white">
                 <summary className="grid cursor-pointer list-none items-center gap-x-4 gap-y-2 px-4 py-3 md:grid-cols-[minmax(0,2fr)_minmax(0,1.6fr)_minmax(0,2fr)_88px_auto] [&::-webkit-details-marker]:hidden">
                   <span className="min-w-0">
-                    <Link href={`/clients/${g.client_id}`} className="text-[15px] font-semibold hover:underline">{g.client_name}</Link>
+                    <Link href={`/clients/${g.client_id}`} className="text-[15px] font-semibold hover:underline"><ActiveDot active={act[g.client_id]?.is_active} since={act[g.client_id]?.first_advised_at} />{g.client_name}</Link>
                     <span className="block text-xs text-muted">{g.client_code}{g.advisor ? ` · ${g.advisor}` : ""}</span>
                   </span>
                   <span className="text-[13px]">

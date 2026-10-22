@@ -22,6 +22,8 @@ export interface DeskFilter {
   last?: "7" | "30" | "never" | null;
   /** Leave out clients with calls still waiting for the CAS. */
   hideWaiting?: boolean;
+  /** Active = advised at least once; inactive = not advised yet. */
+  act?: "active" | "inactive" | null;
 }
 
 export interface NextLine { action: string; scheme_name: string; amount: number }
@@ -29,6 +31,9 @@ export interface NextLine { action: string; scheme_name: string; amount: number 
 export interface DeskRow {
   client_id: string;
   full_name: string;
+  /** Advised at least once (v_client_activity), and since when. */
+  is_active: boolean;
+  first_advised_at: string | null;
   client_code: string;
   risk_profile: RiskProfile | null;
   advisor_name: string | null;
@@ -77,7 +82,7 @@ export async function listDeskRows(tx: Tx, f: Pick<DeskFilter, "advisorId" | "ri
     const t = tr.get(c.client_id);
     const n = next.get(c.client_id) ?? [];
     return {
-      client_id: c.client_id, full_name: c.full_name, client_code: c.client_code, risk_profile: c.risk_profile, advisor_name: c.advisor_name,
+      client_id: c.client_id, full_name: c.full_name, is_active: c.is_active, first_advised_at: c.first_advised_at, client_code: c.client_code, risk_profile: c.risk_profile, advisor_name: c.advisor_name,
       // In funds now: moved by trades approved since the last CAS, like in_bank (v_client_bank).
       value: Math.max(0, Number(c.live_portfolio_value ?? 0) + Number(c.funds_adjust ?? 0)), in_bank: Number(c.in_bank ?? 0),
       sell_left: Number(c.yet_to_advise_sell ?? 0), buy_left: Number(c.yet_to_advise_buy ?? 0),
@@ -113,6 +118,7 @@ export function filterDeskRows(rows: DeskRow[], f: DeskFilter): DeskRow[] {
   if (f.last === "never") out = out.filter((r) => !r.last_tranche_at);
   if (f.last === "7" || f.last === "30") out = out.filter((r) => r.last_tranche_days == null || r.last_tranche_days > Number(f.last));
   if (f.hideWaiting) out = out.filter((r) => r.pending_total < 0.5);
+  if (f.act) out = out.filter((r) => r.is_active === (f.act === "active"));
   const by: Record<ReadyList, (a: DeskRow, b: DeskRow) => number> = {
     cash: (a, b) => b.in_bank - a.in_bank,
     buys: (a, b) => b.buy_left - a.buy_left,
