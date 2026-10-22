@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { advisoryReportResultSchema } from "@/lib/integrations/contracts";
-import { answerReportQuestion, approvePlan, ingestAdvisoryReport, listReportQuestions, updatePlanItem } from "@/services/plans";
+import { answerReportQuestion, approvePlan, ingestAdvisoryReport, listReportQuestions, reopenReportQuestion, updatePlanItem } from "@/services/plans";
 import { issueAdvice } from "@/services/advice";
 import { clientWithActivePlan, scenario, sql, TEST_DB } from "./harness";
 
@@ -38,6 +38,13 @@ describeDb("Questions from the report", () => {
       expect(await ctx.expectError("ops", (t) => answerReportQuestion(t, ctx.users.ops, x.id, { action: "RETAIN", explanation: "keep" }))).toMatch(/advisor or admin/);
       expect(await ctx.expectError("advisor", (t) => answerReportQuestion(t, ctx.users.advisor, x.id, { action: "SELL", percent: 33, explanation: " " }))).toMatch(/Explain/);
       await ctx.as("advisor", (t) => answerReportQuestion(t, ctx.users.advisor, x.id, { action: "SELL", percent: 33, explanation: "Advisor confirmed: sell a third" }));
+      // Undo on the draft: the line is a question again, as the report gave it; then it can be answered anew.
+      const before = (await ctx.tx<{ reason: string }[]>`select reason from public.advisory_plan_items where id = ${y.id}`)[0].reason;
+      await ctx.as("advisor", (t) => answerReportQuestion(t, ctx.users.advisor, y.id, { action: "SELL", amount: 50000, explanation: "first try" }));
+      await ctx.as("advisor", (t) => reopenReportQuestion(t, ctx.users.advisor, y.id));
+      const back = (await ctx.tx<{ action: string; target_amount: number; report_answer: string | null; reason: string; needs_review: boolean }[]>`
+        select action, target_amount::float8, report_answer, reason, needs_review from public.advisory_plan_items where id = ${y.id}`)[0];
+      expect(back).toEqual({ action: "RETAIN", target_amount: 0, report_answer: null, reason: before, needs_review: true });
       await ctx.as("advisor", (t) => answerReportQuestion(t, ctx.users.advisor, y.id, { action: "RETAIN", explanation: "Trim deferred to next tranche" }));
 
       // Answered once: a second answer is refused (the first already rewrote the line).

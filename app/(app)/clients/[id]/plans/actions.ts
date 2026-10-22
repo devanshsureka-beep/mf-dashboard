@@ -7,7 +7,7 @@ import { AppError } from "@/lib/errors";
 import { actionTx, ADVISORY_ROLES } from "@/lib/server";
 import {
   addPlanItem, addSipItem, approvePlan, cancelPlanItem, closePlan, createDraftPlan, deleteDraftPlanItem,
-  deleteDraftSipItem, updatePlanItem, answerReportQuestion, type PlanItemInput,
+  deleteDraftSipItem, updatePlanItem, answerReportQuestion, reopenReportQuestion, type PlanItemInput,
 } from "@/services/plans";
 import type { Tx } from "@/lib/db/tx";
 import { convertMigrateNotes } from "@/services/migrations";
@@ -202,24 +202,48 @@ export async function updateSipAmountsAction(clientId: string, planId: string, s
 }
 
 /** The desk explains a recommendation the reader could not place: Buy, Sell (₹ or %) or Keep. */
-export async function answerReportQuestionAction(clientId: string, planId: string, itemId: string, _p: ActionResult | null, fd: FormData): Promise<ActionResult> {
-  return runAction("answerReportQuestion", async () => {
-    const action = str(fd, "action");
-    if (!["SELL", "BUY", "RETAIN"].includes(action)) throw new AppError("Choose Buy, Sell or Keep.");
-    const raw = str(fd, "size").replace(/[₹,\s]/g, "");
-    const percent = /%$/.test(raw) ? Number(raw.slice(0, -1)) : null;
-    const amount = percent === null && raw ? Number(raw) : null;
-    if ((percent !== null && !Number.isFinite(percent)) || (amount !== null && !Number.isFinite(amount))) throw new AppError("Enter the amount as ₹ (e.g. 150000) or a percentage (e.g. 33%).");
-    // The part already done before onboarding (a CAS newer than the report shows it).
-    const doneRaw = str(fd, "done_amount").replace(/[₹,\s]/g, "");
-    const doneAmount = doneRaw ? Number(doneRaw) : 0;
-    if (!Number.isFinite(doneAmount) || doneAmount < 0) throw new AppError("Enter the amount already done in rupees.");
-    const done = doneAmount > 0 ? { amount: doneAmount, date: str(fd, "done_date") } : null;
-    await actionTx((tx, actor) => answerReportQuestion(tx, actor, itemId, {
-      action: action as "SELL" | "BUY" | "RETAIN", amount, percent, explanation: reqStr(fd, "explanation", "Explanation"), done,
-    }), opts);
+export interface CheckAnswer {
+  itemId: string;
+  action: "SELL" | "BUY" | "RETAIN";
+  /** Rupees, or "33%" of the holding for a Sell. */
+  size: string;
+  note: string;
+  done: { amount: number; date: string } | null;
+}
+
+/** The report check: approve many lines at once, each with the choice shown on it. */
+export async function approveReportLinesAction(clientId: string, planId: string, answers: CheckAnswer[]): Promise<ActionResult & { failed?: { itemId: string; error: string }[] }> {
+  if (!Array.isArray(answers) || !answers.length) return { ok: false, error: "Tick the lines to approve." };
+  if (answers.length > 300) return { ok: false, error: "Too many lines at once." };
+  const failed: { itemId: string; error: string }[] = [];
+  let ok = 0;
+  for (const a of answers) {
+    // One transaction per line: a line that cannot be saved does not hold up the others.
+    const r = await runAction("approveReportLine", async () => {
+      if (typeof a?.itemId !== "string" || !/^[0-9a-f-]{36}$/i.test(a.itemId)) throw new AppError("Unknown line.");
+      if (!["SELL", "BUY", "RETAIN"].includes(a.action)) throw new AppError("Choose Sell, Buy or Keep.");
+      const raw = String(a.size ?? "").replace(/[₹,\s]/g, "");
+      const percent = /%$/.test(raw) ? Number(raw.slice(0, -1)) : null;
+      const amount = percent === null && raw ? Number(raw) : null;
+      if ((percent !== null && !Number.isFinite(percent)) || (amount !== null && !Number.isFinite(amount))) throw new AppError("Enter the amount as ₹ or a percentage.");
+      const done = a.done && Number(a.done.amount) > 0 && typeof a.done.date === "string" ? { amount: Number(a.done.amount), date: a.done.date } : null;
+      await actionTx((tx, actor) => answerReportQuestion(tx, actor, a.itemId, {
+        action: a.action, amount, percent, explanation: String(a.note ?? "").slice(0, 1000) || "Approved in the report check.", done,
+      }), opts);
+    });
+    if (r.ok) ok++;
+    else failed.push({ itemId: a.itemId, error: r.error });
+  }
+  refresh(clientId, planId);
+  if (!failed.length) return { ok: true, message: `${ok} ${ok === 1 ? "line" : "lines"} approved.` };
+  return { ok: false, error: `${ok} approved; ${failed.length} not: see the lines marked in red.`, failed };
+}
+
+/** Undo an approved line on a draft plan. */
+export async function reopenReportLineAction(clientId: string, planId: string, itemId: string): Promise<ActionResult> {
+  return runAction("reopenReportLine", async () => {
+    await actionTx((tx, actor) => reopenReportQuestion(tx, actor, itemId), opts);
     refresh(clientId, planId);
-    return action === "RETAIN" ? "Answered: kept."
-      : `Answered: ${action === "SELL" ? "sell" : "buy"} line set${done ? "; the part already done is recorded (now, or when the plan is approved)" : ""}.`;
+    return "Answer undone.";
   });
 }

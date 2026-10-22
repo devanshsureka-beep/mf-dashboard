@@ -715,6 +715,30 @@ export async function answerReportQuestion(tx: Tx, actor: Actor, itemId: string,
 }
 
 /**
+ * Undo an answer on a DRAFT plan (the report check's "Undo"): the line is a question again, as it
+ * came from the report. Not once a part done was recorded as a call (that happens on approval).
+ */
+export async function reopenReportQuestion(tx: Tx, actor: Actor, itemId: string): Promise<void> {
+  if (actor.role === "OPERATIONS") throw new AppError("Only an advisor or admin can change an answer.", "FORBIDDEN");
+  const it = (await tx<{ plan_id: string; report_question: string | null; report_answer: string | null; reason: string | null; status: string; report_diff: { done_call_id?: string } | null }[]>`
+    select plan_id, report_question, report_answer, reason, status, report_diff
+    from public.advisory_plan_items where id = ${itemId} for update`)[0];
+  if (!it || !it.report_question) throw new AppError("Question not found.", "NOT_FOUND");
+  if (!it.report_answer) return;
+  await assertPlanStatus(tx, it.plan_id, ["DRAFT"]);
+  if (it.status !== "OPEN" || it.report_diff?.done_call_id) throw new AppError("This answer is already recorded: it cannot be undone.");
+  // The answer was appended to the reason as " → Sell ₹… / Buy ₹… / Keep: <note>": take it off again.
+  const cut = Math.max(...[" → Keep", " → Sell ₹", " → Buy ₹"].map((m) => it.reason?.lastIndexOf(m) ?? -1));
+  const reason = it.reason && cut >= 0 ? it.reason.slice(0, cut) : it.reason;
+  await setAuditReason(tx, "Report question reopened (answer undone on the draft)");
+  await tx`
+    update public.advisory_plan_items set
+      action = 'RETAIN', target_amount = 0, report_answer = null, reason = ${reason}, needs_review = true,
+      report_diff = case when report_diff is null then null else report_diff - 'done_answer' end
+    where id = ${itemId}`;
+}
+
+/**
  * A part already done before onboarding (answered on a report question): one
  * call and its execution on the line, dated when it was done, proved by the
  * client's onboarding CAS. Runs once per line (the call id is kept in report_diff).

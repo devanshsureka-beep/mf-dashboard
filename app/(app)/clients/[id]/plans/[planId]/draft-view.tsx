@@ -147,6 +147,13 @@ export function DraftView({ c, plan, items, sips, questions, securities, heldIds
         </p>
       ) : null}
 
+      {/* Full width: one line per difference reads without cutting (the side panel sits below). */}
+      {questions.length ? (
+        <div className="mb-4">
+          <ReportQuestions rows={questions} clientId={clientId} planId={planId} canAnswer={canAdvise} draft
+            title="Before you approve · check the report against the CAS" />
+        </div>
+      ) : null}
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
         <div className="min-w-0 space-y-3">
           {plan.as_reported ? <AsReportedNote a={plan.as_reported} /> : null}
@@ -154,11 +161,6 @@ export function DraftView({ c, plan, items, sips, questions, securities, heldIds
             <div className="rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
               Approving adds these lines to the <Link className="underline" href={`/clients/${clientId}/plans/${c.active_plan_id}`}>active plan</Link> as a new tranche{plan.fresh_money ? <> with <Money value={plan.fresh_money} /> of fresh money</> : null}. The current plan, its calls and its numbers stay.
             </div>
-          ) : null}
-
-          {questions.length ? (
-            <ReportQuestions rows={questions} clientId={clientId} planId={planId} canAnswer={canAdvise} foldAnswered
-              title={openQ ? `Before you approve · ${openQ} of ${questions.length} left` : `Before you approve · all ${questions.length} answered`} />
           ) : null}
 
           {migrateNotes > 0 && canAdvise ? (
@@ -268,7 +270,7 @@ export function DraftView({ c, plan, items, sips, questions, securities, heldIds
           <section className="rounded-xl border border-brand/30 bg-surface p-4">
             <h2 className="font-semibold">Ready to approve?</h2>
             <ul className="mt-2 space-y-1.5 text-sm">
-              <Check ok={openQ === 0}>{openQ ? <a className="underline" href="#questions">{openQ} question{openQ === 1 ? "" : "s"} to answer</a> : "Report questions answered"}</Check>
+              <Check ok={openQ === 0}>{openQ ? <a className="underline" href="#questions">{openQ} line{openQ === 1 ? "" : "s"} to check against the CAS</a> : "Report checked against the CAS"}</Check>
               <Check ok={missingSecurity === 0}>{missingSecurity ? `${missingSecurity} line(s) without a fund picked` : "Funds picked for every buy and sell"}</Check>
               <Check ok={reviewLines === 0}>{reviewLines ? `${reviewLines} line(s) flagged to check` : "No line flagged to check"}</Check>
             </ul>
