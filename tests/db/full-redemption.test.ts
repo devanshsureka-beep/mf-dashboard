@@ -33,7 +33,8 @@ describeDb("Full redemption from the Issue call page", () => {
         select id, security_id, status from public.sip_plan_items where plan_id = ${p.planId} and action = 'STOP' order by created_at`;
       expect(lines).toHaveLength(2);
       expect(lines.every((l) => l.status === "ADVISED")).toBe(true);
-      expect(lines[0].id).toBe(planned);
+      // Same transaction, same created_at: the order is not fixed, so look for the reused line.
+      expect(lines.map((l) => l.id)).toContain(planned);
     });
   });
 

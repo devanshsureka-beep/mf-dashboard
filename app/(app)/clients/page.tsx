@@ -84,18 +84,17 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
   const draftView = f.plan === "draft";
   // The tiles count within the search, advisor, risk and month picked; only the view itself is left out.
   const base: DeskFilters = { ...f, attention: undefined, plan: undefined, premium: undefined, agreement: undefined };
-  const { clients, all, allActs, everyone, advisors, deleted, drafts, actor } = await pageData(async (tx, a) => {
+  const { clients, listed, all, everyone, advisors, deleted, drafts, actor } = await pageData(async (tx, a) => {
     const canAdvise = a.role !== "OPERATIONS";
-    const clients = byAct(await listDeskClients(tx, { ...f, canAdvise }));
+    // The chips count the list as filtered, active / inactive left out.
+    const listed = await listDeskClients(tx, { ...f, canAdvise });
+    const clients = byAct(listed);
     // The Drafts view lists the drafts of exactly the clients its tile counts (same search and filters).
     const ids = new Set(clients.map((c) => c.client_id));
     return {
-      clients,
+      clients, listed,
       drafts: draftView ? (await listDraftPlans(tx, { advisorId: f.advisorId })).filter((d) => ids.has(d.client_id)) : [],
-      ...(await (async () => {
-        const allActs = await listDeskClients(tx, { ...base, canAdvise });
-        return { allActs, all: byAct(allActs) };
-      })()),
+      all: byAct(await listDeskClients(tx, { ...base, canAdvise })),
       everyone: f.month ? byAct(await listDeskClients(tx, { ...base, month: null, canAdvise })) : null,
       advisors: await listAdvisors(tx),
       deleted: a.role === "ADMIN" ? await listDeletedClients(tx) : [],
@@ -186,7 +185,7 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
         </AutoSelect>
         {(["status", "plan", "premium", "attention", "agreement", "min", "max", "act"] as const).map((k) => one(k) ? <input key={k} type="hidden" name={k} value={one(k)} /> : null)}
         <span className="flex items-center gap-1 text-xs" aria-label="Active or inactive">
-          {([[undefined, "All", allActs.length], ["active", "Active", allActs.filter((c) => c.is_active).length], ["inactive", "Inactive", allActs.filter((c) => !c.is_active).length]] as const).map(([k, label, n]) => (
+          {([[undefined, "All", listed.length], ["active", "Active", listed.filter((c) => c.is_active).length], ["inactive", "Inactive", listed.filter((c) => !c.is_active).length]] as const).map(([k, label, n]) => (
             <Link key={label} href={qs({ act: k })} aria-current={act === k ? "page" : undefined}
               title={k === "active" ? "Advised at least once" : k === "inactive" ? "Not advised yet" : undefined}
               className={cn("inline-flex items-center rounded-full px-2.5 py-1 ring-1", act === k ? "bg-brand-50 font-semibold text-brand-700 ring-brand" : "bg-white text-slate-700 ring-border hover:ring-brand-200")}>
@@ -202,7 +201,7 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
       {draftView ? (
         <>
           <p className="mb-2 text-xs text-muted">Each draft opens its plan: answer its questions, check the lines, approve. Nothing counts until it is approved.</p>
-          <DraftList rows={drafts} />
+          <DraftList rows={drafts} act={new Map(clients.map((c) => [c.client_id, c]))} />
         </>
       ) : <ClientList
         rows={clients.map((c) => toRow(c, actor.role !== "OPERATIONS"))}

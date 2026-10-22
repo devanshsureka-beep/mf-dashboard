@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { formatDate, formatINRCompact } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { ActiveDot } from "@/components/app/active-dot";
 import type { DraftPlanRow } from "@/services/plans";
 
 /** What kind of draft this is, in the desk's words. */
@@ -32,7 +33,11 @@ const daysSince = (d: Date) => Math.max(0, Math.floor((Date.now() - new Date(d).
 export const draftHref = (d: DraftPlanRow) => `/clients/${d.client_id}/plans/${d.plan_id}${d.open_questions ? "#questions" : ""}`;
 
 /** Drafts waiting for approval: each row opens its draft plan. */
-export function DraftList({ rows, compact = false }: { rows: DraftPlanRow[]; compact?: boolean }) {
+export function DraftList({ rows, compact = false, act }: {
+  rows: DraftPlanRow[]; compact?: boolean;
+  /** Active / inactive by client (the dot before the name). */
+  act?: Map<string, { is_active: boolean; first_advised_at: string | null }>;
+}) {
   if (!rows.length) {
     return <p className="rounded-xl border border-dashed border-border bg-white p-6 text-center text-sm text-muted">No drafts waiting. A client onboarded from a CAS and a report opens here as a draft.</p>;
   }
@@ -45,7 +50,7 @@ export function DraftList({ rows, compact = false }: { rows: DraftPlanRow[]; com
           <li key={d.plan_id}>
             <Link href={draftHref(d)} className={cn("grid items-center gap-x-4 gap-y-1 px-4 py-3 text-[13px] hover:bg-slate-50", compact ? "sm:grid-cols-[minmax(0,1.3fr)_minmax(0,1.6fr)_auto]" : "sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1.7fr)_minmax(0,0.9fr)_auto]")}>
               <div className="min-w-0">
-                <div className="truncate font-semibold text-ink">{d.client_name} <span className="text-xs font-normal text-muted">{d.client_code}</span></div>
+                <div className="truncate font-semibold text-ink"><ActiveDot active={act?.get(d.client_id)?.is_active} since={act?.get(d.client_id)?.first_advised_at} />{d.client_name} <span className="text-xs font-normal text-muted">{d.client_code}</span></div>
                 <div className="truncate text-xs text-muted">{draftKind(d)} · report {formatDate(d.plan_date)}</div>
               </div>
               <div className="min-w-0 truncate text-xs text-slate-700">{draftMoves(d)}</div>
