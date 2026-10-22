@@ -52,20 +52,23 @@ export function ApproveWaiting({ clientId, calls, sips, approved, canApprove, to
   const router = useRouter();
   const [pending, start] = useTransition();
   const rows: Row[] = [...calls.map((c) => ({ kind: "CALL" as const, id: c.advice_item_id, call: c })), ...sips.map((s) => ({ kind: "SIP" as const, id: s.id, sip: s }))];
-  const [choice, setChoice] = useState<Record<string, Choice>>(() =>
-    Object.fromEntries(rows.map((r) => [r.id, { choice: r.kind === "SIP" ? "STARTED" : "DONE", amount: "", units: "", date: today, reason: "" }])));
+  const fresh = (r: Row): Choice => ({ choice: r.kind === "SIP" ? "STARTED" : "DONE", amount: "", units: "", date: today, reason: "" });
+  // Rows can change after a refresh (a revised call comes back as a new call): each starts fresh.
+  const [saved, setChoice] = useState<Record<string, Choice>>(() => Object.fromEntries(rows.map((r) => [r.id, fresh(r)])));
+  const choice: Record<string, Choice> = Object.fromEntries(rows.map((r) => [r.id, saved[r.id] ?? fresh(r)]));
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [bulkDate, setBulkDate] = useState(today);
 
-  const set = (id: string, patch: Partial<Choice>) => setChoice((s) => ({ ...s, [id]: { ...s[id], ...patch } }));
+  const set = (id: string, patch: Partial<Choice>) => setChoice((s) => ({ ...s, [id]: { ...choice[id], ...s[id], ...patch } }));
   const toggle = (id: string) => setPicked((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const allPicked = rows.length > 0 && rows.every((r) => picked.has(r.id));
 
   function approveSelected() {
     setMsg(null);
     const lines: ApproveLine[] = rows.filter((r) => picked.has(r.id)).map((r) => ({ kind: r.kind, id: r.id, ...choice[r.id] }));
+    setErrors({});
     if (!lines.length) { setMsg({ ok: false, text: "Tick the lines to approve." }); return; }
     start(async () => {
       const res = await approve(lines);
@@ -108,7 +111,7 @@ export function ApproveWaiting({ clientId, calls, sips, approved, canApprove, to
             <span className="flex items-center gap-1.5">
               <input type="date" value={bulkDate} max={today} onChange={(e) => setBulkDate(e.target.value)} aria-label="Date for the selected lines"
                 className="h-8 rounded-md border border-border bg-white px-2 text-[12.5px]" />
-              <button type="button" disabled={!picked.size} onClick={() => setChoice((s) => Object.fromEntries(Object.entries(s).map(([k, v]) => [k, picked.has(k) ? { ...v, date: bulkDate } : v])))}
+              <button type="button" disabled={!picked.size} onClick={() => setChoice(() => Object.fromEntries(Object.entries(choice).map(([k, v]) => [k, picked.has(k) ? { ...v, date: bulkDate } : v])))}
                 className="rounded-md bg-white px-3 py-1.5 font-semibold ring-1 ring-border hover:bg-slate-50 disabled:opacity-50">Set date for selected</button>
             </span>
             <span className="text-muted">Each line: Done · Part done · Revise · Cancel. Lines you don&apos;t tick stay waiting.</span>

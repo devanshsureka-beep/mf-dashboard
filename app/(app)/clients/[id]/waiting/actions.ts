@@ -31,7 +31,7 @@ export async function approveWaitingAction(clientId: string, lines: ApproveLine[
   for (const raw of lines) {
     const id = typeof raw?.id === "string" ? raw.id : "";
     const r = await runAction("approveWaitingLine", async () => {
-      if (!UUID.test(id) || (raw.kind !== "CALL" && raw.kind !== "SIP")) throw new AppError("Unknown line.");
+      if (!raw || typeof raw !== "object" || !UUID.test(id) || (raw.kind !== "CALL" && raw.kind !== "SIP")) throw new AppError("Unknown line.");
       const line: ApproveLine = {
         kind: raw.kind, id, choice: text(raw.choice, 20) ?? "",
         amount: text(raw.amount), units: text(raw.units), date: text(raw.date, 10), reason: text(raw.reason, 500),

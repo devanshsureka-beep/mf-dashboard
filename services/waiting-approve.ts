@@ -53,9 +53,14 @@ export async function getApprovable(tx: Tx, clientId: string): Promise<Approvabl
     select 'CALL' as kind, e.id, e.advice_item_id, ai.scheme_name, ai.action, e.executed_amount::float8 as amount,
            e.executed_units::float8 as units, e.execution_date::text as date, true as undoable
     from public.executions e join public.advice_items ai on ai.id = e.advice_item_id
+    left join lateral (
+      select l.snapshot_date, coalesce(ps.reviewed_at, ps.created_at) as current_from
+      from public.v_latest_snapshot l join public.portfolio_snapshots ps on ps.id = l.snapshot_id
+      where l.client_id = e.client_id) ls on true
     where e.client_id = ${clientId} and e.status in ('EXECUTED', 'PARTIAL')
       and e.verification_type in ('CLIENT_CONFIRMED', 'ADVISOR_CONFIRMED') and e.cas_verified_at is null
-      and e.execution_date >= coalesce((select l.snapshot_date from public.v_latest_snapshot l where l.client_id = ${clientId}), '-infinity'::date)
+      -- Same rule as v_client_bank (0048): not yet in the CAS figures.
+      and (ls.snapshot_date is null or e.execution_date >= ls.snapshot_date or e.created_at < ls.current_from)
     order by e.execution_date desc, e.created_at desc`;
   const sipDone = await tx<ApprovedRow[]>`
     select 'SIP' as kind, s.id, null as advice_item_id, s.scheme_name, s.action, s.new_amount::float8 as amount, null::float8 as units,
@@ -103,11 +108,19 @@ export async function approveLine(tx: Tx, actor: Actor, clientId: string, line: 
         select (b.communicated_at at time zone 'Asia/Kolkata')::date::text as d from public.advice_batches b where b.id = ${a.advice_batch_id}`;
       if (given && op.date < given.d) throw new AppError("The date is before the call was given.");
       await setAuditReason(tx, APPROVED_NOTE);
-      await recordExecution(tx, actor, {
-        adviceItemId: a.id, executionDate: op.date, executedAmount: op.amount, executedUnits: op.units,
-        verificationType: "ADVISOR_CONFIRMED", status: "EXECUTED",
-        notes: `${APPROVED_NOTE}${op.partial ? " (part done)" : ""}`,
-      });
+      try {
+        await recordExecution(tx, actor, {
+          adviceItemId: a.id, executionDate: op.date, executedAmount: op.amount, executedUnits: op.units,
+          verificationType: "ADVISOR_CONFIRMED", status: "EXECUTED",
+          notes: `${APPROVED_NOTE}${op.partial ? " (part done)" : ""}`,
+        });
+      } catch (e) {
+        // The call page has the "allow over-execution" tick; this page does not.
+        if (e instanceof AppError && /over-execution/.test(e.message)) {
+          throw new AppError("That is more than 10% above the call. Check the amount, or record it on the call page.");
+        }
+        throw e;
+      }
       return op.partial ? "Part done" : "Done";
     }
     if (op.op === "REVISE") {

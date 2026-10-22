@@ -34,7 +34,7 @@ describeDb("Approve waiting", () => {
       await ctx.tx`select set_config('app.audit_reason', 'test SIP line', true)`;
       const sip = (await ctx.tx<{ id: string }[]>`
         insert into public.sip_plan_items (client_id, plan_id, security_id, scheme_name, action, new_amount, status, advised_at)
-        values (${p.clientId}, ${p.planId}, ${ctx.sec.Y}, 'Y SIP', 'START', 10000, 'ADVISED', now()) returning id`)[0].id;
+        values (${p.clientId}, ${p.planId}, ${ctx.sec.Y}, 'Y SIP', 'START', 10000, 'ADVISED', '2026-09-10T10:00:00+05:30') returning id`)[0].id;
 
       const list = await ctx.as("advisor", (t) => getApprovable(t, p.clientId));
       expect(list.calls.map((c) => c.advice_item_id).sort()).toEqual([sell, buy].sort());
@@ -75,16 +75,22 @@ describeDb("Approve waiting", () => {
       expect(await approve({ kind: "CALL", id: revised.id, choice: "CANCEL", reason: "Client declined" })).toBe("Cancelled");
       expect((await ctx.tx<{ status: string }[]>`select status from public.advice_items where id = ${revised.id}`)[0].status).toBe("CANCELLED");
 
+      // The SIP, started again (the next CAS shows its first instalment).
+      expect(await approve({ kind: "SIP", id: sip, choice: "STARTED", date: "2026-09-15" })).toBe("SIP started");
+
       // The buy, done in full this time.
       expect(await approve({ kind: "CALL", id: buy, choice: "DONE", date: "2026-09-12" })).toBe("Done");
       expect(await bank(ctx, p.clientId)).toMatchObject({ in_bank: 100000, approved_sold: 200000, approved_bought: 100000 });
 
       // The next CAS shows the sell (not the buy): the same execution is verified, never counted twice.
       const x = (await ctx.tx<{ scheme_name: string; isin: string }[]>`select scheme_name, isin from public.security_master where id = ${ctx.sec.X}`)[0];
+      const y = (await ctx.tx<{ scheme_name: string; isin: string }[]>`select scheme_name, isin from public.security_master where id = ${ctx.sec.Y}`)[0];
       const snap = await ctx.as("ops", async (t) => {
-        const pr = parsed("2026-09-25", [{ security: ctx.sec.X, name: x.scheme_name, units: 8666.667, nav: 150 }],
-          [{ date: "2026-09-11", type: "REDEMPTION", scheme_name: x.scheme_name, isin: x.isin, folio_number: "T1", amount: -200000, units: -1333.333, nav: 150, balance_units: 8666.667 }]);
+        const pr = parsed("2026-09-25", [{ security: ctx.sec.X, name: x.scheme_name, units: 8666.667, nav: 150 }, { security: ctx.sec.Y, name: y.scheme_name, units: 100, nav: 100 }],
+          [{ date: "2026-09-11", type: "REDEMPTION", scheme_name: x.scheme_name, isin: x.isin, folio_number: "T1", amount: -200000, units: -1333.333, nav: 150, balance_units: 8666.667 },
+           { date: "2026-09-20", type: "SIP", description: "SIP Purchase", scheme_name: y.scheme_name, isin: y.isin, folio_number: "T1", amount: 10000, units: 100, nav: 100, balance_units: 100 }]);
         pr.holdings[0].isin = x.isin;
+        pr.holdings[1].isin = y.isin;
         const id = await createSnapshotFromParsed(t, { clientId: p.clientId, casDocumentId: null, parsed: pr, source: "CAS", createdBy: ctx.users.ops.id });
         await confirmSnapshot(t, id, "checked");
         return id;
@@ -93,6 +99,10 @@ describeDb("Approve waiting", () => {
       const ex = (await ctx.tx<{ n: number; verified: number }[]>`
         select count(*)::int as n, count(cas_verified_at)::int as verified from public.executions where advice_item_id = ${sell} and status in ('EXECUTED', 'PARTIAL')`)[0];
       expect(ex).toEqual({ n: 1, verified: 1 });
+      // The SIP approved by hand is now confirmed by the CAS (no longer undoable, no longer "waiting for CAS").
+      expect((await ctx.tx<{ status: string; notes: string }[]>`select status, notes from public.sip_plan_items where id = ${sip}`)[0])
+        .toMatchObject({ status: "COMPLETED", notes: expect.stringMatching(/Verified from CAS/) });
+      expect((await ctx.as("advisor", (t) => getApprovable(t, p.clientId))).approved.filter((a) => a.kind === "SIP")).toEqual([]);
 
       // The approved buy is not in this CAS: asked once in the inbox; "keep waiting" stops the question for this CAS.
       const inbox = await ctx.as("ops", (t) => getCasInbox(t));
@@ -101,6 +111,9 @@ describeDb("Approve waiting", () => {
       expect(vs.map((v) => [v.action, v.result])).toEqual([["SELL", "VERIFIED"], ["BUY", "NOT_IN_CAS"]]);
       const missing = vs.find((v) => v.result === "NOT_IN_CAS")!;
       await ctx.as("advisor", (t) => keepWaiting(t, p.clientId, missing.execution_id, "2026-09-25"));
+      // Kept waiting, the buy stays an approval (this CAS does not have it): the sale is CAS-confirmed now.
+      expect(await bank(ctx, p.clientId)).toMatchObject({ in_bank_cas: 200000, approved_sold: 0, approved_bought: 100000, in_bank: 100000 });
+      expect((await ctx.as("advisor", (t) => getApprovable(t, p.clientId))).approved.map((a) => a.advice_item_id)).toEqual([buy]);
       expect((await ctx.as("ops", (t) => getCasInbox(t))).approvedMissing.find((m) => m.client_id === p.clientId)).toBeUndefined();
       expect((await ctx.as("ops", (t) => getApprovedVsCas(t, p.clientId, "2026-09-25", [run.runId]))).map((v) => v.result)).toEqual(["VERIFIED"]);
     });

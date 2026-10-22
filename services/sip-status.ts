@@ -4,6 +4,7 @@
  */
 import { setAuditReason, type Tx } from "@/lib/db/tx";
 import { logServerError } from "@/lib/errors";
+import { APPROVED_NOTE } from "@/lib/domain/waiting-approve";
 import { planSipMet, sipStatus, type SipFundStatus, type SipPoint, type SipTxn } from "@/lib/domain/sip-status";
 
 export interface PlanSipCheck {
@@ -111,7 +112,9 @@ export async function syncSipLinesFromCas(tx: Tx, clientId: string): Promise<num
   const open = await tx<{ id: string; action: string; status: string; frequency: string | null; old_amount: number | null; report_date: string | null }[]>`
     select s.id, s.action, s.status, s.frequency, s.old_amount::float8 as old_amount, p.plan_date::text as report_date
     from public.sip_plan_items s join public.advisory_plans p on p.id = s.plan_id and p.status = 'ACTIVE'
-    where s.client_id = ${clientId} and s.status in ('PLANNED', 'ADVISED') and s.security_id is not null`;
+    where s.client_id = ${clientId} and (s.status in ('PLANNED', 'ADVISED')
+           -- or approved by hand on the waiting page and not yet seen in a CAS: the CAS confirms it now
+           or (s.status = 'COMPLETED' and coalesce(s.notes, '') like ${`%${APPROVED_NOTE}%`} and coalesce(s.notes, '') not like '%Verified from CAS%')) and s.security_id is not null`;
   if (!open.length) return 0;
   const view = await getSipStatus(tx, clientId);
   const latest = view.latestCasDate;
@@ -148,7 +151,7 @@ export async function syncSipLinesFromCas(tx: Tx, clientId: string): Promise<num
     const rows = await tx`
       update public.sip_plan_items set status = 'COMPLETED', completed_at = coalesce(completed_at, now()),
         notes = coalesce(notes || E'\n', '') || ${note}
-      where id = ${line.id} and status in ('PLANNED', 'ADVISED') returning id`;
+      where id = ${line.id} and (status in ('PLANNED', 'ADVISED') or (status = 'COMPLETED' and coalesce(notes, '') not like '%Verified from CAS%')) returning id`;
     done += rows.length;
   }
   return done;

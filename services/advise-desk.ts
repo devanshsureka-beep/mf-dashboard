@@ -78,7 +78,8 @@ export async function listDeskRows(tx: Tx, f: Pick<DeskFilter, "advisorId" | "ri
     const n = next.get(c.client_id) ?? [];
     return {
       client_id: c.client_id, full_name: c.full_name, client_code: c.client_code, risk_profile: c.risk_profile, advisor_name: c.advisor_name,
-      value: Number(c.live_portfolio_value ?? 0), in_bank: Number(c.in_bank ?? 0),
+      // In funds now: moved by trades approved since the last CAS, like in_bank (v_client_bank).
+      value: Math.max(0, Number(c.live_portfolio_value ?? 0) + Number(c.funds_adjust ?? 0)), in_bank: Number(c.in_bank ?? 0),
       sell_left: Number(c.yet_to_advise_sell ?? 0), buy_left: Number(c.yet_to_advise_buy ?? 0),
       has_plan: Boolean(c.active_plan_id), pending_total: Number(c.pending_total ?? 0), open_calls: Number(c.open_calls ?? 0),
       last_tranche_at: t?.at ?? null, last_tranche_days: t?.days ?? null, last_tranche_code: t?.code ?? null, last_tranche_calls: t?.calls ?? 0,

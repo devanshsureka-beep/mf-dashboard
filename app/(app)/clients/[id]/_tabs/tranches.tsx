@@ -19,6 +19,9 @@ function TrancheStrip({ tranches, c, baseline, canAdvise, waitingCount }: { tran
   const ordered = [...tranches].sort((a, b) => a.number - b.number);
   const last = ordered.at(-1);
   const nextNumber = (last?.number ?? 0) + 1;
+  // "Approve waiting" sits on the open tranche, or on the last one when every tranche is closed
+  // (a call from a closed tranche can still be waiting).
+  const host = ordered.find((t) => t.open) ?? last;
   const cell = "flex min-w-0 flex-col gap-1 rounded-lg px-3.5 py-3";
   return (
     <section className="grid gap-3 rounded-xl border border-border bg-surface p-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
@@ -27,7 +30,7 @@ function TrancheStrip({ tranches, c, baseline, canAdvise, waitingCount }: { tran
         <div className="text-[13px] text-slate-600">{baseline ? `Plan from the report · CAS of ${formatDate(baseline.date)} · ${L(baseline.value)}` : "No onboarding CAS"}</div>
       </div>
       {ordered.map((t) => (
-        <div key={t.number} className={cn(cell, t.open ? "flex-row items-center justify-between gap-2 bg-orange-50 ring-1 ring-orange-200" : "bg-slate-50")}>
+        <div key={t.number} className={cn(cell, (t.open || (t === host && waitingCount > 0)) && "flex-row items-center justify-between gap-2", t.open ? "bg-orange-50 ring-1 ring-orange-200" : "bg-slate-50")}>
           <div className="flex min-w-0 flex-col gap-1">
             <div className="flex items-center gap-2">
               <span className={cn("h-2.5 w-2.5 rounded-full", t.open ? "bg-amber-500" : "bg-emerald-600")} aria-hidden />
@@ -41,11 +44,11 @@ function TrancheStrip({ tranches, c, baseline, canAdvise, waitingCount }: { tran
               {t.runId ? <> · <Link href={`/reconciliation/${t.runId}`} className="text-brand hover:underline">CAS match</Link></> : null}
             </div>
           </div>
-          {t.open && canAdvise && (waitingCount > 0 || remaining > 0.5) ? (
+          {canAdvise && ((t === host && waitingCount > 0) || (t.open && remaining > 0.5)) ? (
             <span className="flex shrink-0 flex-wrap items-center gap-2">
               {/* Opens its own page: approve many waiting calls and SIPs at once. */}
-              {waitingCount > 0 ? <Link href={`/clients/${c.client_id}/waiting`} className="rounded-md bg-emerald-700 px-3 py-1.5 text-[13px] font-semibold text-white hover:bg-emerald-800">Approve waiting · {waitingCount}</Link> : null}
-              {remaining > 0.5 ? <Link href={`/advice/new?client=${c.client_id}`} className="rounded-md bg-brand px-3 py-1.5 text-[13px] font-semibold text-white hover:bg-brand-700">Advise</Link> : null}
+              {t === host && waitingCount > 0 ? <Link href={`/clients/${c.client_id}/waiting`} className="rounded-md bg-emerald-700 px-3 py-1.5 text-[13px] font-semibold text-white hover:bg-emerald-800">Approve waiting · {waitingCount}</Link> : null}
+              {t.open && remaining > 0.5 ? <Link href={`/advice/new?client=${c.client_id}`} className="rounded-md bg-brand px-3 py-1.5 text-[13px] font-semibold text-white hover:bg-brand-700">Advise</Link> : null}
             </span>
           ) : null}
         </div>

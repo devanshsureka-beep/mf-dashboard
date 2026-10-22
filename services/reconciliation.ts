@@ -1,5 +1,6 @@
 import type { Actor, Tx } from "@/lib/db/tx";
 import { setAuditReason } from "@/lib/db/tx";
+import { APPROVED_NOTE } from "@/lib/domain/waiting-approve";
 import { AppError, logServerError } from "@/lib/errors";
 import {
   ENGINE_VERSION,
@@ -441,7 +442,9 @@ async function completeSipItemsFromTransactions(tx: Tx, clientId: string, propos
            least(coalesce(s.advised_at, p.approved_at), p.plan_date::timestamptz) as since
     from public.sip_plan_items s
     join public.advisory_plans p on p.id = s.plan_id
-    where s.client_id = ${clientId} and p.status = 'ACTIVE' and s.status in ('PLANNED', 'ADVISED')
+    where s.client_id = ${clientId} and p.status = 'ACTIVE' and (s.status in ('PLANNED', 'ADVISED')
+           -- or approved by hand on the waiting page and not yet seen in a CAS: the CAS confirms it now
+           or (s.status = 'COMPLETED' and coalesce(s.notes, '') like ${`%${APPROVED_NOTE}%`} and coalesce(s.notes, '') not like '%Verified from CAS%'))
       and s.security_id is not null`;
   let done = 0;
   for (const item of items) {
