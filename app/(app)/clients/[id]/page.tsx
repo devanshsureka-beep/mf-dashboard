@@ -22,6 +22,7 @@ import { linkCallsToPlanAction } from "./actions";
 import { ClientAllocation } from "@/components/app/client-allocation";
 import { ClientValueLine } from "@/components/app/client-value-line";
 import { mix } from "@/lib/domain/market-cap";
+import { moneyNow } from "@/lib/domain/waiting-approve";
 import { getClientMix } from "@/services/client-mix";
 
 const TABS = ["portfolio", "tranches", "file", "history"] as const;
@@ -144,9 +145,10 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
       select off_plan_sell_advised::float8 as off_plan_sell_advised, off_plan_sell_executed::float8 as off_plan_sell_executed, off_plan_sell_pending::float8 as off_plan_sell_pending,
              off_plan_buy_advised::float8 as off_plan_buy_advised, off_plan_buy_executed::float8 as off_plan_buy_executed, off_plan_buy_pending::float8 as off_plan_buy_pending
       from public.v_client_rebalance_extra where client_id = ${id}`)[0],
-    bank: (await tx<{ in_bank: number; fresh_money: number; cash_at_onboarding: number }[]>`
-      select in_bank::float8 as in_bank, fresh_money::float8 as fresh_money, cash_at_onboarding::float8 as cash_at_onboarding
-      from public.v_client_bank where client_id = ${id}`)[0] ?? { in_bank: 0, fresh_money: 0, cash_at_onboarding: 0 },
+    bank: (await tx<{ in_bank: number; in_bank_cas: number; approved_sold: number; approved_bought: number; fresh_money: number; cash_at_onboarding: number }[]>`
+      select in_bank::float8 as in_bank, in_bank_cas::float8 as in_bank_cas, approved_sold::float8 as approved_sold, approved_bought::float8 as approved_bought,
+             fresh_money::float8 as fresh_money, cash_at_onboarding::float8 as cash_at_onboarding
+      from public.v_client_bank where client_id = ${id}`)[0] ?? { in_bank: 0, in_bank_cas: 0, approved_sold: 0, approved_bought: 0, fresh_money: 0, cash_at_onboarding: 0 },
     sip: await getClientSip(tx, id),
     picture: await getClientMix(tx, id),
     premium: await getPremium(tx, id),
@@ -170,8 +172,10 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
   const canAdvise = actor.role !== "OPERATIONS";
   const isAdmin = actor.role === "ADMIN";
   // Money from sells not yet bought back sits in the client's bank: it is still theirs.
-  const inFunds = c.live_portfolio_value ?? 0;
-  const inBank = bank.in_bank;
+  // Last CAS + what a person approved since (not in a CAS yet) = now (estimated).
+  const money = { ...moneyNow({ liveFunds: c.live_portfolio_value ?? 0, bankCas: bank.in_bank_cas, approvedSold: bank.approved_sold, approvedBought: bank.approved_bought }), casDate: lastCas };
+  const inFunds = money.now.funds;
+  const inBank = money.now.bank;
   const fresh = bank.fresh_money;
   const valueToday = inFunds + inBank;
   // Trades done before onboarding (from a CAS newer than the report) left cash that was already the client's.
@@ -268,8 +272,8 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
             <Figure label="Value today" value={<Money value={valueToday} />} big hint={`${c.live_nav_date ? `NAV ${formatDate(c.live_nav_date)}` : "CAS NAV"} · funds + bank`} />
             <Figure label="Since onboarding" className="border-l border-border" value={<span className={change >= 0 ? "text-emerald-700" : "text-red-700"}>{change >= 0 ? "+" : "−"}{formatINRCompact(Math.abs(change))}</span>}
               hint={<>from <Money value={startValue} />{changePct != null ? ` (${changePct >= 0 ? "+" : ""}${changePct.toFixed(1)}%)` : ""}</>} />
-            <Figure label="In funds" className="border-t border-border" value={<Money value={inFunds} />} hint="holding in MFs" />
-            <Figure label="In bank" className="border-l border-t border-border" value={<span className={inBank >= 0.5 ? "text-amber-700" : undefined}><Money value={inBank} /></span>} hint="sold, not bought back" />
+            <Figure label="In funds" className="border-t border-border" value={<Money value={inFunds} />} hint={money.hasApproved ? "est. · incl. approved, not in CAS yet" : "holding in MFs"} />
+            <Figure label="In bank" className="border-l border-t border-border" value={<span className={inBank >= 0.5 ? "text-amber-700" : undefined}><Money value={inBank} /></span>} hint={money.hasApproved ? "est. · incl. approved, not in CAS yet" : "sold, not bought back"} />
           </div>
         </div>
       </section>
@@ -309,7 +313,7 @@ export default async function Client360(props: PageProps<"/clients/[id]">) {
         ))}
       </nav>
       <div className="mt-3">
-        {tab === "portfolio" && <PortfolioTab client={c} actor={actor} inBank={inBank} sipTarget={sip.sip_monthly_target} edit={{ open: str("edit") === "holdings", fund: uuidOrNull(str("fund")) }} />}
+        {tab === "portfolio" && <PortfolioTab client={c} actor={actor} money={money} sipTarget={sip.sip_monthly_target} edit={{ open: str("edit") === "holdings", fund: uuidOrNull(str("fund")) }} />}
         {tab === "tranches" && <TranchesTab client={c} actor={actor} view={str("view") ?? (str("side") === "PENDING" ? "waiting" : null)} />}
         {tab === "file" && <ClientFileTab client={c} actor={actor} docType={str("doc")} open={str("open")} />}
         {tab === "history" && (

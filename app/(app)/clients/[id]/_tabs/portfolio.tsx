@@ -16,6 +16,7 @@ import { EditHoldings } from "@/components/app/edit-holdings";
 import { saveHoldingsAction } from "../../actions";
 import { searchFundsAction } from "@/app/(app)/advice/actions";
 import { FundTable } from "./fund-table";
+import { moneyAfter, type moneyNow } from "@/lib/domain/waiting-approve";
 
 
 /** What the plan says for a fund, in desk language. */
@@ -38,43 +39,62 @@ function PlanCell({ p, liveValue }: { p: PlanLine | null; liveValue?: number }) 
   );
 }
 
-/** Where the client's money is now, and where it ends up once every tranche is done (at today's values). */
-function MoneyBox({ c, plan, inFunds, inBank, sipTarget }: { c: ClientSummary; plan: PlanLine[]; inFunds: number; inBank: number; sipTarget: number }) {
-  // Still to happen on the plan (waiting + left to advise, from the views): sells add to the bank, buys
-  // take from it. Switches move money fund to fund, so they are left out. Start from every trade done so
-  // far (money_left), not just those a CAS shows: those not in a CAS are still counted in "In funds".
-  const left = (action: string) => plan.filter((p) => p.action === action).reduce((s, p) => s + p.pending_amount + p.yet_to_advise_amount, 0);
-  const sellLeft = left("SELL");
-  const buyLeft = left("BUY");
-  const bankAfter = Math.max(0, Number(c.money_left ?? 0) + sellLeft - buyLeft);
-  const total = inFunds + inBank;
-  const row = (label: React.ReactNode, value: React.ReactNode, cls = "") => (
-    <div className={`flex justify-between gap-3 ${cls}`}><span>{label}</span><b className="num">{value}</b></div>
+/** Money in three layers (same rule for every client), plus where it ends up. */
+export type MoneyLayers = ReturnType<typeof moneyNow> & { casDate: string | null };
+
+/**
+ * Where the client's money is: as per the last CAS, + what a person approved since (not in a CAS
+ * yet), = now (estimated). Below: if every waiting call is done, and after the whole plan.
+ * Sells add to the bank, buys take from it; switches move money fund to fund, so they are left out.
+ */
+function MoneyBox({ plan, money, sipTarget }: { plan: PlanLine[]; money: MoneyLayers; sipTarget: number }) {
+  const sum = (action: string, k: "pending_amount" | "yet_to_advise_amount") => plan.filter((p) => p.action === action).reduce((s, p) => s + p[k], 0);
+  const waitSell = sum("SELL", "pending_amount");
+  const waitBuy = sum("BUY", "pending_amount");
+  const restSell = sum("SELL", "yet_to_advise_amount");
+  const restBuy = sum("BUY", "yet_to_advise_amount");
+  const ifWaiting = moneyAfter(money.now, waitSell, waitBuy);
+  const afterPlan = moneyAfter(ifWaiting, restSell, restBuy);
+  const signed = (v: number) => (Math.abs(v) < 0.5 ? <span className="text-muted">—</span> : <>{v > 0 ? "+" : "−"}<Money value={Math.abs(v)} /></>);
+  const col = (title: string, sub: React.ReactNode, funds: React.ReactNode, bank: React.ReactNode, cls: string, big = false) => (
+    <div className={`space-y-1 rounded-lg px-3.5 py-3 text-[13px] ${cls}`}>
+      <div className="text-[11px] font-bold uppercase tracking-wide text-muted">{title}</div>
+      <div className="text-[11.5px] text-muted">{sub}</div>
+      <div className="flex justify-between gap-3"><span>In funds</span><b className={`num ${big ? "text-[17px]" : ""}`}>{funds}</b></div>
+      <div className="flex justify-between gap-3"><span>In bank</span><b className={`num ${big ? "text-[17px]" : ""}`}>{bank}</b></div>
+    </div>
   );
+  const op = (t: string) => <div className="hidden self-center text-center text-xl font-bold text-slate-400 md:block">{t}</div>;
   return (
     <section className="rounded-xl border-2 border-brand-100 bg-surface p-4">
-      <h3 className="text-[15px] font-semibold">Where the client&apos;s money is</h3>
-      <div className="mt-2.5 grid gap-3 md:grid-cols-2">
-        <div className="space-y-1 rounded-lg bg-slate-50 px-3.5 py-3 text-[13px]">
-          <div className="text-[11px] font-bold uppercase tracking-wide text-muted">Now</div>
-          {row("In mutual funds", <Money value={inFunds} />)}
-          {row(<>In bank <span className="text-muted">(sold, not bought back yet)</span></>, <span className="text-amber-700"><Money value={inBank} /></span>)}
-          {row("Total", <Money value={total} />, "border-t border-border pt-1")}
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="text-[15px] font-semibold">Where the client&apos;s money is</h3>
+        {money.hasApproved ? <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">est. = includes approved trades not yet in a CAS</span> : null}
+      </div>
+      <div className="mt-2.5 grid gap-2 md:grid-cols-[1fr_20px_1fr_20px_1.1fr]">
+        {col("As per last CAS", `${money.casDate ? `CAS of ${formatDate(money.casDate)}` : "No CAS"} · units × today's NAV`, <Money value={money.cas.funds} />, <Money value={money.cas.bank} />, "bg-slate-50")}
+        {op("+")}
+        {col("Approved since (not in a CAS yet)", money.hasApproved ? <Link href="?tab=tranches#ledger" className="text-brand hover:underline">see the approved calls</Link> : "nothing approved since the CAS", signed(money.approved.funds), signed(money.approved.bank), "bg-blue-50/60")}
+        {op("=")}
+        {col(money.hasApproved ? "Now (estimated)" : "Now", "what you work with today", <Money value={money.now.funds} />, <span className={money.now.bank >= 0.5 ? "text-amber-700" : undefined}><Money value={money.now.bank} /></span>, "bg-emerald-50/70 ring-1 ring-emerald-200", true)}
+      </div>
+      <div className="mt-2.5 grid gap-2 text-[13px] md:grid-cols-2">
+        <div className="rounded-lg border border-dashed border-amber-300 bg-amber-50/50 px-3.5 py-2.5">
+          <b>If all waiting calls are done</b> <span className="text-muted">(sell {formatINRCompact(waitSell)} · buy {formatINRCompact(waitBuy)} advised, not approved)</span>
+          <div className="mt-0.5">In funds <b className="num"><Money value={ifWaiting.funds} /></b> · In bank <b className="num"><Money value={ifWaiting.bank} /></b></div>
         </div>
-        <div className="space-y-1 rounded-lg bg-slate-50 px-3.5 py-3 text-[13px]">
-          <div className="text-[11px] font-bold uppercase tracking-wide text-muted">After all tranches (plan done, estimate)</div>
-          {row("In mutual funds", <Money value={Math.max(0, total - bankAfter)} />)}
-          {row(<>In bank <span className="text-muted">(sell {formatINRCompact(sellLeft)} more − buy {formatINRCompact(buyLeft)} more)</span></>, <Money value={bankAfter} />)}
-          {row("SIPs running", <>{formatINRCompact(sipTarget)} / month</>, "border-t border-border pt-1")}
+        <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3.5 py-2.5">
+          <b>After the whole plan</b> <span className="text-muted">(+ left to advise: sell {formatINRCompact(restSell)} · buy {formatINRCompact(restBuy)})</span>
+          <div className="mt-0.5">In funds <b className="num"><Money value={afterPlan.funds} /></b> · In bank <b className="num"><Money value={afterPlan.bank} /></b> · SIPs {formatINRCompact(sipTarget)} / month</div>
         </div>
       </div>
-      <p className="mt-2 text-xs text-muted">&ldquo;In bank&rdquo; is money from sells done that has not been bought back yet (plus any fresh money). Fund values are at today&apos;s NAV; each new CAS confirms them.</p>
+      <p className="mt-2 text-xs text-muted">&ldquo;In bank&rdquo; is money from sells not bought back yet (plus any fresh money). Approved trades count here right away; the next CAS confirms them, and its figures win.</p>
     </section>
   );
 }
 
-export async function PortfolioTab({ client, actor, inBank, sipTarget, edit }: {
-  client: ClientSummary; actor: Actor; inBank: number; sipTarget: number;
+export async function PortfolioTab({ client, actor, money, sipTarget, edit }: {
+  client: ClientSummary; actor: Actor; money: MoneyLayers; sipTarget: number;
   /** ?edit=holdings (and &fund=<security id> from a row's pencil) opens the holdings editor. */
   edit: { open: boolean; fund: string | null };
 }) {
@@ -94,13 +114,13 @@ export async function PortfolioTab({ client, actor, inBank, sipTarget, edit }: {
 
   return (
     <div className="space-y-3">
-      <FundTable rows={desk.rows} totals={desk.totals} clientId={clientId} canAdvise={actor.role !== "OPERATIONS"} casDate={desk.casDate} inBank={inBank}
+      <FundTable rows={desk.rows} totals={desk.totals} clientId={clientId} canAdvise={actor.role !== "OPERATIONS"} casDate={desk.casDate} inBank={money.now.bank}
         editHref={editable ? `/clients/${clientId}?tab=portfolio&edit=holdings` : null} />
       {editable && edit.open ? (
         <EditHoldings key={editable.snapshotId} clientId={clientId} clientName={client.full_name} data={editable} focus={edit.fund} closeHref={`/clients/${clientId}?tab=portfolio`}
           search={searchFundsAction} save={saveHoldingsAction} />
       ) : null}
-      <MoneyBox c={client} plan={views.plan} inFunds={client.live_portfolio_value ?? 0} inBank={inBank} sipTarget={sipTarget} />
+      <MoneyBox plan={views.plan} money={money} sipTarget={sipTarget} />
 
       <details className="group rounded-xl border border-border bg-surface">
         <summary className="cursor-pointer select-none px-4 py-2.5 text-sm font-semibold">More detail · portfolio at onboarding, every CAS and its transactions</summary>

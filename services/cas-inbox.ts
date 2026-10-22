@@ -13,6 +13,8 @@ export interface InboxCheck { snapshot_id: string; cas_id: string | null; client
 export interface InboxUnadvised { run_id: string; client_id: string; client_name: string; client_code: string; snapshot_date: string; trades: number; amount: number; matched: number }
 export interface InboxDone { snapshot_id: string; client_id: string; client_name: string; snapshot_date: string; run_id: string | null; verified: number; unadvised_reviewed: number }
 export interface InboxConfirm { run_id: string; client_id: string; client_name: string; client_code: string; snapshot_date: string; matches: number; first: string | null }
+/** Trades a person approved as done that the client's latest CAS (dated on or after them) does not show. */
+export interface InboxApprovedMissing { client_id: string; client_name: string; client_code: string; snapshot_date: string; run_id: string | null; trades: number }
 export interface InboxCollect { client_id: string; client_name: string; client_code: string; phone: string | null; latest_cas: string | null; waiting_amount: number; unverified_amount: number; days: number | null }
 
 export async function getCasInbox(tx: Tx) {
@@ -79,6 +81,25 @@ export async function getCasInbox(tx: Tx) {
     order by s.id, r.created_at desc nulls last
     ) d order by d.done_at desc limit 30`;
 
+  // Approved by hand, dated on or before the latest CAS, which was confirmed after the approval and
+  // does not show it (and nobody chose "keep waiting" for that CAS): asked once in the inbox.
+  const approvedMissing = await tx<InboxApprovedMissing[]>`
+    select c.id as client_id, c.full_name as client_name, c.client_code, l.snapshot_date::text as snapshot_date,
+           (select r.id from public.reconciliation_runs r where r.current_snapshot_id = l.id and r.status <> 'CANCELLED' order by r.created_at desc limit 1) as run_id,
+           count(e.id)::int as trades
+    from public.clients c
+    join lateral (select ps.id, ps.snapshot_date, coalesce(ps.reviewed_at, ps.created_at) as confirmed_at from public.portfolio_snapshots ps
+                  where ps.client_id = c.id and ps.review_status = 'CONFIRMED' and not ps.is_correction
+                  order by ps.snapshot_date desc, ps.created_at desc limit 1) l on true
+    join public.executions e on e.client_id = c.id and e.status in ('EXECUTED', 'PARTIAL') and e.verification_type in ('CLIENT_CONFIRMED', 'ADVISOR_CONFIRMED')
+      and e.cas_verified_at is null and e.execution_date <= l.snapshot_date and e.created_at < l.confirmed_at
+      and coalesce(e.cas_missing_ack_on, '-infinity'::date) < l.snapshot_date
+      and not exists (select 1 from public.reconciliation_matches m join public.reconciliation_runs r on r.id = m.run_id
+                      where m.advice_item_id = e.advice_item_id and m.status = 'SUGGESTED' and r.status <> 'CANCELLED')
+    where c.deleted_at is null
+    group by c.id, c.full_name, c.client_code, l.id, l.snapshot_date
+    order by l.snapshot_date desc`;
+
   // Advice no CAS has shown yet, or no CAS for 30+ days.
   const collect = await tx<InboxCollect[]>`
     select c.id as client_id, c.full_name as client_name, c.client_code, c.phone, l.snapshot_date::text as latest_cas,
@@ -98,6 +119,7 @@ export async function getCasInbox(tx: Tx) {
   return {
     reading,
     check,
+    approvedMissing,
     confirm,
     unadvised,
     done,

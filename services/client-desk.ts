@@ -257,6 +257,8 @@ export interface LedgerRow {
   pending: number;
   status: string;
   casVerified: boolean;
+  /** Done by hand (approved), not yet shown by a CAS. */
+  approved: number;
 }
 
 export interface Tranche {
@@ -319,7 +321,7 @@ export async function getTranches(tx: Tx, clientId: string): Promise<{ tranches:
     select v.id, to_char(v.communicated_at at time zone 'Asia/Kolkata', 'YYYY-MM-DD') as "advisedOn", pr.full_name as by,
            v.action, v.scheme_name as fund, sm.plan_type as "planType", v.effective_advised_amount as advised,
            v.executed_amount as executed, v.last_execution_date::text as "executedOn", v.executed_units as "executedUnits",
-           v.pending_amount as pending, v.status, coalesce(t.cas_verified, false) as "casVerified",
+           v.pending_amount as pending, v.status, coalesce(t.cas_verified, false) as "casVerified", v.unverified_executed_amount as approved,
            case when v.action = 'BUY' then 'BUY' else 'SELL' end as side
     from public.v_advice_items v
     left join public.profiles pr on pr.id = v.advisor_id
@@ -363,7 +365,7 @@ export async function getTranches(tx: Tx, clientId: string): Promise<{ tranches:
     return n;
   };
   const ledger: LedgerRow[] = items.map((i) => ({
-    ...i, advised: num(i.advised), executed: num(i.executed), pending: num(i.pending),
+    ...i, advised: num(i.advised), executed: num(i.executed), pending: num(i.pending), approved: num(i.approved),
     executedUnits: i.executedUnits == null ? null : num(i.executedUnits), tranche: trancheOf(i.advisedOn),
   }));
   const lastClosed = Math.max(0, chain.length - 1);

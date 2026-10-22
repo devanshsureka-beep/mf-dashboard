@@ -29,7 +29,7 @@ describeDb("CAS inbox: what to collect", () => {
     });
   });
 
-  it("counts money in bank only from trades the latest CAS already shows", async () => {
+  it("counts a sale after the latest CAS as approved (in bank now), not in the CAS figure", async () => {
     await scenario(async (ctx) => {
       const p = await clientWithActivePlan(ctx); // latest CAS 01-Sep
       const call = await ctx.as("advisor", (t) => issueAdvice(t, ctx.users.advisor, {
@@ -39,12 +39,15 @@ describeDb("CAS inbox: what to collect", () => {
       await ctx.as("ops", (t) => recordExecution(t, ctx.users.ops, {
         adviceItemId: call.itemIds[0], executionDate: "2026-09-12", executedAmount: 250000, executedUnits: null, verificationType: "CLIENT_CONFIRMED",
       }));
-      const [row] = await ctx.as("advisor", (t) => t<{ in_bank: string; money_left: string }[]>`
-        select b.in_bank, c.money_left from public.v_client_bank b join public.v_client_cash c on c.client_id = b.client_id
+      const [row] = await ctx.as("advisor", (t) => t<{ in_bank: string; in_bank_cas: string; approved_sold: string; money_left: string }[]>`
+        select b.in_bank, b.in_bank_cas, b.approved_sold, c.money_left from public.v_client_bank b join public.v_client_cash c on c.client_id = b.client_id
         where b.client_id = ${p.clientId}`);
-      // The sale is after the CAS of 01-Sep: the fund still holds those units, so the bank does not count it yet.
+      // The sale is after the CAS of 01-Sep: the CAS figure does not have it (the fund still holds those
+      // units there); it counts as approved, so "now" has it in the bank and out of the fund.
       expect(Number(row.money_left)).toBe(250000);
-      expect(Number(row.in_bank)).toBe(0);
+      expect(Number(row.in_bank_cas)).toBe(0);
+      expect(Number(row.approved_sold)).toBe(250000);
+      expect(Number(row.in_bank)).toBe(250000);
     });
   });
 });

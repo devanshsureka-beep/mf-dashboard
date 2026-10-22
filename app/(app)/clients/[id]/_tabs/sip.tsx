@@ -11,6 +11,7 @@ import { getSipItems } from "@/services/plans";
 import { getClientSip, getSipProgress } from "@/services/sip";
 import { getSipStatus } from "@/services/sip-status";
 import type { ClientSummary, SipItem } from "@/types/domain";
+import { APPROVED_NOTE } from "@/lib/domain/waiting-approve";
 import { setSipStatusAction } from "../actions";
 
 const ACTION_TONE = { START: "bg-emerald-50 text-emerald-800", STOP: "bg-red-50 text-red-800", CHANGE: "bg-violet-50 text-violet-800" } as const;
@@ -19,6 +20,7 @@ const ACTION_TONE = { START: "bg-emerald-50 text-emerald-800", STOP: "bg-red-50 
 function status(s: SipItem): { label: string; tone: string } {
   if (s.status === "COMPLETED") {
     const fromCas = (s.notes ?? "").includes("Verified from CAS");
+    if (!fromCas && (s.notes ?? "").includes(APPROVED_NOTE)) return { label: "Approved · waiting for CAS", tone: "bg-blue-50 text-blue-800" };
     const what = s.action === "STOP" ? "stopped" : s.action === "CHANGE" ? "changed" : "running";
     return { label: fromCas ? `Done · ${what} in CAS` : `Done · ${what}`, tone: "bg-emerald-50 text-emerald-800" };
   }

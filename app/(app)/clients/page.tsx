@@ -206,6 +206,8 @@ type Row = Awaited<ReturnType<typeof listDeskClients>>[number];
 function toRow(c: Row, canAdvise: boolean): ListRow {
   const target = c.target_sell + c.target_buy;
   const inBank = c.in_bank;
+  // In funds now: live value moved by trades approved since the last CAS (same rule as the client page).
+  const inFunds = c.live_portfolio_value == null ? null : Math.max(0, c.live_portfolio_value + c.funds_adjust);
   const nextTranche = Boolean(c.active_plan_id) && c.pending_total < 0.5 && c.remaining_to_advise >= 0.5;
   const tranchesHref = `/clients/${c.client_id}?tab=tranches`;
   const tag: ListTag | null = c.status !== "ACTIVE" ? { text: humanize(c.status), tone: c.status === "ONBOARDING" ? "blue" : "grey" } : null;
@@ -222,8 +224,8 @@ function toRow(c: Row, canAdvise: boolean): ListRow {
     id: c.client_id, name: c.full_name, code: c.client_code, tag, todos, casToCheck: c.cas_to_review > 0, openCalls: c.open_calls,
     month: MON[Number(c.report_date.slice(5, 7)) - 1] ?? "", reportDate: c.report_date, pendingCas: c.pending_cas_date,
     advisor: c.advisor_name ?? "—", risk: c.risk_profile ? humanize(c.risk_profile) : "—",
-    valueToday: c.live_portfolio_value == null && inBank < 0.5 ? null : (c.live_portfolio_value ?? 0) + inBank,
-    inFunds: c.live_portfolio_value, inBank,
+    valueToday: inFunds == null && inBank < 0.5 ? null : (inFunds ?? 0) + inBank,
+    inFunds, inBank,
     tranche: c.active_plan_id ? (target > 0 ? `Tranche ${Math.max(1, c.cas_count)}` : "No targets") : null,
     donePct: target > 0 ? Math.round(((c.executed_sell + c.executed_buy) / target) * 100) : null,
     advisedPct: target > 0 ? Math.round(((c.advised_sell + c.advised_buy) / target) * 100) : 0,

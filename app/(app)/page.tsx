@@ -140,7 +140,8 @@ export default async function Today(props: PageProps<"/">) {
   const noAgreement = all.filter((c) => c.agreement_status !== "VALID");
   const inBankClients = all.filter((c) => c.in_bank >= 0.5);
   const canAdvise = actor.role !== "OPERATIONS";
-  const inFunds = sum((c) => c.live_portfolio_value ?? 0);
+  // Live value moved by trades approved since each client's last CAS (as on the client page).
+  const inFunds = sum((c) => Math.max(0, (c.live_portfolio_value ?? 0) + c.funds_adjust));
   const left = sum((c) => (c.active_plan_id ? c.remaining_to_advise : 0));
   const casOpen = toCheck.length + unadvised.length + casStats.confirm;
   // What this user can act on: Operations do not approve plans or advise.

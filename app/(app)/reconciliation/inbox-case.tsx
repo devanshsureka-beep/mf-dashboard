@@ -8,6 +8,8 @@ import type { InboxCheck, InboxCheckDetail, InboxReading, InboxRunDetail } from 
 import type { ClientSummary } from "@/types/domain";
 import { CHANNELS } from "@/types/domain";
 import { confirmCasInInboxAction, confirmMatchFromInboxAction, decideTradeAction, rejectCasInInboxAction } from "./actions";
+import { approvedNotInCasAction } from "../clients/[id]/waiting/actions";
+import type { ApprovedVsCas } from "@/services/waiting-approve";
 
 /** Every open item of one client, from the inbox lists. */
 export interface ClientCard {
@@ -18,6 +20,8 @@ export interface ClientCard {
   reading: InboxReading[];
   check: InboxCheck[];
   runIds: string[];
+  /** Approved trades the latest CAS does not show (asked once). */
+  approvedMissing: number;
 }
 
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
@@ -31,6 +35,7 @@ export function reasons(c: ClientCard, details: Record<string, InboxRunDetail>, 
   if (c.reading.some((r) => r.status === "FAILED")) out.push({ label: "Couldn't read the PDF", tone: "blocked" });
   else if (c.reading.length) out.push({ label: "Reading…", tone: "reading" });
   for (const x of c.check) { const n = pointsOf(x, checks); out.push({ label: n ? `CAS to check · ${plural(n, "point")}` : "CAS to check", tone: "review" }); }
+  if (c.approvedMissing && !c.check.length) out.push({ label: `Approved, not in CAS · ${c.approvedMissing}`, tone: "review" });
   if (suggested) out.push({ label: `${plural(suggested, "call")} to confirm`, tone: "review" });
   if (trades) out.push({ label: `${plural(trades, "trade")}: ours or theirs?`, tone: "review" });
   return out;
@@ -115,13 +120,15 @@ function CheckStep({ n, x, d }: { n: number; x: InboxCheck; d: InboxCheckDetail 
   );
 }
 
-export function InboxCase({ c, details, checks, summary, inBank, next, canAdvise }: {
+export function InboxCase({ c, details, checks, summary, inBank, approved, next, canAdvise }: {
   c: ClientCard;
   details: Record<string, InboxRunDetail>;
   checks: Record<string, InboxCheckDetail | null>;
   summary: ClientSummary | null;
   /** Money sold and not bought back (v_client_bank, as on every other screen). */
   inBank: number;
+  /** Trades approved by hand, dated on or before this CAS: what the CAS did with each. */
+  approved: ApprovedVsCas[];
   next: ClientCard | null;
   canAdvise: boolean;
 }) {
@@ -132,7 +139,8 @@ export function InboxCase({ c, details, checks, summary, inBank, next, canAdvise
   const sipTicked = ds.reduce((n, d) => n + d.sip_lines_ticked, 0);
   const shown = trades.slice(0, 8);
   const tags = reasons(c, details, checks);
-  const open = c.check.reduce((t, x) => t + Math.max(1, pointsOf(x, checks)), 0) + suggested.length + trades.length;
+  const missing = approved.filter((a) => a.result === "NOT_IN_CAS");
+  const open = c.check.reduce((t, x) => t + Math.max(1, pointsOf(x, checks)), 0) + suggested.length + trades.length + missing.length;
   let n = 0;
   const left = summary ? summary.yet_to_advise_sell + summary.yet_to_advise_buy : 0;
 
@@ -208,6 +216,37 @@ export function InboxCase({ c, details, checks, summary, inBank, next, canAdvise
               {trades.length > shown.length ? <li className="px-1 text-xs text-muted">+ {trades.length - shown.length} more trade(s) in the full match table.</li> : null}
             </ul>
             {c.runIds.length ? <div className="mt-2 text-xs">{c.runIds.map((id) => <Link key={id} href={`/reconciliation/${id}`} className="mr-3 text-brand hover:underline">Full match table →</Link>)}<span className="text-muted">units, NAV and part-done decisions</span></div> : null}
+          </Step>
+        ) : null}
+
+        {approved.length && c.snapshot_date ? (
+          <Step n={++n} title="Approved vs this CAS" tone={missing.length ? undefined : "done"}>
+            <p className="mb-1.5 text-xs text-muted">Calls a person approved as done before this CAS came. The CAS wins on amounts; only what it cannot settle is asked.</p>
+            <ul className="space-y-1.5 text-[13px]">
+              {approved.map((a) => (
+                <li key={a.execution_id} className={cn("flex flex-wrap items-center justify-between gap-2 rounded-lg px-3 py-2",
+                  a.result === "VERIFIED" ? "bg-emerald-50" : a.result === "TO_CONFIRM" ? "bg-slate-50" : "bg-red-50 ring-1 ring-red-200")}>
+                  <span>
+                    <b className={a.action === "BUY" ? "text-blue-700" : "text-red-700"}>{a.action === "BUY" ? "BUY" : "SELL"}</b> <b>{a.scheme_name}</b>
+                    {" · "}approved <Money value={a.amount} />{a.units ? ` (${formatUnits(a.units)} u)` : ""} on {formatDate(a.date)}
+                    {a.result === "VERIFIED" && a.cas_amount != null ? <> · CAS <Money value={a.cas_amount} /></> : null}
+                  </span>
+                  {a.result === "VERIFIED" ? <span className="text-xs font-semibold text-emerald-800">✓ Matches · CAS verified</span>
+                    : a.result === "TO_CONFIRM" ? <span className="text-xs text-muted">in the matches above: one click</span>
+                    : (
+                      <span className="flex items-center gap-1.5">
+                        <span className="text-xs font-semibold text-red-700">Not in this CAS</span>
+                        {canAdvise ? (
+                          <>
+                            <ActionForm action={approvedNotInCasAction.bind(null, c.client_id, a.execution_id, c.snapshot_date!)}><input type="hidden" name="decision" value="KEEP" /><SubmitButton size="sm" variant="outline">Keep waiting</SubmitButton></ActionForm>
+                            <ActionForm action={approvedNotInCasAction.bind(null, c.client_id, a.execution_id, c.snapshot_date!)}><input type="hidden" name="decision" value="UNDO" /><SubmitButton size="sm" variant="outline" confirm="Undo this approval? The call goes back to waiting.">Undo approval</SubmitButton></ActionForm>
+                          </>
+                        ) : null}
+                      </span>
+                    )}
+                </li>
+              ))}
+            </ul>
           </Step>
         ) : null}
 

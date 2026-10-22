@@ -14,7 +14,7 @@ const CLOSED = ["REVISED", "CANCELLED", "EXPIRED"];
 type View = "waiting" | "done" | "all";
 
 /** Onboarding → each tranche → the next one, in one row. */
-function TrancheStrip({ tranches, c, baseline, canAdvise }: { tranches: Tranche[]; c: ClientSummary; baseline: { date: string; value: number } | null; canAdvise: boolean }) {
+function TrancheStrip({ tranches, c, baseline, canAdvise, waitingCount }: { tranches: Tranche[]; c: ClientSummary; baseline: { date: string; value: number } | null; canAdvise: boolean; waitingCount: number }) {
   const remaining = c.yet_to_advise_sell + c.yet_to_advise_buy;
   const ordered = [...tranches].sort((a, b) => a.number - b.number);
   const last = ordered.at(-1);
@@ -41,7 +41,13 @@ function TrancheStrip({ tranches, c, baseline, canAdvise }: { tranches: Tranche[
               {t.runId ? <> · <Link href={`/reconciliation/${t.runId}`} className="text-brand hover:underline">CAS match</Link></> : null}
             </div>
           </div>
-          {t.open && remaining > 0.5 && canAdvise ? <Link href={`/advice/new?client=${c.client_id}`} className="shrink-0 rounded-md bg-brand px-3 py-1.5 text-[13px] font-semibold text-white hover:bg-brand-700">Advise</Link> : null}
+          {t.open && canAdvise && (waitingCount > 0 || remaining > 0.5) ? (
+            <span className="flex shrink-0 flex-wrap items-center gap-2">
+              {/* Opens its own page: approve many waiting calls and SIPs at once. */}
+              {waitingCount > 0 ? <Link href={`/clients/${c.client_id}/waiting`} className="rounded-md bg-emerald-700 px-3 py-1.5 text-[13px] font-semibold text-white hover:bg-emerald-800">Approve waiting · {waitingCount}</Link> : null}
+              {remaining > 0.5 ? <Link href={`/advice/new?client=${c.client_id}`} className="rounded-md bg-brand px-3 py-1.5 text-[13px] font-semibold text-white hover:bg-brand-700">Advise</Link> : null}
+            </span>
+          ) : null}
         </div>
       ))}
       {/* New calls go into the open tranche; a "next" card only when every tranche is closed. */}
@@ -63,11 +69,13 @@ function StatusCell({ r }: { r: LedgerRow }) {
   if (CLOSED.includes(r.status)) return <span className="text-muted">{humanize(r.status)}</span>;
   const done = r.status === "EXECUTED";
   const part = r.executed > 0.5 && !done;
-  const label = done ? "Done" : part ? "Part done" : "Waiting";
-  const check = r.executed > 0.5 ? (r.casVerified ? `CAS verified${r.executedOn ? ` ${formatDate(r.executedOn)}` : ""}` : "recorded by hand") : "not in CAS yet";
+  // Approved by hand and not in a CAS yet: counted in the money, the next CAS confirms it.
+  const approved = r.approved > 0.5;
+  const label = done ? (approved ? "Approved" : "Done") : part ? "Part done" : "Waiting";
+  const check = r.executed > 0.5 ? (approved ? "waiting for CAS" : r.casVerified ? `CAS verified${r.executedOn ? ` ${formatDate(r.executedOn)}` : ""}` : "recorded by hand") : "not in CAS yet";
   return (
     <span className="whitespace-nowrap">
-      <span className={cn("rounded px-2 py-0.5 text-xs font-semibold", done || part ? "bg-emerald-50 text-emerald-800" : "bg-orange-100 text-orange-800")}>{label}</span>
+      <span className={cn("rounded px-2 py-0.5 text-xs font-semibold", approved ? "bg-blue-50 text-blue-800" : done || part ? "bg-emerald-50 text-emerald-800" : "bg-orange-100 text-orange-800")}>{label}</span>
       <span className="ml-1.5 text-xs text-muted">{check}</span>
     </span>
   );
@@ -120,7 +128,7 @@ function Ledger({ rows, total }: { rows: LedgerRow[]; total: string | null }) {
 
 /** Tranches & SIPs: where each tranche stands, the lump-sum calls (open ones first) and the plan's SIPs. */
 export async function TranchesTab({ client: c, actor, view }: { client: ClientSummary; actor: Actor; view: string | null }) {
-  const { tranches, ledger, baseline } = await withUserTx(actor, (tx) => getTranches(tx, c.client_id));
+  const { tranches, ledger, sipLedger, baseline } = await withUserTx(actor, (tx) => getTranches(tx, c.client_id));
   const canAdvise = actor.role !== "OPERATIONS";
   const live = ledger.filter((r) => !CLOSED.includes(r.status));
   const closed = ledger.filter((r) => CLOSED.includes(r.status));
@@ -134,7 +142,7 @@ export async function TranchesTab({ client: c, actor, view }: { client: ClientSu
   );
   return (
     <div className="space-y-3">
-      <TrancheStrip tranches={tranches} c={c} baseline={baseline} canAdvise={canAdvise} />
+      <TrancheStrip tranches={tranches} c={c} baseline={baseline} canAdvise={canAdvise} waitingCount={waiting.length + sipLedger.filter((s) => s.status === "ADVISED").length} />
 
       <section id="ledger" className="scroll-mt-14 overflow-hidden rounded-xl border border-border bg-surface">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-2.5">

@@ -17,6 +17,7 @@ import type { ClientSummary } from "@/types/domain";
 import { InboxCase, reasons, TONE, type ClientCard } from "./inbox-case";
 import { listCasDocuments } from "@/services/portfolio";
 import { listRuns } from "@/services/reconciliation";
+import { getApprovedVsCas } from "@/services/waiting-approve";
 import { BulkUploader } from "../cas/bulk/bulk-uploader";
 import { casLabel } from "@/services/documents";
 
@@ -32,7 +33,7 @@ function cardsFromInbox(inbox: Inbox): ClientCard[] {
   const card = (id: string, name: string, code = ""): ClientCard => {
     let c = by.get(id);
     if (!c) {
-      c = { client_id: id, client_name: name, client_code: code, snapshot_date: null, reading: [], check: [], runIds: [] };
+      c = { client_id: id, client_name: name, client_code: code, snapshot_date: null, reading: [], check: [], runIds: [], approvedMissing: 0 };
       by.set(id, c);
     }
     if (code && !c.client_code) c.client_code = code;
@@ -48,6 +49,12 @@ function cardsFromInbox(inbox: Inbox): ClientCard[] {
   for (const x of [...inbox.confirm, ...inbox.unadvised]) {
     const c = card(x.client_id, x.client_name, x.client_code);
     if (!c.runIds.includes(x.run_id)) c.runIds.push(x.run_id);
+    c.snapshot_date = later(c.snapshot_date, x.snapshot_date);
+  }
+  for (const x of inbox.approvedMissing) {
+    const c = card(x.client_id, x.client_name, x.client_code);
+    c.approvedMissing = x.trades;
+    if (x.run_id && !c.runIds.includes(x.run_id)) c.runIds.push(x.run_id);
     c.snapshot_date = later(c.snapshot_date, x.snapshot_date);
   }
   return [...by.values()].sort((a, b) => (b.snapshot_date ?? "").localeCompare(a.snapshot_date ?? ""));
@@ -89,7 +96,7 @@ export default async function CasInboxPage(props: PageProps<"/reconciliation">) 
   const sp = await props.searchParams;
   const view = sp.view === "done" || sp.view === "collect" ? sp.view : "needs";
   const want = typeof sp.c === "string" && UUID_RE.test(sp.c) ? sp.c : null;
-  const { inbox, runs, docs, details, cards, selected, checks, summary, inBank, wantedName, actor } = await pageData(async (tx) => {
+  const { inbox, runs, docs, details, cards, selected, checks, summary, inBank, approved, wantedName, actor } = await pageData(async (tx) => {
     const inbox = await getCasInbox(tx);
     const runIds = [...new Set([...inbox.confirm, ...inbox.unadvised].map((x) => x.run_id).concat(inbox.done.flatMap((d) => (d.run_id ? [d.run_id] : []))))];
     const cards = cardsFromInbox(inbox);
@@ -101,6 +108,8 @@ export default async function CasInboxPage(props: PageProps<"/reconciliation">) 
       inbox, cards, selected, checks,
       summary: selected ? (await tx<ClientSummary[]>`select * from public.v_client_summary where client_id = ${selected.client_id}`)[0] ?? null : null,
       inBank: selected ? Number((await tx<{ in_bank: number }[]>`select in_bank::float8 as in_bank from public.v_client_bank where client_id = ${selected.client_id}`)[0]?.in_bank ?? 0) : 0,
+      // Trades approved by hand against this CAS (only once it is confirmed: the matching has run).
+      approved: selected?.snapshot_date && !selected.check.length ? await getApprovedVsCas(tx, selected.client_id, selected.snapshot_date, selected.runIds) : [],
       wantedName: want && !selected ? ((await tx<{ full_name: string }[]>`select full_name from public.clients where id = ${want}`)[0]?.full_name ?? null) : null,
       runs: await listRuns(tx),
       docs: await listCasDocuments(tx),
@@ -149,7 +158,7 @@ export default async function CasInboxPage(props: PageProps<"/reconciliation">) 
               </ul>
               <div className="border-t border-border px-4 py-2 text-[11px] text-muted">CAS files that passed every check counted by themselves; they are under <Link href="/reconciliation?view=done" className="text-brand hover:underline">Done</Link>.</div>
             </nav>
-            {selected ? <InboxCase c={selected} details={details} checks={checks} summary={summary} inBank={inBank} next={nextCard} canAdvise={canAdvise} /> : (
+            {selected ? <InboxCase c={selected} details={details} checks={checks} summary={summary} inBank={inBank} approved={approved} next={nextCard} canAdvise={canAdvise} /> : (
               <div className="rounded-xl border border-dashed border-border bg-white p-6 text-center text-sm text-muted">
                 <p>Nothing is open for <b className="text-ink">{wantedName ?? "this client"}</b> in the inbox: their CAS is checked and every trade decided.</p>
                 {nextCard ? <Link href={`/reconciliation?c=${nextCard.client_id}`} className="mt-3 inline-block rounded-md bg-ink px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800">Next: {nextCard.client_name} →</Link> : null}

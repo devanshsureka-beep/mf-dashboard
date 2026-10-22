@@ -156,8 +156,10 @@ export type DeskClient = ClientSummary & {
   remaining_to_advise: number;
   /** Things the desk must do for this client (executions, CAS, unadvised, draft, follow-ups, next tranche). */
   action_count: number;
-  /** Money from sells the latest CAS shows, not bought back yet (plus fresh money): v_client_bank. */
+  /** Money from sells not bought back yet (plus fresh money), including trades approved since the last CAS: v_client_bank. */
   in_bank: number;
+  /** What approved trades (not in a CAS yet) move into funds: approved buys − approved sells. Add to live_portfolio_value. */
+  funds_adjust: number;
 };
 
 export async function listDeskClients(tx: Tx, f: DeskFilters = {}): Promise<DeskClient[]> {
@@ -169,6 +171,7 @@ export async function listDeskClients(tx: Tx, f: DeskFilters = {}): Promise<Desk
            p.agreement_status, p.agreement_valid_to::text as agreement_valid_to,
            coalesce(sp.sip_monthly_target, 0)::float8 as sip_monthly_target, coalesce(sp.sip_invested, 0)::float8 as sip_invested,
            coalesce(bk.in_bank, 0)::float8 as in_bank,
+           coalesce(bk.approved_bought - bk.approved_sold, 0)::float8 as funds_adjust,
            coalesce(un.n, 0)::int as unadvised_to_review, coalesce(cr.n, 0)::int as cas_to_review, coalesce(fu.n, 0)::int as follow_ups_due,
            exists (select 1 from public.advisory_plans d where d.client_id = s.client_id and d.status = 'DRAFT') as has_draft_plan,
            (select d.id from public.advisory_plans d where d.client_id = s.client_id and d.status = 'DRAFT' order by d.created_at desc limit 1) as draft_plan_id,
