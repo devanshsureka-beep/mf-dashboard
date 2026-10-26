@@ -4,6 +4,7 @@
  */
 import type { Tx } from "@/lib/db/tx";
 import type { AmfiScheme } from "@/lib/parsers/amfi-nav";
+import { appendTrackedNavs } from "./nav-history";
 
 export interface NavFeedResult {
   runId: string;
@@ -48,6 +49,9 @@ export async function ingestNavFeed(
     newSchemes += res.filter((r) => r.inserted).length;
     navsUpdated += res.filter((r) => r.nav_changed).length;
   }
+
+  // Funds and index funds whose history the quarterly review already uses stay current.
+  await appendTrackedNavs(tx);
 
   const cover = await tx<{ priced: number; unpriced: number }[]>`
     select count(*) filter (where is_live)::int as priced, count(*) filter (where not is_live)::int as unpriced

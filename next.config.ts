@@ -15,6 +15,8 @@ const nextConfig: NextConfig = {
   // pdf.js imports its worker dynamically, which file tracing cannot see.
   outputFileTracingIncludes: {
     "/**": ["./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs"],
+    // The quarterly review PDF reads its fonts from disk.
+    "/api/clients/[id]/quarterly": ["./node_modules/@fontsource/{lato,noto-sans,source-serif-4}/files/*-{latin,latin-ext}-{400,600,700}-{normal,italic}.woff"],
   },
   experimental: {
     // CAS / report PDFs are uploaded through server actions (bucket limit is 25 MB).
