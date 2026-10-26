@@ -143,12 +143,12 @@ export async function navNeeds(tx: Tx, clientId: string, quarterEnd: string): Pr
   const codes = await tx<{ code: string }[]>`
     select distinct coalesce(m.amfi_code, sm.amfi_code) as code
     from (select h.security_id, h.isin from public.v_holding_live h where h.client_id = ${clientId}
-          union select t.security_id, t.isin from public.portfolio_transactions t where t.client_id = ${clientId}) x
+          union select t.security_id, t.isin from public.v_cas_transactions t where t.client_id = ${clientId}) x
     left join public.security_master sm on sm.id = x.security_id
     left join public.mf_schemes m on m.isin = coalesce(x.isin, sm.isin)
     where coalesce(m.amfi_code, sm.amfi_code) is not null`;
   const bench = await listBenchmarks(tx);
-  const [first] = await tx<{ d: string | null }[]>`select min(transaction_date)::text as d from public.portfolio_transactions where client_id = ${clientId}`;
+  const [first] = await tx<{ d: string | null }[]>`select min(transaction_date)::text as d from public.v_cas_transactions where client_id = ${clientId}`;
   const start = await windowStartOf(tx, clientId, quarterEnd, b, first?.d ?? null);
   return { codes: [...codes.map((c) => c.code), ...bench.map((x) => x.amfi)], from: addDaysIso(start, -10), to: b.today };
 }
@@ -175,7 +175,7 @@ export async function gatherReview(tx: Tx, clientId: string, quarterEnd: string,
   const txRows = await tx<{ security_id: string | null; name: string; date: string; et: string; side: "BUY" | "SELL"; units: number | null; amount: number }[]>`
     select t.security_id, coalesce(sm.scheme_name, t.scheme_name) as name, t.transaction_date::text as date, t.effective_type as et, x.side,
            (abs(t.units) * x.dir)::float8 as units, (abs(t.amount) * x.dir)::float8 as amount
-    from public.portfolio_transactions t
+    from public.v_cas_transactions t
     left join public.security_master sm on sm.id = t.security_id
     cross join lateral (
       select case when t.effective_type in ('REDEMPTION', 'SWITCH_OUT') then 'SELL' else 'BUY' end as side,

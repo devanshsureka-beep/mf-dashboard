@@ -154,12 +154,6 @@ export function buildQuarterlyReport(raw: RawReview, inputs: QuarterlyInputs): Q
 
   // ---- Holdings -----------------------------------------------------------
   const value = sum(raw.funds.map((f) => f.value));
-  // Gain on cost only over funds whose cost the CAS gives.
-  const costed = raw.funds.filter((f) => f.cost != null);
-  const cost = sum(costed.map((f) => f.cost!));
-  const valueCosted = sum(costed.map((f) => f.value));
-  const noCost = raw.funds.filter((f) => f.cost == null).map((f) => shortName(f.name));
-  if (noCost.length) warnings.push(`No cost in the CAS for ${noCost.join(", ")}: left out of gain on cost.`);
   const casValue = sum(raw.funds.map((f) => f.casValue));
   if (!raw.funds.length) errors.push("No holdings: confirm a CAS for this client first.");
 
@@ -300,6 +294,20 @@ export function buildQuarterlyReport(raw: RawReview, inputs: QuarterlyInputs): Q
 
   // Lifetime XIRR: the CAS trades and the CAS units at today's NAV (trades confirmed after the CAS are in
   // neither), only with a year of history and only when the history explains every unit held.
+  // Cost of each fund: the CAS cost, else (many CAS layouts print none) the cost of the units still held,
+  // oldest sold first, when the CAS history explains every unit. Gain on cost covers only funds with a cost.
+  const costByKey = new Map<string, number | null>(raw.funds.map((f) => {
+    if (f.cost != null) return [f.key, f.cost];
+    const lot = lotsByKey.get(f.key);
+    const known = lot && lot.opening <= Math.max(0.01, f.units * 0.005) && lot.lots.every((l) => l.costPerUnit != null);
+    return [f.key, known ? sum(lot.lots.map((l) => l.units * l.costPerUnit!)) : null];
+  }));
+  const costOf = (key: string) => costByKey.get(key) ?? null;
+  const costed = raw.funds.filter((f) => costOf(f.key) != null);
+  const cost = sum(costed.map((f) => costOf(f.key)!));
+  const valueCosted = sum(costed.map((f) => f.value));
+  const noCost = raw.funds.filter((f) => costOf(f.key) == null).map((f) => shortName(f.name));
+  if (noCost.length) warnings.push(`No cost for ${noCost.length === raw.funds.length ? "any fund" : noCost.join(", ")}: the CAS gives none and its history does not start early enough. ${noCost.length === raw.funds.length ? "Gain on cost is left out" : "Left out of gain on cost"}; a full-history CAS fixes it.`);
   const explained = raw.funds.every((f) => (lotsByKey.get(f.key)?.opening ?? f.units) <= Math.max(0.01, f.units * 0.005));
   const allFlows = raw.txns.filter((t) => !t.approved && !t.reinvest && t.date <= asOf).map((t) => ({ date: t.date, amount: t.side === "BUY" ? -t.amount : t.amount }));
   const lifetimeXirr = years >= 1 && explained ? xirr([...allFlows, { date: asOf, amount: value }]) : null;
@@ -317,7 +325,8 @@ export function buildQuarterlyReport(raw: RawReview, inputs: QuarterlyInputs): Q
     const sellLines: RebalanceSell[] = open.filter((l) => l.side === "SELL").map((l) => {
       const f = fundOf.get(l.key);
       const units = f?.nav ? l.left / f.nav : null;
-      const gain = f && f.value > 0 && f.cost != null ? l.left * (1 - f.cost / f.value) : null;
+      const c = costOf(l.key);
+      const gain = f && f.value > 0 && c != null ? l.left * (1 - c / f.value) : null;
       return { key: l.key, name: nameOf(l.key, l.name), units, value: l.left, gain };
     });
     const redeemed = sum(sellLines.map((s) => s.value));
@@ -356,7 +365,8 @@ export function buildQuarterlyReport(raw: RawReview, inputs: QuarterlyInputs): Q
           : lt < 1e-6 ? `Short-term${lot.cls === "EQUITY" ? " at 20%" : " at slab"}${firstDate && longTermFrom(firstDate, lot.cls) ? `; long-term from ${dayMon(longTermFrom(firstDate, lot.cls)!, true)}` : ""}`
           : "Part long-term, part short-term";
       }
-      taxLines.push({ name: s.name, value: s.value, cost: f && f.value > 0 && f.cost != null ? s.value * (f.cost / f.value) : null, gain: s.gain, treatment });
+      const c = costOf(s.key);
+      taxLines.push({ name: s.name, value: s.value, cost: f && f.value > 0 && c != null ? s.value * (c / f.value) : null, gain: s.gain, treatment });
     }
   }
   const exemptionLeft = gains.exemptionLeft;
@@ -379,7 +389,7 @@ export function buildQuarterlyReport(raw: RawReview, inputs: QuarterlyInputs): Q
     const why = own?.why ?? (status === "EXIT" ? "Being sold as part of the plan." : status === "LOCKED" && unlock ? `Lock-in: the last units unlock on ${dayMon(unlock, true)}.` : "");
     const chosen = f.key in raw.fundIndex;
     return {
-      key: f.key, isin: f.isin, index: chosen ? raw.fundIndex[f.key] : defaultIndex(f.category, f.name), indexIsDefault: !chosen, name: shortName(f.name), value: f.value, weight: value ? f.value / value : 0, onCost: f.cost != null && f.cost > 0 ? f.value / f.cost - 1 : null,
+      key: f.key, isin: f.isin, index: chosen ? raw.fundIndex[f.key] : defaultIndex(f.category, f.name), indexIsDefault: !chosen, name: shortName(f.name), value: f.value, weight: value ? f.value / value : 0, onCost: (costOf(f.key) ?? 0) > 0 ? f.value / costOf(f.key)! - 1 : null,
       sinceCas: f.casValue > 0 ? f.value / f.casValue - 1 : null, status, why,
     };
   }).sort((a, b) => b.value - a.value);

@@ -217,12 +217,20 @@ export async function createSnapshotFromParsed(tx: Tx, a: CreateSnapshotArgs): P
     balance_units: t.balance_units ?? null, description: t.description ?? null, dedupe_hash: transactionDedupeHash(t),
   }));
   for (const chunk of chunks(txnRows, 500)) {
-    await tx`insert into public.portfolio_transactions ${tx(chunk)} on conflict (client_id, dedupe_hash) do nothing`;
+    // Skips a transaction already stored, whether by the same hash or as the same trade under another
+    // type label (portfolio_transactions_same_trade: folio, fund, date, units, amount, balance).
+    await tx`insert into public.portfolio_transactions ${tx(chunk)} on conflict do nothing`;
     // Every transaction this CAS shows belongs to it, including ones an earlier copy already stored.
     await tx`
       insert into public.portfolio_snapshot_transactions (snapshot_id, transaction_id, client_id)
       select ${snapshotId}, t.id, t.client_id from public.portfolio_transactions t
-      where t.client_id = ${a.clientId} and t.dedupe_hash = any(${chunk.map((r) => r.dedupe_hash)}::text[])
+      where t.client_id = ${a.clientId}
+        and (t.dedupe_hash = any(${chunk.map((r) => r.dedupe_hash)}::text[])
+             or (coalesce(t.folio_number, ''), coalesce(t.isin, lower(t.scheme_name)), t.transaction_date, t.units, t.amount, coalesce(t.balance_units, -1))
+                in (select * from unnest(
+                  ${chunk.map((r) => r.folio_number ?? "")}::text[], ${chunk.map((r) => r.isin ?? r.scheme_name.toLowerCase())}::text[],
+                  ${chunk.map((r) => r.transaction_date)}::date[], ${chunk.map((r) => r.units)}::numeric[],
+                  ${chunk.map((r) => r.amount)}::numeric[], ${chunk.map((r) => r.balance_units ?? -1)}::numeric[])))
       on conflict do nothing`;
   }
 

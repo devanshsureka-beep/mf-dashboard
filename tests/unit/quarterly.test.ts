@@ -221,6 +221,13 @@ describe("review fixes", () => {
   it("leaves a fund without a CAS cost out of gain on cost", () => {
     const r = buildQuarterlyReport({ ...RAW, funds: [RAW.funds[0], { ...RAW.funds[0], key: "b", name: "Beta Fund", value: 1000000, cost: null }] }, {});
     expect(r.totals.gain).toBe(2000);
-    expect(r.checks.warnings.join(" ")).toMatch(/No cost in the CAS for Beta/);
+    expect(r.checks.warnings.join(" ")).toMatch(/No cost for Beta/);
+  });
+
+  it("takes a fund's cost from its transactions when the CAS gives none", () => {
+    const r = buildQuarterlyReport({ ...RAW, funds: [{ ...RAW.funds[0], cost: null }] }, {});
+    expect(r.totals.cost).toBe(10000);
+    expect(r.health[0].onCost).toBeCloseTo(0.2);
+    expect(r.checks.warnings.join(" ")).not.toMatch(/No cost/);
   });
 });
