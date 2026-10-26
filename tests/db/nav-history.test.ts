@@ -35,11 +35,14 @@ describeDb("NAV history", () => {
       // Daily feed: today's NAV for a tracked code lands in the history.
       await ctx.asSuper((t) => ingestNavFeed(t, { navDate: "2026-10-12", schemes: [
         { isin: "INF000Q01001", amfi_code: "900001", scheme_name: "Q Fund - Direct Plan - Growth", amc: null, category: null, plan_type: "DIRECT", option_type: "GROWTH", nav: 121.5, nav_date: "2026-10-12" },
+        { isin: "INF000Q01027", amfi_code: "119063", scheme_name: "Benchmark Nifty 50 Index - Direct Plan - Growth", amc: null, category: null, plan_type: "DIRECT", option_type: "GROWTH", nav: 250, nav_date: "2026-10-12" },
         { isin: "INF000Q01019", amfi_code: "900003", scheme_name: "Untracked - Direct Plan - Growth", amc: null, category: null, plan_type: "DIRECT", option_type: "GROWTH", nav: 50, nav_date: "2026-10-12" },
       ] }, "test"));
       const after = await ctx.as("advisor", (t) => navSeries(t, ["900001", "900003"], "2026-10-10", "2026-12-31"));
       expect(after.get("900001")).toEqual([{ date: "2026-10-12", nav: 121.5 }]);
       expect(after.get("900003")).toBeUndefined();
+      // Benchmark index funds build history from the feed even if never fetched.
+      expect((await ctx.as("advisor", (t) => navSeries(t, ["119063"], "2026-10-12", "2026-10-12"))).get("119063")).toEqual([{ date: "2026-10-12", nav: expect.any(Number) }]);
       expect(calls.sort()).toEqual(["900001", "900002"]);
     });
   });

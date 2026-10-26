@@ -117,11 +117,18 @@ export const EQUITY_LTCG_EXEMPTION = 125_000;
 export const LTCG_RATE = 0.125;
 export const STCG_EQUITY_RATE = 0.2;
 
-export interface LotTxn { date: string; units: number; amount: number }
+/** A buy (+units) or sale (−units). `reversal`: a bounced buy taking its units back (no gain or loss). */
+export interface LotTxn { date: string; units: number; amount: number; reversal?: boolean }
 export interface Lot { date: string | null; units: number; costPerUnit: number | null }
 export interface Realised { date: string; units: number; proceeds: number; cost: number | null; gain: number | null; term: "LT" | "ST" | "UNKNOWN" }
 
-const longTermAfterDays = (c: TaxClass) => (c === "EQUITY" ? 365 : c === "LONG24" ? 730 : Infinity);
+/** Months a lot must be held for its gain to be long-term (held MORE than this: a sale on the anniversary is short-term). */
+export const longTermMonths = (c: TaxClass) => (c === "EQUITY" ? 12 : c === "LONG24" ? 24 : Infinity);
+/** First day a lot bought on `date` is long-term (the day after the anniversary). */
+export function longTermFrom(date: string, cls: TaxClass): string | null {
+  const m = longTermMonths(cls);
+  return Number.isFinite(m) ? addDaysIso(addMonths(date, m), 1) : null;
+}
 
 /**
  * Walk one fund's buys (+units) and sells (−units) oldest first. `openingUnits` are units held before
@@ -131,10 +138,22 @@ const longTermAfterDays = (c: TaxClass) => (c === "EQUITY" ? 365 : c === "LONG24
 export function fifo(txns: readonly LotTxn[], cls: TaxClass, openingUnits = 0): { lots: Lot[]; realised: Realised[] } {
   const lots: Lot[] = openingUnits > 1e-6 ? [{ date: null, units: openingUnits, costPerUnit: null }] : [];
   const realised: Realised[] = [];
+  // Same day: buys before sales and reversals, so a bounce on the instalment's own date finds it.
   const sorted = [...txns].sort((a, b) => a.date.localeCompare(b.date) || b.units - a.units);
   for (const t of sorted) {
     if (t.units > 0) {
       lots.push({ date: t.date, units: t.units, costPerUnit: t.amount / t.units });
+      continue;
+    }
+    if (t.reversal) {
+      // Undo the latest buys first (the bounced instalment is the most recent one); nothing is realised.
+      let back = -t.units;
+      for (let i = lots.length - 1; i >= 0 && back > 1e-6; i--) {
+        const take = Math.min(lots[i].units, back);
+        lots[i].units -= take;
+        back -= take;
+        if (lots[i].units <= 1e-6) lots.splice(i, 1);
+      }
       continue;
     }
     let left = -t.units;
@@ -144,7 +163,8 @@ export function fifo(txns: readonly LotTxn[], cls: TaxClass, openingUnits = 0): 
       const take = Math.min(lot.units, left);
       const proceeds = take * pricePerUnit;
       const cost = lot.costPerUnit == null ? null : take * lot.costPerUnit;
-      const term = lot.date == null ? "UNKNOWN" : daysBetween(lot.date, t.date) > longTermAfterDays(cls) ? "LT" : "ST";
+      const from = lot.date == null ? null : longTermFrom(lot.date, cls);
+      const term = lot.date == null ? "UNKNOWN" : from && t.date >= from ? "LT" : "ST";
       realised.push({ date: t.date, units: take, proceeds, cost, gain: cost == null ? null : proceeds - cost, term });
       lot.units -= take;
       left -= take;
@@ -179,9 +199,8 @@ export function fyGains(rows: readonly (Realised & { cls: TaxClass })[], fy: { s
 
 /** Lots that turn long-term between two dates (worth waiting for before a sale). */
 export function lotsTurningLong(lots: readonly Lot[], cls: TaxClass, from: string, to: string): { date: string; units: number }[] {
-  const days = longTermAfterDays(cls);
-  if (!Number.isFinite(days)) return [];
-  return lots.filter((l) => l.date).map((l) => ({ date: addDaysIso(l.date!, days + 1), units: l.units })).filter((x) => x.date > from && x.date <= to);
+  return lots.filter((l) => l.date).map((l) => ({ date: longTermFrom(l.date!, cls), units: l.units }))
+    .filter((x): x is { date: string; units: number } => x.date != null && x.date > from && x.date <= to);
 }
 
 export function addDaysIso(date: string, days: number): string {

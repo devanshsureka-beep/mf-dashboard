@@ -115,12 +115,22 @@ export async function navSeries(tx: Tx, codes: string[], from: string, to: strin
   return out;
 }
 
-/** The daily NAV feed keeps every tracked code current (called by ingestNavFeed). */
+/**
+ * The daily NAV feed records today's NAV for every benchmark index fund, every fund a client holds and
+ * every code already fetched, so history builds up from the feed even if the history source is down.
+ */
 export async function appendTrackedNavs(tx: Tx): Promise<number> {
   const res = await tx`
+    with tracked as (
+      select amfi_code as code from public.nav_history_fetches
+      union select index_fund_amfi_code from public.benchmark_indices
+      union select m.amfi_code from public.portfolio_holdings h
+            join public.v_latest_snapshot l on l.snapshot_id = h.snapshot_id
+            join public.mf_schemes m on m.isin = h.isin
+    )
     insert into public.nav_history (amfi_code, nav_date, nav)
     select distinct on (ms.amfi_code) ms.amfi_code, ms.nav_date, ms.nav
-    from public.mf_schemes ms join public.nav_history_fetches f on f.amfi_code = ms.amfi_code
+    from public.mf_schemes ms join tracked t on t.code = ms.amfi_code
     where ms.nav is not null and ms.nav_date is not null
     order by ms.amfi_code, ms.nav_date desc
     on conflict (amfi_code, nav_date) do nothing`;

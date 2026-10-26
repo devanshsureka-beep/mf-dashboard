@@ -28,6 +28,10 @@ export async function GET(req: NextRequest, ctx: RouteContext<"/api/clients/[id]
   if (!preview && actor.role === "OPERATIONS") return NextResponse.json({ error: "Only advisors and admins download reviews." }, { status: 403 });
   const back = new URL(`/clients/${id}/quarterly?q=${q}`, req.url);
   try {
+    // A download is kept with the client's records: only someone who advises this client may make one.
+    if (!preview && !(await withUserTx(actor, (tx) => tx<{ ok: boolean }[]>`select app.can_advise_client(${id}) as ok`))[0]?.ok) {
+      return NextResponse.json({ error: "Only the client's advisor or an admin downloads reviews." }, { status: 403 });
+    }
     const { report } = await buildReviewFor(actor, id, q, { fetchNavs: true });
     if (!preview && report.checks.errors.length) {
       back.searchParams.set("blocked", "1");
@@ -40,7 +44,7 @@ export async function GET(req: NextRequest, ctx: RouteContext<"/api/clients/[id]
       const path = objectPath(id, "QUARTERLY_REVIEW", { sha256, fileName: name });
       try {
         await uploadAsService(path, { bytes: pdf, sha256, fileName: name, mimeType: "application/pdf", size: pdf.length });
-        await withUserTx(actor, (tx) => recordReviewFile(tx, actor, { clientId: id, quarterEnd: q, filePath: path, fileName: name, size: pdf.length, sha256, asOf: report.asOf }));
+        await withUserTx(actor, (tx) => recordReviewFile(tx, actor, { clientId: id, quarterEnd: q, filePath: path, fileName: name, size: pdf.length, sha256, asOf: report.windowEnd }));
       } catch (e) {
         // The advisor still gets the PDF; the missing copy is logged.
         logServerError("quarterly-review-store", e);

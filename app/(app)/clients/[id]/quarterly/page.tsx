@@ -2,7 +2,7 @@ import Link from "next/link";
 import { ActionForm, SubmitButton } from "@/components/app/action-form";
 import { PageHeader } from "@/components/app/page-header";
 import { Field, Input, Select, Textarea } from "@/components/ui/form";
-import { FUND_STATUSES } from "@/lib/domain/quarterly-inputs";
+import { FUND_STATUSES, fieldKey } from "@/lib/domain/quarterly-inputs";
 import { dayMon, DEFAULT_RATES, isQuarterEnd, quarterLabel } from "@/lib/domain/quarterly";
 import type { QuarterlyReport } from "@/lib/domain/quarterly-report";
 import { AppError } from "@/lib/errors";
@@ -115,7 +115,7 @@ function Review({ r, g, ctx, navMissing, canEdit, id, q, benchmarks }: {
             <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">Downloaded</div>
             <ul className="mt-1 space-y-0.5">
               {ctx.files.map((f) => (
-                <li key={f.id}><a className="text-brand hover:underline" href={`/api/clients/${id}/quarterly/file/${f.id}`}>{f.file_name}</a> <span className="text-xs text-muted">· NAVs of {dayMon(f.as_of, true)} · {formatDateTime(f.created_at)}{f.created_by_name ? ` · ${f.created_by_name}` : ""}</span></li>
+                <li key={f.id}><a className="text-brand hover:underline" href={`/api/clients/${id}/quarterly/file/${f.id}`}>{f.file_name}</a> <span className="text-xs text-muted">· period to {dayMon(f.as_of, true)} · {formatDateTime(f.created_at)}{f.created_by_name ? ` · ${f.created_by_name}` : ""}</span></li>
               ))}
             </ul>
           </div>
@@ -172,12 +172,12 @@ function Review({ r, g, ctx, navMissing, canEdit, id, q, benchmarks }: {
                         <td className="py-1.5 pr-2 font-medium">{h.name}</td>
                         <td className="py-1.5 text-right tabular-nums">{formatINRCompact(h.value)}</td>
                         <td className="py-1 pl-3">
-                          <Select name={`funds.${h.key}.status`} defaultValue={inp.funds?.[h.key]?.status ?? ""} className="w-28">
+                          <Select name={`funds.${fieldKey(h.key)}.status`} defaultValue={inp.funds?.[h.key]?.status ?? ""} className="w-28">
                             <option value="">{gen?.status ? `${gen.status} (auto)` : "—"}</option>
                             {FUND_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
                           </Select>
                         </td>
-                        <td className="py-1 pl-3"><Input name={`funds.${h.key}.why`} defaultValue={inp.funds?.[h.key]?.why ?? ""} placeholder={gen?.why || "Why (shown in the PDF)"} maxLength={140} /></td>
+                        <td className="py-1 pl-3"><Input name={`funds.${fieldKey(h.key)}.why`} defaultValue={inp.funds?.[h.key]?.why ?? ""} placeholder={gen?.why || "Why (shown in the PDF)"} maxLength={140} /></td>
                         <td className="py-1 pl-3">
                           {h.isin ? (
                             <>
@@ -206,10 +206,10 @@ function Review({ r, g, ctx, navMissing, canEdit, id, q, benchmarks }: {
                 {r.rebalance.buys.map((b) => (
                   <div key={b.key} className="grid items-center gap-2 md:grid-cols-[1.4fr_0.6fr_0.6fr_0.6fr_2fr]">
                     <span className="text-sm font-medium">{b.name} <span className="text-xs text-muted">{formatINR(b.amount)}</span></span>
-                    <Select name={`lumpsum.${b.key}`} defaultValue={inp.lumpsum?.[b.key] ?? ""} aria-label={`Lumpsum ${b.name}`}><option value="">Lumpsum: confirm</option><option value="OPEN">Lumpsum OPEN</option><option value="PAUSED">Lumpsum PAUSED</option></Select>
-                    <Select name={`sipOpen.${b.key}`} defaultValue={inp.sipOpen?.[b.key] ?? ""} aria-label={`SIP ${b.name}`}><option value="">SIP: OPEN</option><option value="OPEN">SIP OPEN</option><option value="PAUSED">SIP PAUSED</option></Select>
+                    <Select name={`lumpsum.${fieldKey(b.key)}`} defaultValue={inp.lumpsum?.[b.key] ?? ""} aria-label={`Lumpsum ${b.name}`}><option value="">Lumpsum: confirm</option><option value="OPEN">Lumpsum OPEN</option><option value="PAUSED">Lumpsum PAUSED</option></Select>
+                    <Select name={`sipOpen.${fieldKey(b.key)}`} defaultValue={inp.sipOpen?.[b.key] ?? ""} aria-label={`SIP ${b.name}`}><option value="">SIP: OPEN</option><option value="OPEN">SIP OPEN</option><option value="PAUSED">SIP PAUSED</option></Select>
                     <span />
-                    <Input name={`buyWhy.${b.key}`} defaultValue={inp.buyWhy?.[b.key] ?? ""} placeholder={g.rebalance?.buys.find((x) => x.key === b.key)?.why || "Why"} maxLength={90} />
+                    <Input name={`buyWhy.${fieldKey(b.key)}`} defaultValue={inp.buyWhy?.[b.key] ?? ""} placeholder={g.rebalance?.buys.find((x) => x.key === b.key)?.why || "Why"} maxLength={90} />
                   </div>
                 ))}
               </div>
@@ -229,7 +229,7 @@ function Review({ r, g, ctx, navMissing, canEdit, id, q, benchmarks }: {
                 {r.sip.rows.map((s) => (
                   <div key={s.id} className="grid items-center gap-2 md:grid-cols-[1.4fr_2fr]">
                     <span className="text-sm">{s.name} <span className="text-xs text-muted">{s.amount ? `${formatINR(s.amount)}/month` : "Stop"}</span></span>
-                    <Input name={`sipWhy.${s.id}`} defaultValue={inp.sipWhy?.[s.id] ?? ""} placeholder={g.sip.rows.find((x) => x.id === s.id)?.why || "Why"} maxLength={90} aria-label={`Why ${s.name}`} />
+                    <Input name={`sipWhy.${fieldKey(s.id)}`} defaultValue={inp.sipWhy?.[s.id] ?? ""} placeholder={g.sip.rows.find((x) => x.id === s.id)?.why || "Why"} maxLength={90} aria-label={`Why ${s.name}`} />
                   </div>
                 ))}
               </div>

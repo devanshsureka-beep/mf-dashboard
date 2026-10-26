@@ -76,24 +76,39 @@ export function valuationRead(peNow: number, median: number): { gap: number; rea
   return { gap, read: gap <= -0.1 ? "CHEAP" : gap >= 0.1 ? "STRETCHED" : "FAIR" };
 }
 
+/** A fund or line key inside a form field name: dots and other characters encoded (names often hold "."). */
+export function fieldKey(key: string): string {
+  return encodeURIComponent(key).replace(/\./g, "%2E");
+}
+
+const UNSAFE = new Set(["__proto__", "constructor", "prototype"]);
+
 /**
- * The form's fields (dotted names: "funds.<key>.status", "story.2.title", "rates.base") into the
- * inputs object. Blank fields are left out, so a blank field falls back to the generated text.
+ * The form's fields (dotted names: "funds.<key>.status", "story.2.title", "rates.base"; keys encoded with
+ * fieldKey) into the inputs object. Blank fields are left out, so a blank field falls back to the
+ * generated text. Unknown or unsafe names are dropped (zod rejects anything else).
  */
 export function inputsFromEntries(entries: Iterable<[string, string]>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [name, raw] of entries) {
     const value = raw.trim();
     if (!value || name.startsWith("$") || name.startsWith("index.")) continue;
-    const parts = name.split(".");
+    let parts: string[];
+    try {
+      parts = name.split(".").map((x) => decodeURIComponent(x));
+    } catch {
+      continue;
+    }
+    if (parts.some((x) => UNSAFE.has(x) || x === "")) continue;
     let node: Record<string, unknown> = out;
     for (let i = 0; i < parts.length - 1; i++) {
       const k = parts[i];
       const nextIsIndex = /^\d+$/.test(parts[i + 1]);
-      node[k] ??= nextIsIndex ? [] : {};
+      if (!Object.prototype.hasOwnProperty.call(node, k)) node[k] = nextIsIndex ? [] : {};
       node = node[k] as Record<string, unknown>;
+      if (typeof node !== "object" || node === null) break;
     }
-    node[parts[parts.length - 1]] = value;
+    if (typeof node === "object" && node !== null) node[parts[parts.length - 1]] = value;
   }
   // Arrays from slots: keep the slots' positions (empty slots become blank entries).
   for (const k of ["story", "actions"]) {

@@ -10,7 +10,7 @@ import { formatINR, formatINRCompact } from "@/lib/format";
 import { assetClass } from "./book";
 import { marketCap, mix, type CapBucket, type MixRow } from "./market-cap";
 import {
-  DEFAULT_RATES, addDaysIso, dayMon, daysBetween, fifo, fyGains, fyOf, lineStatus, lotsTurningLong, navOn, nextReviewLabel, pctChange,
+  DEFAULT_RATES, addDaysIso, addMonths, dayMon, daysBetween, longTermFrom, fifo, fyGains, fyOf, lineStatus, lotsTurningLong, navOn, nextReviewLabel, pctChange,
   projectValue, PROJECTION_YEARS, quarterLabel, reconciles, replay, scanForbidden, taxClassOf, xirr, yearsToReach,
   type FyGains, type LineStatus, type LotTxn, type NavPoint, type Rates, type Realised, type TaxClass,
 } from "./quarterly";
@@ -22,13 +22,20 @@ import { valuationRead, type FundStatus, type MarketContext, type QuarterlyInput
 
 export interface RawFund {
   key: string; isin: string | null; amfi: string | null; name: string; category: string | null; amc: string | null;
-  units: number; value: number; cost: number; casValue: number; nav: number | null;
+  /** CAS cost; null when the CAS gives none (left out of gain on cost). */
+  units: number; value: number; cost: number | null; casValue: number; nav: number | null;
 }
-/** A CAS transaction or an approved trade not yet in a CAS: units and amount are positive. */
-export interface RawTxn { key: string; name: string; date: string; side: "BUY" | "SELL"; units: number | null; amount: number; approved?: boolean }
+/**
+ * A CAS transaction or an approved trade not yet in a CAS. Units and amount are positive, except for a
+ * reversal (a bounced instalment, a reversed redemption): both negative, `reversal` set. A dividend
+ * reinvested (`reinvest`) adds units but is not new money.
+ */
+export interface RawTxn { key: string; name: string; date: string; side: "BUY" | "SELL"; units: number | null; amount: number; approved?: boolean; reversal?: boolean; reinvest?: boolean }
 export interface RawPlanLine {
   key: string; name: string; side: "SELL" | "BUY"; planned: number; doneCas: number; approved: number; left: number;
   reason: string | null; advisedOn: string | null; doneOn: string | null;
+  /** The plan calls the line complete (counted done even if a little short). */
+  completed?: boolean;
 }
 export interface RawSip { id: string; key: string; name: string; category: string | null; action: "START" | "STOP" | "CHANGE"; oldAmount: number; newAmount: number; status: string; notes: string | null }
 export interface Benchmark { code: string; name: string; amfi: string }
@@ -96,7 +103,7 @@ export interface QuarterlyReport {
   structure: { rows: { label: CapBucket; before: number | null; now: number; after: number }[]; amc: { name: string; now: number; after: number }[]; changes: boolean };
   sip: { rows: SipRow[]; fromNext: number; lastQuarter: number; noNewMoney: string[] };
   market: { moves: { label: string; pct: number }[]; valuations: { index: string; peNow: number; median: number; gap: number; read: string }[]; asOf: string | null };
-  tax: { fy: string; gains: FyGains; lines: TaxLine[]; estTax: number; exitLoad: number; historyFrom: string | null; unknownLots: boolean; turningLong: { date: string; name: string; value: number }[] };
+  tax: { fy: string; gains: FyGains; lines: TaxLine[]; estTax: number; slabExcluded: boolean; exitLoad: number; historyFrom: string | null; unknownLots: boolean; turningLong: { date: string; name: string; value: number }[] };
   projections: { start: number; sip: number; rates: Rates; rows: { label: string; key: keyof Rates | "invested"; values: number[] }[]; crossesCrore: number | null };
   actions: Action[];
   checks: { errors: string[]; warnings: string[] };
@@ -147,7 +154,12 @@ export function buildQuarterlyReport(raw: RawReview, inputs: QuarterlyInputs): Q
 
   // ---- Holdings -----------------------------------------------------------
   const value = sum(raw.funds.map((f) => f.value));
-  const cost = sum(raw.funds.map((f) => f.cost));
+  // Gain on cost only over funds whose cost the CAS gives.
+  const costed = raw.funds.filter((f) => f.cost != null);
+  const cost = sum(costed.map((f) => f.cost!));
+  const valueCosted = sum(costed.map((f) => f.value));
+  const noCost = raw.funds.filter((f) => f.cost == null).map((f) => shortName(f.name));
+  if (noCost.length) warnings.push(`No cost in the CAS for ${noCost.join(", ")}: left out of gain on cost.`);
   const casValue = sum(raw.funds.map((f) => f.casValue));
   if (!raw.funds.length) errors.push("No holdings: confirm a CAS for this client first.");
 
@@ -156,14 +168,13 @@ export function buildQuarterlyReport(raw: RawReview, inputs: QuarterlyInputs): Q
   const windowEnd = raw.today > asOf ? raw.today : asOf;
   const inWindow = raw.txns.filter((t) => t.date >= windowStart && t.date <= windowEnd);
   const unitsOf = (t: RawTxn) => {
-    if (t.units && t.units > 0) return t.units;
+    if (t.units) return t.units;
     const fund = fundOf.get(t.key) ?? soldOf.get(t.key);
     const nav = (fund?.amfi && navOn(raw.navs.get(fund.amfi), t.date)) || navNow(t.key);
     return nav ? t.amount / nav : 0;
   };
-  const buys = inWindow.filter((t) => t.side === "BUY");
+  const buys = inWindow.filter((t) => t.side === "BUY" && !t.reinvest);
   const sells = inWindow.filter((t) => t.side === "SELL");
-  const deployed = sum(buys.map((t) => t.amount));
   const recycled = sum(sells.map((t) => t.amount));
 
   // ---- Scorecard: every fund that got new money ---------------------------
@@ -191,31 +202,30 @@ export function buildQuarterlyReport(raw: RawReview, inputs: QuarterlyInputs): Q
       if (last && (!indexAsOf || last < indexAsOf)) indexAsOf = last;
     }
     return { key, name: nameOf(key, b[0].name), newIn, worth, ret: newIn ? worth / newIn - 1 : 0, index: bm?.name ?? null, ahead: rep ? worth - rep.value : null };
-  }).sort((a, b) => b.newIn - a.newIn);
+  })
+    // A fund whose only window move was a reversal of an earlier buy has no new money to show.
+    .filter((r) => r.newIn > 0.5).sort((a, b) => b.newIn - a.newIn);
+  const deployed = sum(rows.map((r) => r.newIn));
+  const scored = new Set(rows.map((r) => r.key));
   const worthAll = sum(rows.map((r) => r.worth));
   if (unpriced.length) warnings.push(`No NAV for ${unpriced.join(", ")}: valued at cost. Check the fund is in the daily NAV list.`);
   const newRet = deployed ? worthAll / deployed - 1 : null;
-  const niftyRep = niftySeries && buys.length ? replay(buys.map((t) => ({ date: t.date, amount: t.amount })), niftySeries, asOf) : null;
+  const niftyRep = niftySeries && rows.length ? replay(buys.filter((t) => scored.has(t.key)).map((t) => ({ date: t.date, amount: t.amount })), niftySeries, asOf) : null;
   const compared = rows.filter((r) => r.ahead != null);
-  if (buys.length && !niftyRep) warnings.push("Nifty 50 history is not available yet: the Nifty comparison is left blank.");
+  if (rows.length && !niftyRep) warnings.push("Nifty 50 history is not available yet: the Nifty comparison is left blank.");
   const noIndex = rows.filter((r) => r.index && r.ahead == null).map((r) => r.name);
   if (noIndex.length) warnings.push(`Index history missing for: ${noIndex.join(", ")}. Their index column is blank.`);
   if (raw.navFailed.length) warnings.push(`Could not fetch past NAVs for ${raw.navFailed.length} scheme(s) (AMFI codes ${raw.navFailed.join(", ")}); try again later.`);
   if (indexAsOf && daysBetween(indexAsOf, asOf) > 7) warnings.push(`Index NAVs run to ${dayMonth(indexAsOf)} only; the comparison is to that date.`);
 
   // ---- Totals --------------------------------------------------------------
-  const allFlows = raw.txns.filter((t) => t.date <= asOf).map((t) => ({ date: t.date, amount: t.side === "BUY" ? -t.amount : t.amount }));
-  const firstTxn = raw.txns.map((t) => t.date).sort()[0] ?? null;
+  const firstTxn = raw.txns.filter((t) => !t.approved).map((t) => t.date).sort()[0] ?? null;
   const years = firstTxn ? daysBetween(firstTxn, asOf) / 365 : 0;
-  // Lifetime XIRR only with a full year of history, and only when the history explains the book.
-  const explained = Math.abs(sum(raw.txns.filter((t) => t.side === "BUY").map((t) => t.amount)) - sum(raw.txns.filter((t) => t.side === "SELL").map((t) => t.amount)) - cost) < Math.max(5000, cost * 0.05);
-  const lifetimeXirr = years >= 1 && explained ? xirr([...allFlows, { date: asOf, amount: value }]) : null;
-  const totals = { value, cost, gain: value - cost, gainPct: cost ? value / cost - 1 : 0, casValue, sinceCas: value - casValue, sinceCasPct: casValue ? value / casValue - 1 : 0, funds: raw.funds.length, xirr: lifetimeXirr, years };
 
   // ---- Plan vs execution ---------------------------------------------------
   const planRows: PlanRow[] = [];
   for (const l of raw.planLines) {
-    const st = lineStatus(l.planned, l.doneCas, l.approved);
+    const st = l.completed ? "DONE" : lineStatus(l.planned, l.doneCas, l.approved);
     const bits = [`Planned ${money(l.planned)}`];
     if (l.doneCas > 0.5) bits.push(`${l.side === "SELL" ? "redeemed" : "invested"} ${money(l.doneCas)}${l.doneOn ? ` (latest ${dayMonth(l.doneOn)})` : ""}`);
     if (l.approved > 0.5) bits.push(`${money(l.approved)} confirmed by you, not in a CAS yet`);
@@ -270,7 +280,11 @@ export function buildQuarterlyReport(raw: RawReview, inputs: QuarterlyInputs): Q
   const taxKeys = new Set([...raw.funds.map((f) => f.key), ...raw.txns.filter((t) => t.side === "SELL" && t.date >= fy.start).map((t) => t.key)]);
   for (const key of taxKeys) {
     const t = raw.txns.filter((x) => x.key === key && !x.approved);
-    const txns: LotTxn[] = t.map((x) => ({ date: x.date, units: x.side === "BUY" ? unitsOf(x) : -unitsOf(x), amount: x.side === "BUY" ? x.amount : -x.amount }));
+    const txns: LotTxn[] = t.map((x) => ({
+      date: x.date, units: x.side === "BUY" ? unitsOf(x) : -unitsOf(x), amount: x.side === "BUY" ? x.amount : -x.amount,
+      // A bounced buy cancels that buy's units; it is not a sale.
+      ...(x.reversal && x.side === "BUY" ? { reversal: true } : {}),
+    }));
     const net = sum(txns.map((x) => x.units));
     const held = fundOf.get(key)?.units ?? 0;
     const opening = Math.max(0, held - net);
@@ -284,17 +298,26 @@ export function buildQuarterlyReport(raw: RawReview, inputs: QuarterlyInputs): Q
   const gains = fyGains(realisedAll, fy);
   const unknownLots = [...lotsByKey.values()].some((x) => x.opening > 1e-3);
 
+  // Lifetime XIRR: the CAS trades and the CAS units at today's NAV (trades confirmed after the CAS are in
+  // neither), only with a year of history and only when the history explains every unit held.
+  const explained = raw.funds.every((f) => (lotsByKey.get(f.key)?.opening ?? f.units) <= Math.max(0.01, f.units * 0.005));
+  const allFlows = raw.txns.filter((t) => !t.approved && !t.reinvest && t.date <= asOf).map((t) => ({ date: t.date, amount: t.side === "BUY" ? -t.amount : t.amount }));
+  const lifetimeXirr = years >= 1 && explained ? xirr([...allFlows, { date: asOf, amount: value }]) : null;
+  const totals = { value, cost, gain: valueCosted - cost, gainPct: cost ? valueCosted / cost - 1 : 0, casValue, sinceCas: value - casValue, sinceCasPct: casValue ? value / casValue - 1 : 0, funds: raw.funds.length, xirr: lifetimeXirr, years };
+
   // ---- Rebalance (what the plan still has to do) --------------------------
   const open = raw.planLines.filter((l) => l.left > 0.5);
   let rebalance: QuarterlyReport["rebalance"] = null;
   const taxLines: TaxLine[] = [];
   let rebalanceLt = 0;
   let rebalanceSt = 0;
+  let rebalanceLong24 = 0;
+  let slabGains = false;
   if (open.length) {
     const sellLines: RebalanceSell[] = open.filter((l) => l.side === "SELL").map((l) => {
       const f = fundOf.get(l.key);
       const units = f?.nav ? l.left / f.nav : null;
-      const gain = f && f.value > 0 ? l.left * (1 - f.cost / f.value) : null;
+      const gain = f && f.value > 0 && f.cost != null ? l.left * (1 - f.cost / f.value) : null;
       return { key: l.key, name: nameOf(l.key, l.name), units, value: l.left, gain };
     });
     const redeemed = sum(sellLines.map((s) => s.value));
@@ -321,20 +344,23 @@ export function buildQuarterlyReport(raw: RawReview, inputs: QuarterlyInputs): Q
         const g = s.gain ?? 0;
         const share = s.units ? lt / s.units : 1;
         if (lot.cls === "EQUITY") { rebalanceLt += g * share; rebalanceSt += g * (1 - share); }
+        // Gold, silver, overseas: 12.5% long-term with no exemption; short-term (and debt) at the client's slab.
+        if (lot.cls === "LONG24") rebalanceLong24 += g * share;
+        if (g > 0 && (lot.cls === "SLAB" || (lot.cls === "LONG24" && share < 1))) slabGains = true;
         const loss = g < 0;
         const firstDate = lot.lots[0]?.date;
         treatment = loss
           ? `${st > lt ? "Short" : "Long"}-term loss; offsets gains`
           : lot.cls === "SLAB" ? "Taxed at your slab rate"
           : st < 1e-6 ? `${sim.some((r) => r.term === "UNKNOWN") ? `Bought before ${dayMon(raw.txns.map((t) => t.date).sort()[0] ?? asOf, true)}, so likely long-term` : "Long-term"}${lot.cls === "EQUITY" ? ", inside the ₹1.25L limit if room is left" : ""}`
-          : lt < 1e-6 ? `Short-term${lot.cls === "EQUITY" ? " at 20%" : " at slab"}${firstDate ? `; long-term from ${dayMonth(addDaysIso(firstDate, lot.cls === "EQUITY" ? 366 : 731))}` : ""}`
+          : lt < 1e-6 ? `Short-term${lot.cls === "EQUITY" ? " at 20%" : " at slab"}${firstDate && longTermFrom(firstDate, lot.cls) ? `; long-term from ${dayMon(longTermFrom(firstDate, lot.cls)!, true)}` : ""}`
           : "Part long-term, part short-term";
       }
-      taxLines.push({ name: s.name, value: s.value, cost: f && f.value > 0 ? s.value * (f.cost / f.value) : null, gain: s.gain, treatment });
+      taxLines.push({ name: s.name, value: s.value, cost: f && f.value > 0 && f.cost != null ? s.value * (f.cost / f.value) : null, gain: s.gain, treatment });
     }
   }
   const exemptionLeft = gains.exemptionLeft;
-  const estTax = Math.max(0, rebalanceLt - exemptionLeft) * 0.125 + Math.max(0, rebalanceSt) * 0.2;
+  const estTax = Math.max(0, rebalanceLt - exemptionLeft) * 0.125 + Math.max(0, rebalanceSt) * 0.2 + Math.max(0, rebalanceLong24) * 0.125;
   const turningLong = [...lotsByKey].flatMap(([key, x]) => (fundOf.has(key) && x.cls === "EQUITY"
     ? lotsTurningLong(x.lots, x.cls, asOf, addDaysIso(asOf, 183)).map((l) => ({ date: l.date, name: nameOf(key, ""), value: l.units * (navNow(key) ?? 0) }))
     : [])).filter((l) => l.value >= 1000).sort((a, b) => a.date.localeCompare(b.date)).slice(0, 6);
@@ -346,12 +372,14 @@ export function buildQuarterlyReport(raw: RawReview, inputs: QuarterlyInputs): Q
     const lot = lotsByKey.get(f.key);
     const elss = /elss|tax ?saver/i.test(`${f.category ?? ""} ${f.name}`);
     const youngest = lot?.lots.filter((l) => l.date).map((l) => l.date!).sort().pop();
-    const locked = elss && youngest && daysBetween(youngest, asOf) < 3 * 365;
+    // ELSS units are locked for three years from allotment.
+    const unlock = youngest ? addDaysIso(addMonths(youngest, 36), 1) : null;
+    const locked = elss && unlock && asOf < unlock;
     const status: FundStatus | null = own?.status ?? (exiting.has(f.key) ? "EXIT" : locked ? "LOCKED" : null);
-    const why = own?.why ?? (status === "EXIT" ? "Being sold as part of the plan." : status === "LOCKED" && youngest ? `Lock-in: the last units unlock on ${dayMonth(addDaysIso(youngest, 3 * 365 + 1))} ${addDaysIso(youngest, 3 * 365 + 1).slice(0, 4)}.` : "");
+    const why = own?.why ?? (status === "EXIT" ? "Being sold as part of the plan." : status === "LOCKED" && unlock ? `Lock-in: the last units unlock on ${dayMon(unlock, true)}.` : "");
     const chosen = f.key in raw.fundIndex;
     return {
-      key: f.key, isin: f.isin, index: chosen ? raw.fundIndex[f.key] : defaultIndex(f.category, f.name), indexIsDefault: !chosen, name: shortName(f.name), value: f.value, weight: value ? f.value / value : 0, onCost: f.cost > 0 ? f.value / f.cost - 1 : null,
+      key: f.key, isin: f.isin, index: chosen ? raw.fundIndex[f.key] : defaultIndex(f.category, f.name), indexIsDefault: !chosen, name: shortName(f.name), value: f.value, weight: value ? f.value / value : 0, onCost: f.cost != null && f.cost > 0 ? f.value / f.cost - 1 : null,
       sinceCas: f.casValue > 0 ? f.value / f.casValue - 1 : null, status, why,
     };
   }).sort((a, b) => b.value - a.value);
@@ -439,10 +467,10 @@ export function buildQuarterlyReport(raw: RawReview, inputs: QuarterlyInputs): Q
   const sellNames = [...new Set(sells.map((t) => nameOf(t.key, t.name)))];
   const generatedStory = [
     { when: monthName(windowStart).toUpperCase(), title: sells.length ? "The reshuffle" : "The plan", text: sells.length ? `Sold ${money(recycled)} of ${sellNames.slice(0, 2).join(" and ")}${sellNames.length > 2 ? " and others" : ""}; the money went into the new core.` : `${raw.planName ?? "Your plan"} set the direction for this quarter.` },
-    { when: `${dayMonth(windowStart)} – ${dayMonth(casDate)}`, title: "Building the new core", text: deployed ? `${money(deployed)} put to work in total: ${money(Math.min(recycled, deployed))} recycled from sales plus ${money(Math.max(0, deployed - recycled))} of fresh money.` : "No new money went in during the quarter." },
+    { when: `${dayMonth(windowStart)} – ${dayMonth(windowEnd)}`, title: "Building the new core", text: deployed ? `${money(deployed)} put to work in total: ${money(Math.min(recycled, deployed))} recycled from sales plus ${money(Math.max(0, deployed - recycled))} of fresh money.` : "No new money went in during the quarter." },
     { when: dayMonth(asOf).toUpperCase(), title: "Where it stands", text: `Book ${money(value)}.${newRet != null ? ` New money ${pctTxt(newRet)}` : ""}${niftyRet != null ? ` while the Nifty 50 is ${pctTxt(niftyRet)} on the same dates.` : "."}` },
     { when: "THIS WEEK", title: "The fix", text: rebalance ? `${rebalance.redeemed > 0.5 ? `Redeem ${money(rebalance.redeemed)}` : ""}${rebalance.redeemed > 0.5 && rebalance.reinvested > 0.5 ? " and reinvest " : rebalance.reinvested > 0.5 ? "Invest " : ""}${rebalance.reinvested > 0.5 ? `${money(rebalance.reinvested)} across ${rebalance.buys.length} fund${rebalance.buys.length === 1 ? "" : "s"}` : ""}.${fromNext ? ` ${money(fromNext)} SIP a month.` : ""}` : fromNext ? `Keep the ${money(fromNext)} monthly SIP running.` : "No changes this quarter; hold the book." },
-    { when: "AHEAD", title: "Where it heads", text: `${projections.crossesCrore != null && projections.crossesCrore > 0 ? `On our ${(rates.base * 100).toFixed(0)}% base case the book crosses ₹1 Cr in about ${Math.round(projections.crossesCrore)} years${fromNext ? ` with the ${money(fromNext)} SIP` : ""}. ` : ""}Next review: ${nextReview}.` },
+    { when: "AHEAD", title: "Where it heads", text: `${projections.crossesCrore != null && projections.crossesCrore > 0 ? `On our ${(rates.base * 100).toFixed(0)}% base case the book crosses ₹1 Cr ${croreWhen(projections.crossesCrore)}${fromNext ? ` with the ${money(fromNext)} SIP` : ""}. ` : ""}Next review: ${nextReview}.` },
   ];
   // Each card the advisor wrote replaces that card; the others stay generated.
   const story = generatedStory.map((g, i) => {
@@ -531,7 +559,7 @@ export function buildQuarterlyReport(raw: RawReview, inputs: QuarterlyInputs): Q
     structure: { rows: structureRows, amc, changes },
     sip: { rows: sipRows, fromNext, lastQuarter: raw.sipMonthly, noNewMoney },
     market: { moves, valuations, asOf: raw.market.asOf ?? null },
-    tax: { fy: fy.label, gains, lines: taxLines, estTax, exitLoad: inputs.exitLoad ?? 0, historyFrom, unknownLots, turningLong },
+    tax: { fy: fy.label, gains, lines: taxLines, estTax, slabExcluded: slabGains, exitLoad: inputs.exitLoad ?? 0, historyFrom, unknownLots, turningLong },
     projections,
     actions,
     checks: { errors, warnings },
@@ -539,6 +567,11 @@ export function buildQuarterlyReport(raw: RawReview, inputs: QuarterlyInputs): Q
   const forbidden = scanForbidden(allText(report), raw.otherClientNames);
   for (const f of forbidden) errors.push(`The text contains ${f}; remove it before downloading.`);
   return report;
+}
+
+/** "within a year" or "in about 11 years". */
+export function croreWhen(years: number): string {
+  return years < 1 ? "within a year" : `in about ${Math.round(years)} year${Math.round(years) === 1 ? "" : "s"}`;
 }
 
 function shortCategory(category: string | null, name: string): string {
@@ -557,5 +590,6 @@ export function allText(r: QuarterlyReport): string {
     ...r.story.flatMap((s) => [s.when, s.title, s.text]),
     ...r.health.map((h) => h.why), ...r.sip.rows.map((s) => s.why), ...(r.rebalance?.buys ?? []).map((b) => b.why),
     ...r.actions.flatMap((a) => [a.title, a.detail, a.when]), ...r.plan.rows.map((p) => `${p.what} ${p.detail}`),
+    ...r.sip.noNewMoney, ...r.market.valuations.map((v) => v.index), r.market.asOf ?? "",
   ].join("\n");
 }

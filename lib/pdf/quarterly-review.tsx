@@ -11,7 +11,7 @@ import type { Styles } from "@react-pdf/renderer";
 type Style = Styles[string];
 import type { ReactNode } from "react";
 import { formatINR, formatINRCompact } from "@/lib/format";
-import type { QuarterlyReport } from "@/lib/domain/quarterly-report";
+import { croreWhen, type QuarterlyReport } from "@/lib/domain/quarterly-report";
 import { dayMon, PROJECTION_YEARS } from "@/lib/domain/quarterly";
 
 export const RIA = "SEBI RIA INA000017639";
@@ -576,7 +576,8 @@ function Tax({ r }: { r: QuarterlyReport }) {
           ) : null}
           <View style={{ height: 12 }} />
           <Kpis items={[
-            ...(tx.lines.length ? [{ label: "Est. tax on rebalance", value: R(tx.estTax), color: tx.estTax < 1 ? C.green : C.ink, sub: tx.estTax < 1 ? "within the exemption" : "12.5% LT above the limit, 20% ST" }] : []),
+            ...(tx.lines.length ? [{ label: "Est. tax on rebalance", value: R(tx.estTax), color: tx.estTax < 1 && !tx.slabExcluded ? C.green : C.ink,
+              sub: tx.slabExcluded ? "plus slab-rate tax on short-term / debt gains" : tx.estTax < 1 ? "within the exemption" : "12.5% LT above the limit, 20% ST" }] : []),
             { label: `${tx.fy} gains booked`, value: R(Math.max(0, tx.gains.equityLt) + Math.max(0, tx.gains.equitySt)), sub: `long-term ${L(Math.max(0, tx.gains.equityLt))} · short-term ${L(Math.max(0, tx.gains.equitySt))}` },
             { label: "₹1.25L limit left", value: R(tx.gains.exemptionLeft), color: C.green, sub: "tax-free long-term equity gains" },
             ...(tx.exitLoad ? [{ label: "Est. exit load", value: `~${R(tx.exitLoad)}` }] : []),
@@ -639,7 +640,7 @@ function Projections({ r }: { r: QuarterlyReport }) {
             ...PROJECTION_YEARS.map((yr, i) => ({ head: `${yr}Y`, w: 1.1, align: "right" as const, cell: (x: (typeof p.rows)[number]) => L(x.values[i]).replace(/(\.\d)0(?=L|Cr)/, "$1") })),
           ]} />
           <Callout style={{ marginTop: 12 }}>
-            {p.crossesCrore != null && p.crossesCrore > 0 ? <Text style={s.b}>On the Base path the book crosses ₹1 Cr in about {Math.round(p.crossesCrore)} year{Math.round(p.crossesCrore) === 1 ? "" : "s"}. </Text> : null}
+            {p.crossesCrore != null && p.crossesCrore > 0 ? <Text style={s.b}>On the Base path the book crosses ₹1 Cr {croreWhen(p.crossesCrore)}. </Text> : null}
             Starting point: {L(p.start)} on {date(r.asOf, false)}{p.sip ? ` plus the ${R(p.sip)} monthly SIP` : ""}. The Nifty 50 line shows the same money in a plain index fund.
           </Callout>
           <Text style={[s.small, { marginTop: 6 }]}>

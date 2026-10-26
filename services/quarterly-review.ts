@@ -116,12 +116,23 @@ async function basics(tx: Tx, clientId: string): Promise<Basics> {
   return { client: { id: c.id, name: c.name, code: c.code }, onboarding: c.onboarding, activePlanId: c.plan_id, planName: c.plan_name, planStart: c.plan_start, casDate: c.cas_date, snapshotId: c.snapshot_id, today: c.today };
 }
 
-/** Start of the review window: the day after the last review's NAV date, else the plan's start, else onboarding. */
+/** Start of the review window: the day after the last downloaded review's period end, else the plan's start, else onboarding. */
 async function windowStartOf(tx: Tx, clientId: string, quarterEnd: string, b: Basics, firstTxn: string | null): Promise<string> {
   const [prev] = await tx<{ as_of: string }[]>`
     select max(f.as_of)::text as as_of from public.quarterly_review_files f join public.quarterly_reviews r on r.id = f.review_id
     where f.client_id = ${clientId} and r.quarter_end < ${quarterEnd}`;
   return prev?.as_of ? addDaysIso(prev.as_of, 1) : b.planStart ?? b.onboarding ?? firstTxn ?? b.casDate;
+}
+
+/** Amount of an execution (`e`, security `m`): its amount, else units × its price, else units × today's NAV. */
+const execAmount = (tx: Tx) => tx`coalesce(nullif(e.executed_amount, 0), e.executed_units * e.execution_price, e.executed_units * m.nav, 0)`;
+
+/** An execution `e` confirmed by the client or advisor that the CAS figures do not include (v_client_bank, 0048). */
+function approvedSql(tx: Tx, clientId: string) {
+  return tx`(e.cas_verified_at is null and e.verification_type in ('CLIENT_CONFIRMED', 'ADVISOR_CONFIRMED')
+    and not coalesce((select e.execution_date < l.snapshot_date and e.created_at >= coalesce(ps.reviewed_at, ps.created_at)
+                      from public.v_latest_snapshot l join public.portfolio_snapshots ps on ps.id = l.snapshot_id
+                      where l.client_id = ${clientId}), false))`;
 }
 
 const KEY = (securityId: string | null, name: string) => securityId ?? `name:${name.trim().toLowerCase()}`;
@@ -150,7 +161,7 @@ export async function gatherReview(tx: Tx, clientId: string, quarterEnd: string,
     select coalesce(h.security_id::text, 'name:' || lower(trim(h.scheme_name))) as key,
            max(coalesce(h.isin, sm.isin)) as isin, max(coalesce(m.amfi_code, sm.amfi_code)) as amfi,
            max(coalesce(sm.scheme_name, h.scheme_name)) as name, max(coalesce(m.category, sm.category)) as category, max(coalesce(m.amc, sm.amc)) as amc,
-           sum(h.units)::float8 as units, sum(h.live_value)::float8 as value, sum(coalesce(h.cost_value, 0))::float8 as cost,
+           sum(h.units)::float8 as units, sum(h.live_value)::float8 as value, (case when bool_and(h.cost_value is not null) then sum(h.cost_value) end)::float8 as cost,
            sum(coalesce(h.cas_value, 0))::float8 as "casValue", max(h.nav)::float8 as nav, max(h.nav_date)::text as nav_date
     from public.v_holding_live h
     left join public.security_master sm on sm.id = h.security_id
@@ -159,23 +170,34 @@ export async function gatherReview(tx: Tx, clientId: string, quarterEnd: string,
     group by 1`;
   const asOf = funds.map((f) => f.nav_date).filter((d): d is string => !!d).sort().pop() ?? b.today;
 
-  const txRows = await tx<{ security_id: string | null; name: string; date: string; et: string; units: number | null; amount: number | null }[]>`
-    select t.security_id, coalesce(sm.scheme_name, t.scheme_name) as name, t.transaction_date::text as date, t.effective_type as et,
-           abs(t.units)::float8 as units, abs(t.amount)::float8 as amount
-    from public.portfolio_transactions t left join public.security_master sm on sm.id = t.security_id
-    where t.client_id = ${clientId}
-      and t.effective_type in ('PURCHASE', 'SIP', 'SWITCH_IN', 'REDEMPTION', 'SWITCH_OUT', 'DIVIDEND_REINVESTMENT')
-      and coalesce(t.amount, 0) <> 0
-    order by t.transaction_date`;
-  const txns: RawTxn[] = txRows
-    .filter((t) => t.et !== "DIVIDEND_REINVESTMENT")
-    .map((t) => ({ key: KEY(t.security_id, t.name), name: t.name, date: t.date, side: ["REDEMPTION", "SWITCH_OUT"].includes(t.et) ? "SELL" : "BUY", units: t.units, amount: t.amount ?? 0 }));
-  // Trades confirmed by the client or advisor that no CAS shows yet.
+  // Direction from the units' sign: a bounced / reversed instalment (negative units on a purchase, or an
+  // "OTHER" row taking units out) cancels that buy; a reversed redemption cancels that sale.
+  const txRows = await tx<{ security_id: string | null; name: string; date: string; et: string; side: "BUY" | "SELL"; units: number | null; amount: number }[]>`
+    select t.security_id, coalesce(sm.scheme_name, t.scheme_name) as name, t.transaction_date::text as date, t.effective_type as et, x.side,
+           (abs(t.units) * x.dir)::float8 as units, (abs(t.amount) * x.dir)::float8 as amount
+    from public.portfolio_transactions t
+    left join public.security_master sm on sm.id = t.security_id
+    cross join lateral (
+      select case when t.effective_type in ('REDEMPTION', 'SWITCH_OUT') then 'SELL' else 'BUY' end as side,
+             case when t.effective_type in ('REDEMPTION', 'SWITCH_OUT') then (case when t.units > 0 then -1 else 1 end)
+                  when t.units < 0 or (t.units is null and t.amount < 0) then -1 else 1 end as dir) x
+    where t.client_id = ${clientId} and coalesce(t.amount, 0) <> 0
+      and (t.effective_type in ('PURCHASE', 'SIP', 'SWITCH_IN', 'REDEMPTION', 'SWITCH_OUT', 'DIVIDEND_REINVESTMENT')
+           or (t.effective_type = 'OTHER' and t.units < 0))
+    order by t.transaction_date, x.dir desc`;
+  const txns: RawTxn[] = txRows.map((t) => ({
+    key: KEY(t.security_id, t.name), name: t.name, date: t.date, side: t.side, units: t.units, amount: t.amount,
+    ...(t.amount < 0 ? { reversal: true } : {}), ...(t.et === "DIVIDEND_REINVESTMENT" ? { reinvest: true } : {}),
+  }));
+  // Trades confirmed by the client or advisor that no CAS shows yet: the v_client_bank rule (migration 0048).
+  // A trade dated after the latest CAS, or one approved before that CAS was confirmed that it still does not show.
+  // A trade placed by units with no amount is valued at its price, else today's NAV.
   const approved = await tx<{ security_id: string; name: string; date: string; action: string; amount: number; units: number | null }[]>`
-    select e.security_id, sm.scheme_name as name, e.execution_date::text as date, ai.action, e.executed_amount::float8 as amount, e.executed_units::float8 as units
+    select e.security_id, sm.scheme_name as name, e.execution_date::text as date, ai.action,
+           ${execAmount(tx)}::float8 as amount, e.executed_units::float8 as units
     from public.executions e join public.advice_items ai on ai.id = e.advice_item_id join public.security_master sm on sm.id = e.security_id
-    where e.client_id = ${clientId} and e.status in ('EXECUTED', 'PARTIAL') and e.cas_verified_at is null
-      and e.verification_type in ('CLIENT_CONFIRMED', 'ADVISOR_CONFIRMED') and e.execution_date >= ${b.casDate}::date`;
+    left join public.mf_schemes m on m.isin = sm.isin
+    where e.client_id = ${clientId} and e.status in ('EXECUTED', 'PARTIAL') and ${approvedSql(tx, clientId)}`;
   for (const a of approved) txns.push({ key: a.security_id, name: a.name, date: a.date, side: a.action === "BUY" ? "BUY" : "SELL", units: a.units, amount: a.amount, approved: true });
   txns.sort((x, y) => x.date.localeCompare(y.date));
   const firstTxn = txns[0]?.date ?? null;
@@ -191,14 +213,18 @@ export async function gatherReview(tx: Tx, clientId: string, quarterEnd: string,
   const planLines = b.activePlanId ? await tx<RawPlanLine[]>`
     select v.security_id::text as key, v.scheme_name as name, v.side, v.target_amount::float8 as planned,
            coalesce(x.done_cas, 0)::float8 as "doneCas", coalesce(x.approved, 0)::float8 as approved,
-           (coalesce(v.yet_to_advise_amount, 0) + coalesce(v.pending_amount, 0))::float8 as left, v.reason,
+           -- A line the plan calls complete has nothing left to do (a unit-based exit can land a little short).
+           (case when v.progress_status = 'COMPLETED' then 0
+                 else coalesce(v.yet_to_advise_amount, 0) + coalesce(v.pending_amount, 0) end)::float8 as left,
+           v.progress_status = 'COMPLETED' as completed, v.reason,
            (v.last_advised_at at time zone 'Asia/Kolkata')::date::text as "advisedOn", x.last_done::text as "doneOn"
     from public.v_plan_item_progress v
     left join lateral (
-      select sum(e.executed_amount) filter (where not (e.cas_verified_at is null and e.verification_type in ('CLIENT_CONFIRMED', 'ADVISOR_CONFIRMED') and e.execution_date >= ${b.casDate}::date)) as done_cas,
-             sum(e.executed_amount) filter (where e.cas_verified_at is null and e.verification_type in ('CLIENT_CONFIRMED', 'ADVISOR_CONFIRMED') and e.execution_date >= ${b.casDate}::date) as approved,
+      select sum(${execAmount(tx)}) filter (where not ${approvedSql(tx, clientId)}) as done_cas,
+             sum(${execAmount(tx)}) filter (where ${approvedSql(tx, clientId)}) as approved,
              max(e.execution_date) as last_done
       from public.executions e join public.advice_items ai on ai.id = e.advice_item_id
+      left join public.security_master sm on sm.id = e.security_id left join public.mf_schemes m on m.isin = sm.isin
       where ai.plan_item_id = v.plan_item_id and e.status in ('EXECUTED', 'PARTIAL')) x on true
     where v.plan_id = ${b.activePlanId} and v.side in ('SELL', 'BUY') and v.item_status <> 'CANCELLED' and v.target_amount > 0.5
     order by v.side desc, v.target_amount desc` : [];

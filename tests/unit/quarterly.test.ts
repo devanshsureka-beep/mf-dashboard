@@ -154,3 +154,73 @@ describe("quarterly report", () => {
     expect(r.windowEnd).toBe("2026-10-12");
   });
 });
+
+describe("bounced instalments", () => {
+  it("cancel their own units in the lots, with nothing realised", () => {
+    const { lots, realised } = fifo([
+      { date: "2024-01-05", units: 10, amount: 1000 },
+      { date: "2026-05-05", units: 8, amount: 1600 },
+      { date: "2026-05-05", units: -8, amount: -1600, reversal: true },
+      { date: "2026-06-05", units: 9, amount: 1800 },
+    ], "EQUITY");
+    expect(realised).toEqual([]);
+    expect(lots.map((l) => [l.date, l.units])).toEqual([["2024-01-05", 10], ["2026-06-05", 9]]);
+  });
+
+  it("reduce the new money instead of adding to it", () => {
+    const r = buildQuarterlyReport({
+      ...RAW,
+      txns: [
+        { key: "a", name: "Alpha", date: "2026-07-10", side: "BUY", units: 100, amount: 10000 },
+        { key: "a", name: "Alpha", date: "2026-08-10", side: "BUY", units: 20, amount: 2500 },
+        { key: "a", name: "Alpha", date: "2026-08-12", side: "BUY", units: -20, amount: -2500, reversal: true },
+      ],
+    }, {});
+    expect(r.money.deployed).toBe(10000);
+    expect(r.score.rows).toEqual([expect.objectContaining({ key: "a", newIn: 10000, worth: 12000 })]);
+    expect(r.tax.gains.equitySt).toBe(0);
+    expect(r.checks.errors).toEqual([]);
+  });
+});
+
+import { fieldKey } from "@/lib/domain/quarterly-inputs";
+
+describe("review fixes", () => {
+  it("drops unsafe form field names and keeps keys with dots", () => {
+    const raw = inputsFromEntries([["__proto__.polluted", "yes"], ["funds.constructor.status", "RED"], [`funds.${fieldKey("name:icici pru. value")}.status`, "AMBER"]]);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    expect(QuarterlyInputs.parse(raw)).toEqual({ funds: { "name:icici pru. value": { status: "AMBER" } } });
+  });
+
+  it("calls a sale on the anniversary short-term, even across a leap year", () => {
+    const sale = (date: string) => fifo([{ date: "2024-01-15", units: 1, amount: 100 }, { date, units: -1, amount: -120 }], "EQUITY").realised[0].term;
+    expect(sale("2025-01-15")).toBe("ST");
+    expect(sale("2025-01-16")).toBe("LT");
+  });
+
+  it("shows lifetime XIRR for a client who has sold, and ignores trades confirmed after the CAS", () => {
+    const r = buildQuarterlyReport({
+      ...RAW,
+      funds: [{ ...RAW.funds[0], units: 50, value: 6000, cost: 5000 }],
+      txns: [
+        { key: "a", name: "Alpha", date: "2024-07-10", side: "BUY", units: 100, amount: 10000 },
+        { key: "a", name: "Alpha", date: "2025-07-10", side: "SELL", units: 50, amount: 8000 },
+        { key: "a", name: "Alpha", date: "2026-10-05", side: "BUY", units: null, amount: 5000, approved: true },
+      ],
+    }, {});
+    expect(r.totals.xirr).not.toBeNull();
+    expect(r.totals.xirr!).toBeGreaterThan(0.1);
+  });
+
+  it("counts a line the plan calls complete as done, with nothing left to redeem", () => {
+    const r = buildQuarterlyReport({ ...RAW, planLines: [{ key: "a", name: "Alpha", side: "SELL", planned: 500000, doneCas: 480000, approved: 0, left: 0, reason: null, advisedOn: null, doneOn: "2026-08-01", completed: true }] }, {});
+    expect(r.plan.rows[0].status).toBe("DONE");
+    expect(r.rebalance).toBeNull();
+  });
+
+  it("leaves a fund without a CAS cost out of gain on cost", () => {
+    const r = buildQuarterlyReport({ ...RAW, funds: [RAW.funds[0], { ...RAW.funds[0], key: "b", name: "Beta Fund", value: 1000000, cost: null }] }, {});
+    expect(r.totals.gain).toBe(2000);
+    expect(r.checks.warnings.join(" ")).toMatch(/No cost in the CAS for Beta/);
+  });
+});
