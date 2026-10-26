@@ -10,11 +10,12 @@ import type { Styles } from "@react-pdf/renderer";
 
 type Style = Styles[string];
 import type { ReactNode } from "react";
-import { formatINR, formatINRCompact } from "@/lib/format";
+import { date, L, pageHeads, pct, R, RIA, share, signed } from "@/lib/domain/quarterly-format";
+import { formatINR } from "@/lib/format";
 import { croreWhen, type QuarterlyReport } from "@/lib/domain/quarterly-report";
-import { dayMon, PROJECTION_YEARS } from "@/lib/domain/quarterly";
+import { PROJECTION_YEARS } from "@/lib/domain/quarterly";
 
-export const RIA = "SEBI RIA INA000017639";
+export { RIA };
 
 // ---------------------------------------------------------------------------
 // Fonts
@@ -90,13 +91,6 @@ const s = StyleSheet.create({
 // Formatting
 // ---------------------------------------------------------------------------
 
-const minus = (t: string) => t.replace(/^-/, "−");
-const L = (x: number) => minus(formatINRCompact(x));
-const R = (x: number) => minus(formatINR(x));
-const signed = (x: number, full = true) => `${x >= 0 ? "+" : "−"}${(full ? formatINR : formatINRCompact)(Math.abs(x))}`;
-const pct = (x: number | null | undefined, d = 1) => (x == null ? "—" : `${x >= 0 ? "+" : "−"}${Math.abs(x * 100).toFixed(d)}%`);
-const share = (x: number | null | undefined) => (x == null ? "—" : `${(x * 100).toFixed(1)}%`);
-const date = (d: string, year = true) => dayMon(d, year);
 const up = (x: number | null | undefined) => (x == null ? C.ink : x >= 0 ? C.green : C.red);
 
 // ---------------------------------------------------------------------------
@@ -107,7 +101,8 @@ function Brand({ light }: { light?: boolean }) {
   return <Text style={[s.brand, light ? { color: "#FFFFFF" } : {}]}>UNIVEST <Text style={{ color: C.gold }}>WEALTH</Text></Text>;
 }
 
-function Frame({ r, section, eyebrow, title, children }: { r: QuarterlyReport; section: string; eyebrow: string; title: string; children: ReactNode }) {
+function Frame({ r, page, children }: { r: QuarterlyReport; page: string; children: ReactNode }) {
+  const { section, eyebrow, title } = pageHeads(r).find((p) => p.key === page)!;
   return (
     <Page size="A4" orientation="landscape" style={s.page}>
       <View style={s.head} fixed>
@@ -281,7 +276,7 @@ function Glance({ r }: { r: QuarterlyReport }) {
     m.ret != null ? { label: "Your new funds (actual)", value: m.ret, color: C.gold } : null,
   ].filter((b): b is { label: string; value: number; color: string } => b !== null);
   return (
-    <Frame r={r} section="Review at a glance" eyebrow="Snapshot" title="Review at a glance">
+    <Frame r={r} page="glance">
       <Kpis items={[
         { label: "Total invested (cost)", value: L(t.cost), sub: "current holdings, per CAS" },
         { label: `Value on ${date(r.asOf, false)}`, value: L(t.value), sub: `${L(t.casValue)} at your ${date(r.casDate, false)} CAS` },
@@ -313,7 +308,7 @@ function Glance({ r }: { r: QuarterlyReport }) {
 function Story({ r }: { r: QuarterlyReport }) {
   const m = r.money;
   return (
-    <Frame r={r} section="The story so far" eyebrow="This review in one page" title="The story so far">
+    <Frame r={r} page="story">
       <View style={{ flexDirection: "row", gap: 10, marginBottom: 16 }}>
         {r.story.map((c, i) => (
           <View key={i} style={{ flex: 1, backgroundColor: C.cream, borderTopWidth: 1.4, borderTopColor: C.gold, padding: 10, minHeight: 150 }}>
@@ -337,7 +332,7 @@ function Story({ r }: { r: QuarterlyReport }) {
 function Market({ r }: { r: QuarterlyReport }) {
   const mk = r.market;
   return (
-    <Frame r={r} section="Market context" eyebrow="The backdrop" title="What the market did">
+    <Frame r={r} page="market">
       <View style={{ flexDirection: "row", gap: 30 }}>
         <View style={{ flex: 1 }}>
           <Text style={s.h3}>Index moves over your review window</Text>
@@ -365,7 +360,7 @@ function Market({ r }: { r: QuarterlyReport }) {
 
 function Plan({ r }: { r: QuarterlyReport }) {
   return (
-    <Frame r={r} section="Plan vs execution" eyebrow="What you did" title="The plan: what went through">
+    <Frame r={r} page="plan">
       <Table rows={r.plan.rows} cols={[
         { head: "What happened", w: 3.2, bold: true, cell: (x) => x.what },
         { head: "Detail", w: 6.2, cell: (x) => x.detail },
@@ -379,7 +374,7 @@ function Plan({ r }: { r: QuarterlyReport }) {
 function Scorecard({ r }: { r: QuarterlyReport }) {
   const sc = r.score;
   return (
-    <Frame r={r} section="New-money scorecard" eyebrow="What you bought" title="Every rupee this period — fund by fund">
+    <Frame r={r} page="score">
       <Table rows={sc.rows} cols={[
         { head: "Fund", w: 3.4, bold: true, cell: (x) => x.name },
         { head: "New money in", w: 1.6, align: "right", cell: (x) => R(x.newIn) },
@@ -402,7 +397,7 @@ function Scorecard({ r }: { r: QuarterlyReport }) {
 function OldNew({ r }: { r: QuarterlyReport }) {
   const o = r.old!;
   return (
-    <Frame r={r} section="Old vs new portfolio" eyebrow="What the switch added" title="Old portfolio vs new — what we achieved">
+    <Frame r={r} page="old">
       <View style={{ flexDirection: "row", gap: 30 }}>
         <View style={{ flex: 1.1 }}>
           <Text style={s.h3}>The money we moved: {L(o.soldFor)}</Text>
@@ -439,7 +434,7 @@ function OldNew({ r }: { r: QuarterlyReport }) {
 
 function Health({ r }: { r: QuarterlyReport }) {
   return (
-    <Frame r={r} section="Fund health check" eyebrow="Every fund" title={`Fund health check at ${date(r.asOf, false)} NAVs`}>
+    <Frame r={r} page="health">
       <Table rows={r.health} cols={[
         { head: "Fund", w: 3.2, bold: true, cell: (x) => x.name },
         { head: `Value ${date(r.asOf, false)}`, w: 1.4, align: "right", cell: (x) => R(x.value) },
@@ -449,7 +444,7 @@ function Health({ r }: { r: QuarterlyReport }) {
         { head: "Status", w: 1, align: "center", cell: (x) => (x.status ? <Pill label={x.status} /> : "—") },
         { head: "Why", w: 4.6, cell: (x) => <Text style={[s.td, { color: C.muted }]}>{x.why}</Text> },
       ]} total={{ 0: "Portfolio", 1: R(r.totals.value), 2: "100%", 3: pct(r.totals.gainPct), ...(r.casDate < r.asOf ? { 4: pct(r.totals.sinceCasPct) } : {}) }} />
-      <Text style={[s.small, { marginTop: 6 }]}>Return on cost is absolute. Cost is the CAS cost value.</Text>
+      <Text style={[s.small, { marginTop: 6 }]}>Return on cost is absolute. Cost is the CAS cost, or worked out from your transactions when the CAS gives none.</Text>
     </Frame>
   );
 }
@@ -457,7 +452,7 @@ function Health({ r }: { r: QuarterlyReport }) {
 function Rebalance({ r }: { r: QuarterlyReport }) {
   const rb = r.rebalance!;
   return (
-    <Frame r={r} section="Rebalance" eyebrow="What we do now" title={`Rebalance — sell and buy, at ${date(r.asOf, false)} NAV`}>
+    <Frame r={r} page="rebalance">
       <Kpis items={[
         { label: "Redeemed", value: rb.redeemed ? R(rb.redeemed) : "—", sub: `${rb.sells.length} line${rb.sells.length === 1 ? "" : "s"}` },
         { label: "Reinvested", value: rb.reinvested ? R(rb.reinvested) : "—", sub: `${rb.buys.length} fund${rb.buys.length === 1 ? "" : "s"} · Direct plans` },
@@ -501,7 +496,7 @@ function Structure({ r }: { r: QuarterlyReport }) {
   const st = r.structure;
   const hasBefore = st.rows.some((x) => x.before != null);
   return (
-    <Frame r={r} section="Portfolio structure" eyebrow="Where the money sits" title={st.changes ? "Portfolio structure — now vs after" : "Portfolio structure"}>
+    <Frame r={r} page="structure">
       <View style={{ flexDirection: "row", gap: 30 }}>
         <View style={{ flex: 1.2 }}>
           <View style={{ flexDirection: "row", justifyContent: "space-around" }}>
@@ -542,7 +537,7 @@ function Structure({ r }: { r: QuarterlyReport }) {
 function Sip({ r }: { r: QuarterlyReport }) {
   const sp = r.sip;
   return (
-    <Frame r={r} section="SIP plan" eyebrow="Keep the engine running" title={sp.fromNext ? `Your ${R(sp.fromNext)} monthly SIP` : "Your SIP plan"}>
+    <Frame r={r} page="sip">
       <Kpis items={[
         { label: "Last quarter (average)", value: sp.lastQuarter ? `~${R(Math.round(sp.lastQuarter / 100) * 100)}` : "—", sub: "per month, from your CAS" },
         { label: "From next month", value: sp.fromNext ? R(sp.fromNext) : "—", color: C.gold, sub: `${sp.rows.filter((x) => x.amount > 0).length} fund${sp.rows.filter((x) => x.amount > 0).length === 1 ? "" : "s"}` },
@@ -562,7 +557,7 @@ function Sip({ r }: { r: QuarterlyReport }) {
 function Tax({ r }: { r: QuarterlyReport }) {
   const tx = r.tax;
   return (
-    <Frame r={r} section="Tax" eyebrow="What it costs" title={r.rebalance?.sells.length ? "Tax and cost of the rebalance" : `Tax and cost, ${tx.fy}`}>
+    <Frame r={r} page="tax">
       <View style={{ flexDirection: "row", gap: 30 }}>
         <View style={{ flex: 1.3 }}>
           {tx.lines.length ? (
@@ -611,7 +606,7 @@ function Projections({ r }: { r: QuarterlyReport }) {
   const ticks = [1e5, 2.5e5, 5e5, 1e6, 2.5e6, 5e6, 1e7, 2.5e7, 5e7, 1e8, 2.5e8, 5e8, 1e9].filter((t) => Math.log10(t) >= lo && Math.log10(t) <= hi);
   const color: Record<string, string> = { invested: C.pale, bear: C.steel, nifty: C.blue, base: C.gold, moonshot: C.navy };
   return (
-    <Frame r={r} section="Where this is heading" eyebrow="Projections" title="Where this is heading">
+    <Frame r={r} page="projections">
       <View style={{ flexDirection: "row", gap: 28 }}>
         <View style={{ width: W }}>
           <View style={{ width: W, height: H, position: "relative" }}>
@@ -654,7 +649,7 @@ function Projections({ r }: { r: QuarterlyReport }) {
 
 function Actions({ r }: { r: QuarterlyReport }) {
   return (
-    <Frame r={r} section="Next quarter" eyebrow="What we do next" title="Action plan">
+    <Frame r={r} page="actions">
       <View style={{ flexDirection: "row", borderBottomWidth: 0.9, borderBottomColor: C.navy, paddingBottom: 5 }}>
         <Text style={[s.th, { width: 24 }]}>#</Text><Text style={[s.th, { flex: 1 }]}>ACTION</Text><Text style={[s.th, { width: 110 }]}>WHEN</Text>
       </View>
@@ -682,18 +677,9 @@ function Actions({ r }: { r: QuarterlyReport }) {
 // ---------------------------------------------------------------------------
 
 /** The pages this client's report has, in order (for the form's table of contents too). */
+/** The pages this client's report has, in order (titles as printed). */
 export function pagesOf(r: QuarterlyReport): string[] {
-  return [
-    "Cover", "Review at a glance", "The story so far", "What the market did",
-    ...(r.plan.rows.length ? ["Plan vs execution"] : []),
-    ...(r.score.rows.length ? ["New-money scorecard"] : []),
-    ...(r.old ? ["Old vs new"] : []),
-    "Fund health check",
-    ...(r.rebalance ? ["Rebalance"] : []),
-    "Portfolio structure",
-    ...(r.sip.rows.length ? ["SIP plan"] : []),
-    "Tax", "Where this is heading", "Action plan",
-  ];
+  return pageHeads(r).map((p) => (p.key === "cover" ? "Cover" : p.section));
 }
 
 export function QuarterlyReviewDocument({ r }: { r: QuarterlyReport }) {

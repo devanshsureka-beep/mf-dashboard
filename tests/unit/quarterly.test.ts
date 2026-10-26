@@ -108,25 +108,29 @@ describe("quarterly review arithmetic", () => {
   });
 });
 
-import { inputsFromEntries, QuarterlyInputs } from "@/lib/domain/quarterly-inputs";
+import { QuarterlyInputs, setInput } from "@/lib/domain/quarterly-inputs";
 
-describe("quarterly review form", () => {
-  it("turns dotted fields into inputs and leaves blanks out", () => {
-    const raw = inputsFromEntries([
-      ["headline", "  A good quarter "], ["tagline", ""], ["$ACTION_ID", "x"], ["index.INF000", "NIFTY50"],
-      ["funds.k1.status", "AMBER"], ["funds.k1.why", "Watch it"], ["funds.k2.status", ""],
-      ["story.1.title", "Building"], ["actions.0.title", "Register the SIP"], ["actions.0.when", "This week"],
-      ["rates.base", "12"], ["exitLoad", "80"],
-    ]);
-    const parsed = QuarterlyInputs.parse(raw);
-    expect(parsed).toEqual({
+describe("quarterly review edits", () => {
+  it("sets and clears fields in place, dropping emptied objects", () => {
+    let d: QuarterlyInputs = {};
+    d = setInput(d, ["headline"], "A good quarter");
+    d = setInput(d, ["funds", "name:icici pru. value", "why"], "Watch it");
+    d = setInput(d, ["funds", "name:icici pru. value", "status"], "AMBER");
+    d = setInput(d, ["story"], [{ when: "", title: "", text: "" }, { when: "Aug", title: "Building", text: "x" }]);
+    expect(QuarterlyInputs.parse(d)).toEqual({
       headline: "A good quarter",
-      funds: { k1: { status: "AMBER", why: "Watch it" } },
-      story: [{ when: "", title: "", text: "" }, { when: "", title: "Building", text: "" }],
-      actions: [{ title: "Register the SIP", detail: "", when: "This week" }],
-      rates: { bear: 6.5, nifty: 11, base: 12, moonshot: 18.7 },
-      exitLoad: 80,
+      funds: { "name:icici pru. value": { status: "AMBER", why: "Watch it" } },
+      story: [{ when: "", title: "", text: "" }, { when: "Aug", title: "Building", text: "x" }],
     });
+    d = setInput(d, ["funds", "name:icici pru. value", "why"], undefined);
+    d = setInput(d, ["funds", "name:icici pru. value", "status"], undefined);
+    expect(d.funds).toBeUndefined();
+  });
+
+  it("ignores unsafe keys", () => {
+    const d = setInput({}, ["__proto__", "polluted"], "yes");
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    expect(d).toEqual({});
   });
 });
 
@@ -183,15 +187,7 @@ describe("bounced instalments", () => {
   });
 });
 
-import { fieldKey } from "@/lib/domain/quarterly-inputs";
-
 describe("review fixes", () => {
-  it("drops unsafe form field names and keeps keys with dots", () => {
-    const raw = inputsFromEntries([["__proto__.polluted", "yes"], ["funds.constructor.status", "RED"], [`funds.${fieldKey("name:icici pru. value")}.status`, "AMBER"]]);
-    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
-    expect(QuarterlyInputs.parse(raw)).toEqual({ funds: { "name:icici pru. value": { status: "AMBER" } } });
-  });
-
   it("calls a sale on the anniversary short-term, even across a leap year", () => {
     const sale = (date: string) => fifo([{ date: "2024-01-15", units: 1, amount: 100 }, { date, units: -1, amount: -120 }], "EQUITY").realised[0].term;
     expect(sale("2025-01-15")).toBe("ST");

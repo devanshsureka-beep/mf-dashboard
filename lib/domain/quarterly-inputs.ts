@@ -76,47 +76,25 @@ export function valuationRead(peNow: number, median: number): { gap: number; rea
   return { gap, read: gap <= -0.1 ? "CHEAP" : gap >= 0.1 ? "STRETCHED" : "FAIR" };
 }
 
-/** A fund or line key inside a form field name: dots and other characters encoded (names often hold "."). */
-export function fieldKey(key: string): string {
-  return encodeURIComponent(key).replace(/\./g, "%2E");
-}
-
 const UNSAFE = new Set(["__proto__", "constructor", "prototype"]);
 
 /**
- * The form's fields (dotted names: "funds.<key>.status", "story.2.title", "rates.base"; keys encoded with
- * fieldKey) into the inputs object. Blank fields are left out, so a blank field falls back to the
- * generated text. Unknown or unsafe names are dropped (zod rejects anything else).
+ * One edit on the review pages: `value` set at `path` ("funds", key, "why"), or removed when undefined
+ * (the automatic text comes back). Objects left empty are removed too. Never mutates; unsafe keys are ignored.
  */
-export function inputsFromEntries(entries: Iterable<[string, string]>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [name, raw] of entries) {
-    const value = raw.trim();
-    if (!value || name.startsWith("$") || name.startsWith("index.")) continue;
-    let parts: string[];
-    try {
-      parts = name.split(".").map((x) => decodeURIComponent(x));
-    } catch {
-      continue;
-    }
-    if (parts.some((x) => UNSAFE.has(x) || x === "")) continue;
-    let node: Record<string, unknown> = out;
-    for (let i = 0; i < parts.length - 1; i++) {
-      const k = parts[i];
-      const nextIsIndex = /^\d+$/.test(parts[i + 1]);
-      if (!Object.prototype.hasOwnProperty.call(node, k)) node[k] = nextIsIndex ? [] : {};
-      node = node[k] as Record<string, unknown>;
-      if (typeof node !== "object" || node === null) break;
-    }
-    if (typeof node === "object" && node !== null) node[parts[parts.length - 1]] = value;
+export function setInput<T extends object>(obj: T, path: readonly (string | number)[], value: unknown): T {
+  if (!path.length || path.some((k) => UNSAFE.has(String(k)))) return obj;
+  const [k, ...rest] = path;
+  const base = (Array.isArray(obj) ? [...obj] : { ...obj }) as Record<string | number, unknown>;
+  if (!rest.length) {
+    if (value === undefined) delete base[k];
+    else base[k] = value;
+    return base as T;
   }
-  // Arrays from slots: keep the slots' positions (empty slots become blank entries).
-  for (const k of ["story", "actions"]) {
-    const arr = out[k] as Record<string, string>[] | undefined;
-    if (arr) out[k] = Array.from({ length: arr.length }, (_, i) => ({ when: "", title: "", text: "", detail: "", ...(arr[i] ?? {}) }))
-      .map((x) => (k === "story" ? { when: x.when, title: x.title, text: x.text } : { title: x.title, detail: x.detail, when: x.when }));
-  }
-  // Rates are all-or-nothing: a partial set falls back to the defaults for the missing ones.
-  if (out.rates) out.rates = { bear: 6.5, nifty: 11, base: 14, moonshot: 18.7, ...(out.rates as object) };
-  return out;
+  const cur = base[k];
+  const child = cur && typeof cur === "object" ? cur : typeof rest[0] === "number" ? [] : {};
+  const next = setInput(child as object, rest, value);
+  if (!Array.isArray(next) && Object.keys(next).length === 0) delete base[k];
+  else base[k] = next;
+  return base as T;
 }
