@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getCurrentActor } from "@/lib/auth/session";
+import { getApiActor } from "@/lib/auth/session";
 import { withUserTx } from "@/lib/db/tx";
 import { AppError, logServerError } from "@/lib/errors";
 import { signedUrlForUser } from "@/lib/storage";
@@ -8,7 +8,7 @@ import { getReviewFile } from "@/services/quarterly-review";
 
 /** A quarterly review PDF downloaded earlier: a 60-second signed URL after an RLS-checked lookup. */
 export async function GET(_req: NextRequest, ctx: RouteContext<"/api/clients/[id]/quarterly/file/[fileId]">) {
-  const actor = await getCurrentActor();
+  const actor = await getApiActor();
   if (!actor) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const { id, fileId } = await ctx.params;
   if (!UUID_RE.test(id) || !UUID_RE.test(fileId)) return NextResponse.json({ error: "Not found" }, { status: 404 });

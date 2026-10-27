@@ -35,6 +35,12 @@ export const getCurrentActor = cache(async (): Promise<Actor | null> => {
   return { id: profile.id, email: profile.email, fullName: profile.full_name, role: profile.role };
 });
 
+/** For API routes: the signed-in user, or null (answer 401). A temporary password must be changed first. */
+export async function getApiActor(): Promise<Actor | null> {
+  const actor = await getCurrentActor();
+  return actor && !actor.mustChangePassword ? actor : null;
+}
+
 /**
  * For pages: redirect to /login when not signed in; 403 page when role not allowed.
  * A temporary password must be changed first (AUTH_MODE=app), except on that page.

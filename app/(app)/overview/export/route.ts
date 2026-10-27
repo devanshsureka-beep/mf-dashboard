@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getCurrentActor } from "@/lib/auth/session";
+import { getApiActor } from "@/lib/auth/session";
 import { withUserTx } from "@/lib/db/tx";
 import { logServerError } from "@/lib/errors";
 import { periodOf, periodRange, PROOF_LABEL } from "@/lib/domain/overview";
@@ -11,7 +11,7 @@ import { getOverview } from "@/services/overview";
 
 /** Overview as CSV: the client book, the trades of the period, or (Book view) every holding. */
 export async function GET(req: NextRequest) {
-  const actor = await getCurrentActor();
+  const actor = await getApiActor();
   if (!actor) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const sp = req.nextUrl.searchParams;
   const view = sp.get("view") === "book" ? "book" : "execution";

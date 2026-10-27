@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
-import { getCurrentActor } from "@/lib/auth/session";
+import { getApiActor } from "@/lib/auth/session";
 import { withUserTx } from "@/lib/db/tx";
 import { isQuarterEnd } from "@/lib/domain/quarterly";
 import { AppError, logServerError } from "@/lib/errors";
@@ -19,7 +19,7 @@ export const maxDuration = 120;
  * downloaded PDF is kept in private storage and listed on the client's review page.
  */
 export async function GET(req: NextRequest, ctx: RouteContext<"/api/clients/[id]/quarterly">) {
-  const actor = await getCurrentActor();
+  const actor = await getApiActor();
   if (!actor) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const { id } = await ctx.params;
   const q = req.nextUrl.searchParams.get("q") ?? "";

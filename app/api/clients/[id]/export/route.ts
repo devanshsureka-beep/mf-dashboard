@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getCurrentActor } from "@/lib/auth/session";
+import { getApiActor } from "@/lib/auth/session";
 import { withUserTx } from "@/lib/db/tx";
 import { AppError, logServerError } from "@/lib/errors";
 import { todayIST } from "@/lib/format";
@@ -16,7 +16,7 @@ const DIRECT_LIMIT = 4 * 1024 * 1024;
 
 /** Everything about one client as a ZIP: all records as CSV plus every stored file. */
 export async function GET(_req: NextRequest, ctx: RouteContext<"/api/clients/[id]/export">) {
-  const actor = await getCurrentActor();
+  const actor = await getApiActor();
   if (!actor) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const { id } = await ctx.params;
   if (!UUID_RE.test(id)) return NextResponse.json({ error: "Not found" }, { status: 404 });

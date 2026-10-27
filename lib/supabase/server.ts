@@ -14,8 +14,10 @@ function publicConfig() {
 
 /** Supabase client bound to the request cookies (the signed-in user's session). */
 export async function createSupabaseServerClient() {
-  const { url, anonKey } = publicConfig();
+  // cookies() first: it marks the page as per-request, so `next build` does not try to
+  // pre-render signed-in pages (and does not need the Supabase keys at build time).
   const cookieStore = await cookies();
+  const { url, anonKey } = publicConfig();
   return createServerClient(url, anonKey, {
     cookies: {
       getAll: () => cookieStore.getAll(),
