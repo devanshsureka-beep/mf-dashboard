@@ -2,6 +2,9 @@ import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
 import { AppError } from "@/lib/errors";
+import { authMode } from "@/lib/auth/mode";
+import { getCurrentActor } from "@/lib/auth/session";
+import { withUserTx } from "@/lib/db/tx";
 
 export const BUCKET = "client-documents";
 const MAX_BYTES = 25 * 1024 * 1024;
@@ -44,6 +47,11 @@ export async function createStagedUpload(userId: string): Promise<{ path: string
 }
 
 async function currentUserId(): Promise<string> {
+  if (authMode() === "app") {
+    const actor = await getCurrentActor();
+    if (!actor) throw new AppError("Sign in again to upload.", "FORBIDDEN");
+    return actor.id;
+  }
   const { data } = await (await createSupabaseServerClient()).auth.getUser();
   if (!data.user) throw new AppError("Sign in again to upload.", "FORBIDDEN");
   return data.user.id;
@@ -89,11 +97,27 @@ export function objectPath(clientId: string, type: string, f: Pick<PreparedFile,
 }
 
 /**
+ * AUTH_MODE=app has no Supabase session, so storage policies cannot see the user.
+ * The same rule the policies apply (client_documents_select / _insert: access to
+ * the client in the first path segment) is checked in the database as the user,
+ * then the file is read or written with the service key.
+ */
+async function assertStorageAccess(path: string, write: boolean): Promise<void> {
+  const actor = await getCurrentActor();
+  if (!actor) throw new AppError("Sign in again.", "FORBIDDEN");
+  const [r] = await withUserTx(actor, (tx) => write
+    ? tx<{ ok: boolean | null }[]>`select app.can_operate_client(app.client_id_from_storage_path(${path})) as ok`
+    : tx<{ ok: boolean | null }[]>`select app.can_access_client(app.client_id_from_storage_path(${path})) as ok`);
+  if (!r?.ok) throw new AppError(write ? "You cannot add files for this client." : "The file is not available in storage.", write ? "FORBIDDEN" : "NOT_FOUND");
+}
+
+/**
  * Upload as the signed-in user: storage RLS policies apply (the user must have
  * access to the client in the first path segment). Objects are never overwritten.
  */
 export async function uploadAsUser(path: string, f: PreparedFile): Promise<void> {
-  const supabase = await createSupabaseServerClient();
+  if (authMode() === "app") await assertStorageAccess(path, true);
+  const supabase = authMode() === "app" ? createSupabaseAdminClient() : await createSupabaseServerClient();
   const { error } = await supabase.storage.from(BUCKET).upload(path, f.bytes, { contentType: f.mimeType, upsert: false });
   if (error && !/exists|duplicate/i.test(error.message)) throw new AppError(`Storage upload failed: ${error.message}`);
 }
@@ -112,7 +136,8 @@ export async function removeUnreferencedAsService(path: string, referenced: bool
 
 /** Read a stored file with the USER's session (storage RLS applies). */
 export async function downloadAsUser(path: string): Promise<Uint8Array> {
-  const supabase = await createSupabaseServerClient();
+  if (authMode() === "app") await assertStorageAccess(path, false);
+  const supabase = authMode() === "app" ? createSupabaseAdminClient() : await createSupabaseServerClient();
   const { data, error } = await supabase.storage.from(BUCKET).download(path);
   if (error || !data) throw new AppError("The file is not available in storage.", "NOT_FOUND");
   return new Uint8Array(await data.arrayBuffer());
@@ -120,7 +145,8 @@ export async function downloadAsUser(path: string): Promise<Uint8Array> {
 
 /** Short-lived signed URL, generated with the USER's session (storage RLS applies). */
 export async function signedUrlForUser(path: string, seconds = 60, downloadName?: string): Promise<string> {
-  const supabase = await createSupabaseServerClient();
+  if (authMode() === "app") await assertStorageAccess(path, false);
+  const supabase = authMode() === "app" ? createSupabaseAdminClient() : await createSupabaseServerClient();
   const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(path, seconds, downloadName ? { download: downloadName } : undefined);
   if (error || !data) throw new AppError("The file is not available in storage.", "NOT_FOUND");
   return data.signedUrl;

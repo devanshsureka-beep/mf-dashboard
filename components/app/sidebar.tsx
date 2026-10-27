@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { BarChart3, LayoutDashboard, Users, PhoneCall, Inbox, ScrollText, ShieldCheck, LogOut, UserPlus, Menu, X } from "lucide-react";
+import { BarChart3, LayoutDashboard, Users, PhoneCall, Inbox, ScrollText, ShieldCheck, LogOut, UserPlus, Menu, X, KeyRound } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PAGES, ROLE_LABELS } from "@/lib/brand";
 import { BrandMark } from "@/components/app/brand-mark";
@@ -104,6 +104,9 @@ export function Sidebar({ name, role, signOut, counts }: { name: string; role: A
           <div className="truncate text-sm font-medium text-white" title={name}>{name}</div>
           <div className="text-[11px] text-sidebar-muted">{ROLE_LABELS[role] ?? role}</div>
         </div>
+        <Link href="/account/password" className="rounded-md p-1.5 text-sidebar-muted hover:bg-white/10 hover:text-white" title="Change password" aria-label="Change password">
+          <KeyRound className="h-4 w-4" />
+        </Link>
         <form action={signOut}>
           <button className="rounded-md p-1.5 text-sidebar-muted hover:bg-white/10 hover:text-white" type="submit" title="Sign out" aria-label="Sign out">
             <LogOut className="h-4 w-4" />

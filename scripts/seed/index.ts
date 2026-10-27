@@ -8,7 +8,8 @@
  * Run:  npm run seed          (requires .env.local, see README)
  * Only for development / staging databases.
  */
-import { createClient } from "@supabase/supabase-js";
+import { hashPassword } from "@/lib/auth/password";
+import { createAuthUser } from "@/services/auth-users";
 import { createSql } from "@/lib/db/client";
 import { withSystemTx, withUserTx, type Actor, type Tx } from "@/lib/db/tx";
 import type { CasParsed } from "@/lib/integrations/contracts";
@@ -27,7 +28,7 @@ try {
   /* rely on real environment variables */
 }
 
-const required = ["DATABASE_URL", "NEXT_PUBLIC_SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SEED_DEMO_PASSWORD"];
+const required = ["DATABASE_URL", "SEED_DEMO_PASSWORD"];
 for (const k of required) {
   if (!process.env[k]) {
     console.error(`Missing ${k}. See .env.example.`);
@@ -36,6 +37,11 @@ for (const k of required) {
 }
 if (process.env.NODE_ENV === "production" && !process.argv.includes("--allow-production")) {
   console.error("Refusing to seed demo data with NODE_ENV=production.");
+  process.exit(1);
+}
+// The live database is never seeded, whatever the flags (its project ref is not a secret).
+if (/pfjqpzthyincvjjkpnlm/.test(process.env.DATABASE_URL ?? "")) {
+  console.error("Refusing to seed: DATABASE_URL points at the production project.");
   process.exit(1);
 }
 
@@ -179,22 +185,19 @@ async function execute(
 }
 
 // ---------------------------------------------------------------------------
+/**
+ * Demo staff accounts, written with the same SQL as an admin's invite (auth.users + identity +
+ * profile), so they sign in under either AUTH_MODE. No Supabase Auth API call.
+ */
 async function ensureUsers() {
-  const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-  const { data: list, error: listErr } = await admin.auth.admin.listUsers({ perPage: 1000 });
-  if (listErr) throw listErr;
+  const password = process.env.SEED_DEMO_PASSWORD;
+  if (!password || password.length < 12) throw new Error("SEED_DEMO_PASSWORD (12+ characters) is required to seed demo users.");
+  const hash = await hashPassword(password);
   for (const u of USERS) {
-    let id = list.users.find((x) => x.email === u.email)?.id;
-    if (!id) {
-      const { data, error } = await admin.auth.admin.createUser({
-        email: u.email, password: process.env.SEED_DEMO_PASSWORD!, email_confirm: true,
-        app_metadata: { mn_role: u.role, mn_full_name: u.fullName, mn_active: true },
-      });
-      if (error) throw error;
-      id = data.user.id;
-    }
+    const id = await withSystemTx("seed", async (tx) => {
+      const [found] = await tx<{ id: string }[]>`select id from auth.users where lower(email) = ${u.email}`;
+      return found?.id ?? createAuthUser(tx, { email: u.email, fullName: u.fullName, role: u.role, passwordHash: hash });
+    }, { sql });
     await withSystemTx("seed", (tx) => tx`
       insert into public.profiles (id, email, full_name, role, is_active)
       values (${id!}, ${u.email}, ${u.fullName}, ${u.role}, true)

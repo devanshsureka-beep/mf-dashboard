@@ -1,15 +1,32 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { authMode, SESSION_COOKIE } from "@/lib/auth/mode";
 
 /**
- * Refreshes the Supabase session cookie on every page request and redirects
- * signed-out users to /login. Authorisation is still enforced inside every
- * page, server action (requireActor*) and by Postgres RLS; this is only the
- * first gate.
+ * Redirects signed-out users to /login. AUTH_MODE=supabase also refreshes the
+ * Supabase session cookie here; AUTH_MODE=app only checks that the session
+ * cookie is present (the session itself is checked on the server, in
+ * getCurrentActor). Authorisation is still enforced inside every page, server
+ * action (requireActor*) and by Postgres RLS; this is only the first gate.
  */
 const PUBLIC_PATHS = ["/login", "/auth", "/forbidden"];
 
+function toLogin(request: NextRequest) {
+  const loginUrl = request.nextUrl.clone();
+  loginUrl.pathname = "/login";
+  loginUrl.search = "";
+  return NextResponse.redirect(loginUrl);
+}
+
 export async function proxy(request: NextRequest) {
+  const path = request.nextUrl.pathname;
+  const isPublic = PUBLIC_PATHS.some((p) => path === p || path.startsWith(`${p}/`));
+  if (authMode() === "app") {
+    // API routes answer 401 themselves; pages go to the sign-in page.
+    if (!isPublic && !path.startsWith("/api/") && !request.cookies.get(SESSION_COOKIE)?.value) return toLogin(request);
+    return NextResponse.next({ request });
+  }
+
   let response = NextResponse.next({ request });
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -29,15 +46,7 @@ export async function proxy(request: NextRequest) {
 
   const { data } = await supabase.auth.getClaims();
   const signedIn = Boolean(data?.claims?.sub);
-  const path = request.nextUrl.pathname;
-  const isPublic = PUBLIC_PATHS.some((p) => path === p || path.startsWith(`${p}/`));
-
-  if (!signedIn && !isPublic) {
-    const loginUrl = request.nextUrl.clone();
-    loginUrl.pathname = "/login";
-    loginUrl.search = "";
-    return NextResponse.redirect(loginUrl);
-  }
+  if (!signedIn && !isPublic) return toLogin(request);
   return response;
 }
 

@@ -12,6 +12,17 @@ export interface Actor {
   email: string;
   fullName: string;
   role: AppRole;
+  /** AUTH_MODE=app: an admin set a temporary password; pages send the user to change it first. */
+  mustChangePassword?: boolean;
+}
+
+/**
+ * Optional `search_path` for every transaction (DB_SEARCH_PATH, e.g. "public, app").
+ * Unset keeps the database default. Note: queries and database functions name their
+ * schema explicitly (`public.`, `app.`), so this does not move them to another schema.
+ */
+function searchPath(): string {
+  return process.env.DB_SEARCH_PATH?.trim() ?? "";
 }
 
 interface TxOptions {
@@ -28,7 +39,8 @@ interface TxOptions {
  * works inside policies and triggers. All statements commit or roll back
  * together.
  *
- * `userId` MUST come from a verified Supabase session (lib/auth/session.ts);
+ * `userId` MUST come from a verified session (lib/auth/session.ts: Supabase Auth or the
+ * app's own session, per AUTH_MODE);
  * never from request input.
  */
 export async function withUserTx<T>(
@@ -47,6 +59,7 @@ export async function withUserTx<T>(
         set_config('app.audit_reason', ${opts.reason ?? ""}, true),
         set_config('app.actor_label', '', true)
     `;
+    if (searchPath()) await tx`select set_config('search_path', ${searchPath()}, true)`;
     return fn(tx as unknown as Tx);
   })) as T;
 }
@@ -72,6 +85,7 @@ export async function withSystemTx<T>(
         set_config('app.audit_reason', ${opts.reason ?? ""}, true),
         set_config('app.actor_label', ${label}, true)
     `;
+    if (searchPath()) await tx`select set_config('search_path', ${searchPath()}, true)`;
     return fn(tx as unknown as Tx);
   })) as T;
 }
@@ -79,4 +93,17 @@ export async function withSystemTx<T>(
 /** Set / replace the audit reason for the remainder of the transaction. */
 export async function setAuditReason(tx: Tx, reason: string | null | undefined): Promise<void> {
   await tx`select set_config('app.audit_reason', ${reason ?? ""}, true)`;
+}
+
+/**
+ * Inside a user transaction, run `fn` as the connection's own role (the owner),
+ * e.g. an admin's change to auth.users, which the `authenticated` role cannot
+ * write. The claims stay set, so audit rows still name the admin. Use only after
+ * the caller's role was checked (actionTx with roles: ["ADMIN"]).
+ */
+export async function asServer<T>(tx: Tx, fn: () => Promise<T>): Promise<T> {
+  await tx`select set_config('role', session_user::text, true)`;
+  const out = await fn();
+  await tx`select set_config('role', 'authenticated', true)`;
+  return out;
 }

@@ -4,11 +4,13 @@ import { BrandMark } from "@/components/app/brand-mark";
 import { Field, Input } from "@/components/ui/form";
 import { getCurrentActor } from "@/lib/auth/session";
 import { BRAND } from "@/lib/brand";
+import { authMode } from "@/lib/auth/mode";
 import { signIn } from "./actions";
 
 export const metadata = { title: "Sign in" };
 
-export default async function LoginPage() {
+export default async function LoginPage(props: PageProps<"/login">) {
+  const sp = await props.searchParams;
   const actor = await getCurrentActor();
   if (actor) redirect(actor.role === "ADMIN" ? "/overview" : "/");
   return (
@@ -40,6 +42,7 @@ export default async function LoginPage() {
           </div>
           <h1 className="text-2xl font-semibold tracking-tight">Sign in</h1>
           <p className="mt-1 text-sm text-muted">Use your {BRAND.company} staff account.</p>
+          {sp.password === "set" ? <p role="status" className="mt-4 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800">Password saved. Sign in with it now.</p> : null}
           <div className="mt-6 rounded-xl border border-border bg-white p-6 shadow-sm">
             <ActionForm action={signIn} className="space-y-4">
               <Field label="Work email">
@@ -51,7 +54,10 @@ export default async function LoginPage() {
               <SubmitButton className="w-full">Sign in</SubmitButton>
             </ActionForm>
           </div>
-          <p className="mt-4 text-xs text-muted">Accounts are created by an admin. There is no public sign-up.</p>
+          <p className="mt-4 text-xs text-muted">
+            {authMode() === "app" ? <><a href="/login/forgot" className="text-brand hover:underline">Forgot your password?</a> · </> : null}
+            Accounts are created by an admin. There is no public sign-up.
+          </p>
         </div>
       </section>
     </main>

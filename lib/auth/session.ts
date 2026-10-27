@@ -4,13 +4,21 @@ import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { withUserTx, type Actor, type AppRole } from "@/lib/db/tx";
 import { AppError } from "@/lib/errors";
+import { authMode } from "@/lib/auth/mode";
+import { currentSessionUser } from "@/lib/auth/app-session";
 
 /**
  * Returns the signed-in, ACTIVE staff member or null.
- * The JWT is verified by Supabase (getClaims verifies the signature); the
- * profile (role) is loaded from the database, never from client input.
+ * AUTH_MODE=supabase: the JWT is verified by Supabase (getClaims verifies the
+ * signature). AUTH_MODE=app: the session cookie is checked against app.sessions
+ * (expiry, idle time, account not banned or removed). Either way the profile
+ * (role) is loaded from the database, never from client input.
  */
 export const getCurrentActor = cache(async (): Promise<Actor | null> => {
+  if (authMode() === "app") {
+    const u = await currentSessionUser();
+    return u ? { id: u.id, email: u.email, fullName: u.full_name, role: u.role, mustChangePassword: u.must_change_password } : null;
+  }
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase.auth.getClaims();
   if (error || !data?.claims?.sub) return null;
@@ -27,18 +35,23 @@ export const getCurrentActor = cache(async (): Promise<Actor | null> => {
   return { id: profile.id, email: profile.email, fullName: profile.full_name, role: profile.role };
 });
 
-/** For pages: redirect to /login when not signed in; 403 page when role not allowed. */
-export async function requireActor(roles?: AppRole[]): Promise<Actor> {
+/**
+ * For pages: redirect to /login when not signed in; 403 page when role not allowed.
+ * A temporary password must be changed first (AUTH_MODE=app), except on that page.
+ */
+export async function requireActor(roles?: AppRole[], opts: { passwordChange?: boolean } = {}): Promise<Actor> {
   const actor = await getCurrentActor();
   if (!actor) redirect("/login");
+  if (actor.mustChangePassword && !opts.passwordChange) redirect("/account/password");
   if (roles && !roles.includes(actor.role)) redirect("/forbidden");
   return actor;
 }
 
 /** For server actions: throw (instead of redirect) so the form can show the error. */
-export async function requireActorForAction(roles?: AppRole[]): Promise<Actor> {
+export async function requireActorForAction(roles?: AppRole[], opts: { passwordChange?: boolean } = {}): Promise<Actor> {
   const actor = await getCurrentActor();
   if (!actor) throw new AppError("Your session has expired. Please sign in again.", "FORBIDDEN");
+  if (actor.mustChangePassword && !opts.passwordChange) throw new AppError("Change your temporary password first (Account → Password).", "FORBIDDEN");
   if (roles && !roles.includes(actor.role)) {
     throw new AppError("Your role does not allow this action.", "FORBIDDEN");
   }

@@ -32,10 +32,12 @@ export async function createSupabaseServerClient() {
 
 /**
  * Service-role client (bypasses RLS and storage policies). SERVER ONLY.
- * Use exclusively for admin user management, integration endpoints and seeding.
+ * Use exclusively for storage (after the app's own access check), admin user
+ * management in AUTH_MODE=supabase, integration endpoints and seeding.
  */
 export function createSupabaseAdminClient() {
-  const { url } = publicConfig();
+  // AUTH_MODE=app needs no public Supabase keys: storage reads the URL server-side (SUPABASE_URL).
+  const url = process.env.SUPABASE_URL || publicConfig().url;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!key) throw new Error("SUPABASE_SERVICE_ROLE_KEY is not configured (server only).");
   return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });

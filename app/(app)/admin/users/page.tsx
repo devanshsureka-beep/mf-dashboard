@@ -9,7 +9,9 @@ import { Money } from "@/components/app/money";
 import { HubTabs } from "@/components/app/hub-tabs";
 import { pageData } from "@/lib/server";
 import { listClientSummaries } from "@/services/clients";
-import { assignClientAction, createUserAction, removeUserAction, restoreUserAction, unassignAction, updateUserAction } from "./actions";
+import { authMode } from "@/lib/auth/mode";
+import { emailConfigured } from "@/lib/email";
+import { assignClientAction, createUserAction, removeUserAction, restoreUserAction, sendLinkAction, setTemporaryPasswordAction, unassignAction, updateUserAction } from "./actions";
 
 export const metadata = { title: "Team & access" };
 
@@ -32,6 +34,8 @@ export default async function UsersPage() {
   }), ["ADMIN"]);
 
   const team = users.filter((u) => !u.removed_at);
+  const appAuth = authMode() === "app";
+  const canEmail = appAuth && emailConfigured();
   const removed = users.filter((u) => u.removed_at);
 
   return (
@@ -58,6 +62,18 @@ export default async function UsersPage() {
                       <Input name="reason" placeholder="Reason" className="h-8 w-32 text-xs" />
                       <SubmitButton size="sm" variant="outline">Save</SubmitButton>
                     </ActionForm>
+                    <details className="mt-1">
+                      <summary className="cursor-pointer whitespace-nowrap text-xs text-brand hover:underline">Password</summary>
+                      <ActionForm action={setTemporaryPasswordAction.bind(null, u.id)} className="mt-1 flex flex-wrap items-center gap-1" resetOnSuccess>
+                        <Input name="password" type="password" autoComplete="new-password" required minLength={12} placeholder="Temporary password" aria-label={`Temporary password for ${u.email}`} className="h-8 w-44 text-xs" />
+                        <SubmitButton size="sm" variant="outline" confirm={`Set a temporary password for ${u.full_name || u.email}? They are signed out and must choose their own at the next sign-in.`}>Set</SubmitButton>
+                      </ActionForm>
+                      {canEmail ? (
+                        <ActionForm action={sendLinkAction.bind(null, u.id)} className="mt-1">
+                          <SubmitButton size="sm" variant="ghost">Email a link to set a password</SubmitButton>
+                        </ActionForm>
+                      ) : null}
+                    </details>
                     <details className="mt-1">
                       <summary className="cursor-pointer whitespace-nowrap text-xs text-red-700 hover:underline">Remove from team</summary>
                       <ActionForm action={removeUserAction.bind(null, u.id)} className="mt-1 flex flex-wrap items-center gap-1">
@@ -98,7 +114,14 @@ export default async function UsersPage() {
               <Field label="Full name"><Input name="full_name" required /></Field>
               <Field label="Email"><Input name="email" type="email" required /></Field>
               <Field label="Role"><Select name="role" defaultValue="ADVISOR"><option>ADVISOR</option><option>OPERATIONS</option><option>ADMIN</option></Select></Field>
-              <Field label="Temporary password" hint="Min 12 characters. Never sent by this app — share it securely."><Input name="password" type="password" autoComplete="new-password" required minLength={12} /></Field>
+              {canEmail ? (
+                <Field label="How they get in">
+                  <Select name="access" defaultValue="invite"><option value="invite">Email an invite link</option><option value="password">Temporary password</option></Select>
+                </Field>
+              ) : null}
+              <Field label="Temporary password" hint={canEmail ? "Only with “Temporary password”. Min 12 characters; they choose their own at the first sign-in." : appAuth ? "Min 12 characters. Share it securely; they choose their own at the first sign-in." : "Min 12 characters. Never sent by this app — share it securely."}>
+                <Input name="password" type="password" autoComplete="new-password" required={!canEmail} minLength={12} />
+              </Field>
               <SubmitButton>Add user</SubmitButton>
             </ActionForm>
           </CardContent>
