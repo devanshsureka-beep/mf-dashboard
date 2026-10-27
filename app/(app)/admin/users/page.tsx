@@ -62,7 +62,7 @@ export default async function UsersPage() {
                       <Input name="reason" placeholder="Reason" className="h-8 w-32 text-xs" />
                       <SubmitButton size="sm" variant="outline">Save</SubmitButton>
                     </ActionForm>
-                    <details className="mt-1">
+                    {appAuth ? <details className="mt-1">
                       <summary className="cursor-pointer whitespace-nowrap text-xs text-brand hover:underline">Password</summary>
                       <ActionForm action={setTemporaryPasswordAction.bind(null, u.id)} className="mt-1 flex flex-wrap items-center gap-1" resetOnSuccess>
                         <Input name="password" type="password" autoComplete="new-password" required minLength={12} placeholder="Temporary password" aria-label={`Temporary password for ${u.email}`} className="h-8 w-44 text-xs" />
@@ -73,7 +73,7 @@ export default async function UsersPage() {
                           <SubmitButton size="sm" variant="ghost">Email a link to set a password</SubmitButton>
                         </ActionForm>
                       ) : null}
-                    </details>
+                    </details> : null}
                     <details className="mt-1">
                       <summary className="cursor-pointer whitespace-nowrap text-xs text-red-700 hover:underline">Remove from team</summary>
                       <ActionForm action={removeUserAction.bind(null, u.id)} className="mt-1 flex flex-wrap items-center gap-1">

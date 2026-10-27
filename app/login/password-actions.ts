@@ -1,6 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { z } from "zod";
 import { runAction, type ActionResult } from "@/lib/actions";
 import { AppError } from "@/lib/errors";
@@ -75,7 +76,8 @@ export async function requestResetAction(_p: ActionResult | null, fd: FormData):
       await auditAuth(tx, { event: "PASSWORD_RESET_SENT", userId: user.id, email: email.data, ip });
       return { link, email: user.email };
     });
-    if (out) await sendLinkEmail(out.email, "RESET", out.link);
+    // Sent after the answer, so the answer time does not tell whether the account exists.
+    if (out) after(() => sendLinkEmail(out.email, "RESET", out.link).then(() => undefined));
   } catch {
     // Logged by the email helper or the database; the answer stays the same.
   }
@@ -95,6 +97,8 @@ export async function resetPasswordAction(token: string, _p: ActionResult | null
       const t = await consumeLinkToken(tx, tokenHash(token));
       if (!t) throw new AppError("This link has expired or was already used. Ask for a new one.");
       const [u] = await tx<{ email: string }[]>`select email from auth.users where id = ${t.user_id}`;
+      // An account removed or banned since the link was sent cannot set a password.
+      if (!u || (await findLoginUser(tx, u.email))?.blocked) throw new AppError("This link has expired or was already used. Ask for a new one.");
       const problem = passwordProblem(password, u?.email);
       if (problem) throw new AppError(problem);
       await setPassword(tx, t.user_id, hash, false);

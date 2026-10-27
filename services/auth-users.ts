@@ -68,10 +68,17 @@ export async function createAuthUser(tx: Tx, a: {
   return id;
 }
 
+/**
+ * A new password (own, reset, or a temporary one from an admin): every session ends, open
+ * reset / invite links stop working, and a sign-in lock on the account is cleared.
+ */
 export async function setPassword(tx: Tx, userId: string, passwordHash: string, mustChange: boolean): Promise<void> {
-  await tx`update auth.users set encrypted_password = ${passwordHash}, updated_at = now() where id = ${userId}`;
+  const [u] = await tx<{ email: string }[]>`
+    update auth.users set encrypted_password = ${passwordHash}, updated_at = now() where id = ${userId} returning email`;
   await tx`update public.profiles set must_change_password = ${mustChange} where id = ${userId}`;
   await revokeSessions(tx, userId);
+  await cancelLinks(tx, userId);
+  if (u) await tx`insert into app.login_attempts (email, ip, ok) values (${u.email.toLowerCase()}, null, true)`;
 }
 
 /** Block or allow sign-in in both modes (Supabase Auth reads banned_until too). Blocking ends every session. */
@@ -81,7 +88,10 @@ export async function setSignInAllowed(tx: Tx, userId: string, allowed: boolean,
     update auth.users set banned_until = ${allowed ? null : tx`now() + interval '100 years'`},
       raw_app_meta_data = coalesce(raw_app_meta_data, '{}'::jsonb) || ${tx.json(extra)}, updated_at = now()
     where id = ${userId}`;
-  if (!allowed) await revokeSessions(tx, userId);
+  if (!allowed) {
+    await revokeSessions(tx, userId);
+    await cancelLinks(tx, userId);
+  }
 }
 
 // --- Sessions ------------------------------------------------------------------
@@ -130,17 +140,39 @@ export async function revokeSessions(tx: Tx, userId: string, keepTokenHash?: str
 // --- Sign-in limits ------------------------------------------------------------
 
 export const LOCK_MINUTES = 15;
-const MAX_FAILS_PER_ACCOUNT = 5;
+/** Wrong passwords for one account from one IP: the usual guessing case. */
+const MAX_FAILS_PER_ACCOUNT_AND_IP = 5;
+/** Wrong passwords for one account from anywhere: high, so one outsider cannot lock a colleague out. */
+const MAX_FAILS_PER_ACCOUNT = 20;
+/** Wrong passwords from one IP across accounts. */
 const MAX_FAILS_PER_IP = 30;
 
-/** Too many recent failures for this email or from this IP: the sign-in is refused without checking the password. */
+/**
+ * Serialise sign-in attempts for one email (until the transaction ends), so parallel requests
+ * cannot all pass the failure count before any of them is recorded.
+ */
+export async function lockAccountForSignIn(tx: Tx, email: string): Promise<void> {
+  await tx`select pg_advisory_xact_lock(hashtext(${`signin:${email.toLowerCase()}`}))`;
+}
+
+/**
+ * Too many recent wrong passwords: refused without checking the password. Refused attempts are
+ * not counted (only real password checks are), a success or a new password clears the account's
+ * count, and a lock lasts LOCK_MINUTES after the last counted failure.
+ */
 export async function signInLocked(tx: Tx, email: string, ip: string | null): Promise<boolean> {
-  const [r] = await tx<{ by_email: number; by_ip: number }[]>`
+  const e = email.toLowerCase();
+  const [r] = await tx<{ by_pair: number; by_email: number; by_ip: number }[]>`
+    with since as (
+      select greatest(now() - make_interval(mins => ${LOCK_MINUTES}),
+                      coalesce((select max(at) from app.login_attempts where email = ${e} and ok), '-infinity')) as t
+    )
     select
-      (select count(*)::int from app.login_attempts where email = ${email.toLowerCase()} and not ok and at > now() - make_interval(mins => ${LOCK_MINUTES})
-         and at > coalesce((select max(at) from app.login_attempts where email = ${email.toLowerCase()} and ok), '-infinity')) as by_email,
+      (select count(*)::int from app.login_attempts, since where email = ${e} and ip = ${ip ?? ""} and not ok and at > since.t) as by_pair,
+      (select count(*)::int from app.login_attempts, since where email = ${e} and not ok and at > since.t) as by_email,
       (select count(*)::int from app.login_attempts where ip = ${ip ?? ""} and not ok and at > now() - make_interval(mins => ${LOCK_MINUTES})) as by_ip`;
-  return r.by_email >= MAX_FAILS_PER_ACCOUNT || (ip !== null && r.by_ip >= MAX_FAILS_PER_IP);
+  return r.by_email >= MAX_FAILS_PER_ACCOUNT
+    || (ip !== null && (r.by_pair >= MAX_FAILS_PER_ACCOUNT_AND_IP || r.by_ip >= MAX_FAILS_PER_IP));
 }
 
 export async function recordAttempt(tx: Tx, email: string, ip: string | null, ok: boolean): Promise<void> {
@@ -150,6 +182,11 @@ export async function recordAttempt(tx: Tx, email: string, ip: string | null, ok
 // --- One-time links (reset, invite) -------------------------------------------
 
 export const LINK_MINUTES = 45;
+
+/** Every open link of this user stops working (removed, or a new password was set). */
+export async function cancelLinks(tx: Tx, userId: string): Promise<void> {
+  await tx`update app.auth_tokens set used_at = now() where user_id = ${userId} and used_at is null`;
+}
 
 export async function insertLinkToken(tx: Tx, userId: string, tokenHash: string, purpose: "RESET" | "INVITE"): Promise<void> {
   // A new link replaces older unused ones for the same purpose.

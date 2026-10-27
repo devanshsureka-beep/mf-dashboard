@@ -15,6 +15,11 @@ function secret(): string {
   return s;
 }
 
+/** Throws a setup error when SESSION_SECRET is missing or too short. */
+export function assertSessionSecret(): void {
+  secret();
+}
+
 export function tokenHash(token: string): string {
   return createHmac("sha256", secret()).update(token).digest("hex");
 }

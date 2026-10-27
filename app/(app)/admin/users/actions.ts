@@ -78,7 +78,8 @@ export async function createUserAction(_p: ActionResult | null, fd: FormData): P
       // Database and sign-in change together: if Auth refuses, the restore rolls back.
       const sent = await actionTx(async (tx, actor) => {
         await restoreTeamMember(tx, actor, existing.id, { role: parsed.data.role, fullName: parsed.data.full_name });
-        await setSignIn(tx, existing.id, true, { password: password ?? undefined, role: parsed.data.role, fullName: parsed.data.full_name });
+        // Invited back: the old password must not work again, so a random one until the link is used.
+        await setSignIn(tx, existing.id, true, { password: password ?? newToken(), role: parsed.data.role, fullName: parsed.data.full_name });
         return invite ? inviteInTx(tx, actor.id, existing.id, parsed.data.email, parsed.data.full_name) : null;
       }, { roles: ["ADMIN"] });
       revalidatePath("/admin/users");
@@ -191,9 +192,11 @@ export async function restoreUserAction(userId: string, _p: ActionResult | null,
   return runAction("restoreUser", async () => {
     const role = reqStr(fd, "role") as (typeof ROLES)[number];
     if (!ROLES.includes(role)) throw new AppError("Invalid role.");
-    const password = str(fd, "password");
-    if (password.length < 12) throw new AppError("Temporary password must be at least 12 characters");
+    // Exactly as typed (not trimmed): the person signs in with the same characters.
+    const raw = String(fd.get("password") ?? "");
     await actionTx(async (tx, actor) => {
+      const [p] = await tx<{ email: string }[]>`select email from public.profiles where id = ${userId}`;
+      const password = temporaryPassword(raw, p?.email ?? "");
       await restoreTeamMember(tx, actor, userId, { role });
       await setSignIn(tx, userId, true, { password, role });
     }, { roles: ["ADMIN"] });
@@ -220,18 +223,15 @@ async function inviteInTx(tx: Tx, adminId: string, userId: string, email: string
 /** ADMIN, AUTH_MODE=app: a temporary password (the fallback when email fails). The user must change it at the next sign-in. */
 export async function setTemporaryPasswordAction(userId: string, _p: ActionResult | null, fd: FormData): Promise<ActionResult> {
   return runAction("setTemporaryPassword", async () => {
-    const password = str(fd, "password");
+    // Only the app's own sign-in can end sessions and force the change at the next sign-in.
+    if (authMode() !== "app") throw new AppError("Temporary passwords are set from Supabase Auth while AUTH_MODE=supabase.");
+    // Exactly as typed (not trimmed): the person signs in with the same characters.
+    const password = String(fd.get("password") ?? "");
     await actionTx(async (tx) => {
       const [p] = await tx<{ email: string; removed_at: Date | null }[]>`select email, removed_at from public.profiles where id = ${userId}`;
       if (!p || p.removed_at) throw new AppError("This person is not on the team.");
-      const pw = temporaryPassword(password, p.email);
-      if (authMode() === "app") {
-        const hash = await hashPassword(pw);
-        await asServer(tx, () => setPassword(tx, userId, hash, true));
-      } else {
-        const { error } = await adminAuth().auth.admin.updateUserById(userId, { password: pw });
-        if (error) throw new AppError(`Could not set the password: ${error.message}`);
-      }
+      const hash = await hashPassword(temporaryPassword(password, p.email));
+      await asServer(tx, () => setPassword(tx, userId, hash, true));
     }, { roles: ["ADMIN"], reason: "Temporary password set by admin" });
     return "Temporary password set and the person signed out everywhere. Share it securely: they choose their own at the next sign-in.";
   });

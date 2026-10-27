@@ -28,6 +28,8 @@ export const PASSWORD_MIN = 12;
 export function passwordProblem(password: string, email?: string): string | null {
   if (password.length < PASSWORD_MIN) return `Use at least ${PASSWORD_MIN} characters.`;
   if (password.length > 72) return "Use at most 72 characters."; // bcrypt reads only the first 72 bytes
-  if (email && password.toLowerCase().includes(email.split("@")[0].toLowerCase())) return "Do not use your email in the password.";
+  const local = email?.split("@")[0].toLowerCase() ?? "";
+  // Only a name long enough to matter (a short address like ra@ would rule out too much).
+  if (local.length >= 4 && password.toLowerCase().includes(local)) return "Do not use your email in the password.";
   return null;
 }

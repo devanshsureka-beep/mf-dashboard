@@ -19,6 +19,8 @@ describe("in-app sign-in helpers", () => {
     expect(passwordProblem("rohan.mehta-2026!", "rohan.mehta@example.com")).toMatch(/email/);
     expect(passwordProblem("x".repeat(73))).toMatch(/72/);
     expect(passwordProblem("a perfectly fine one")).toBeNull();
+    // A short address does not rule out half the alphabet.
+    expect(passwordProblem("a perfectly fine one", "ra@example.com")).toBeNull();
   });
 
   it("stores only a keyed hash of each token, and needs a real secret", () => {

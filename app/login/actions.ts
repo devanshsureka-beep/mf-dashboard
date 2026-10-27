@@ -8,7 +8,8 @@ import type { ActionResult } from "@/lib/actions";
 import { authMode } from "@/lib/auth/mode";
 import { endSession, requestMeta, startSession } from "@/lib/auth/app-session";
 import { verifyPassword } from "@/lib/auth/password";
-import { auditAuth, findLoginUser, LOCK_MINUTES, recordAttempt, signInLocked } from "@/services/auth-users";
+import { assertSessionSecret } from "@/lib/auth/tokens";
+import { auditAuth, findLoginUser, LOCK_MINUTES, lockAccountForSignIn, recordAttempt, signInLocked } from "@/services/auth-users";
 
 const schema = z.object({ email: z.email(), password: z.string().min(1).max(200) });
 const WRONG = "Invalid email or password.";
@@ -36,14 +37,18 @@ export async function signIn(_prev: ActionResult | null, formData: FormData): Pr
 /**
  * AUTH_MODE=app: the account is looked up by email and the password checked with
  * bcrypt against auth.users. The same message for an unknown email, a wrong
- * password or a blocked account; too many failures lock the email (and a busy IP)
- * for a while. Every attempt is recorded, never the password.
+ * password or a blocked account; too many wrong passwords lock the account for a
+ * while (lib: signInLocked). Every password check is recorded, never the password.
  */
 async function signInApp(email: string, password: string): Promise<ActionResult> {
+  // A missing secret is a setup error: fail before any password is checked, not after.
+  assertSessionSecret();
   const { ip } = await requestMeta();
   const outcome = await withSystemTx("auth:sign-in", async (tx) => {
+    // Parallel attempts for one email wait for each other, so the count below is always current.
+    await lockAccountForSignIn(tx, email);
     if (await signInLocked(tx, email, ip)) {
-      await recordAttempt(tx, email, ip, false);
+      // Not counted as a failure: a refused attempt must not extend the lock.
       await auditAuth(tx, { event: "SIGN_IN_LOCKED", userId: null, email, ip });
       return { ok: false as const, locked: true };
     }

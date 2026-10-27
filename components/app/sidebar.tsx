@@ -42,7 +42,7 @@ function initials(name: string) {
   return ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase() || "U";
 }
 
-export function Sidebar({ name, role, signOut, counts }: { name: string; role: AppRole; signOut: () => Promise<void>; counts?: { awaitingExecution: number; casInbox: number } }) {
+export function Sidebar({ name, role, signOut, counts, passwordLink = false }: { name: string; role: AppRole; signOut: () => Promise<void>; counts?: { awaitingExecution: number; casInbox: number }; passwordLink?: boolean }) {
   const path = usePathname();
   // The menu belongs to the page it was opened on: navigating closes it.
   const [openOn, setOpenOn] = useState<string | null>(null);
@@ -104,9 +104,11 @@ export function Sidebar({ name, role, signOut, counts }: { name: string; role: A
           <div className="truncate text-sm font-medium text-white" title={name}>{name}</div>
           <div className="text-[11px] text-sidebar-muted">{ROLE_LABELS[role] ?? role}</div>
         </div>
-        <Link href="/account/password" className="rounded-md p-1.5 text-sidebar-muted hover:bg-white/10 hover:text-white" title="Change password" aria-label="Change password">
-          <KeyRound className="h-4 w-4" />
-        </Link>
+        {passwordLink ? (
+          <Link href="/account/password" className="rounded-md p-1.5 text-sidebar-muted hover:bg-white/10 hover:text-white" title="Change password" aria-label="Change password">
+            <KeyRound className="h-4 w-4" />
+          </Link>
+        ) : null}
         <form action={signOut}>
           <button className="rounded-md p-1.5 text-sidebar-muted hover:bg-white/10 hover:text-white" type="submit" title="Sign out" aria-label="Sign out">
             <LogOut className="h-4 w-4" />

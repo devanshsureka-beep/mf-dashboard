@@ -2,9 +2,8 @@ import { afterAll, describe, expect, it } from "vitest";
 import { createSql } from "@/lib/db/client";
 import { asServer, withSystemTx, withUserTx, type Tx } from "@/lib/db/tx";
 import { hashPassword, verifyPassword } from "@/lib/auth/password";
-import { createClient } from "@/services/clients";
 import {
-  consumeLinkToken, createAuthUser, findLoginUser, insertLinkToken, insertSession, peekLinkToken, recordAttempt,
+  consumeLinkToken, createAuthUser, findLoginUser, insertLinkToken, insertSession, lockAccountForSignIn, peekLinkToken, recordAttempt,
   revokeSessions, sessionUser, setPassword, setSignInAllowed, signInLocked,
 } from "@/services/auth-users";
 import { scenario, sql, TEST_DB } from "./harness";
@@ -104,6 +103,49 @@ describeDb("in-app sign-in (AUTH_MODE=app)", () => {
     });
   });
 
+  it("an outsider cannot lock a colleague out: the lock is per account and IP, refused attempts do not count, a new password clears it", async () => {
+    await scenario(async ({ tx }) => {
+      const u = await newUser(tx);
+      const attacker = "203.0.113.9", office = "198.51.100.7";
+      for (let i = 0; i < 5; i++) await recordAttempt(tx, u.email, attacker, false);
+      expect(await signInLocked(tx, u.email, attacker)).toBe(true);
+      // The real user from another IP still gets in.
+      expect(await signInLocked(tx, u.email, office)).toBe(false);
+      // Refused attempts are not recorded, so hammering a locked account changes nothing.
+      const [{ n }] = await tx<{ n: number }[]>`select count(*)::int as n from app.login_attempts where email = ${u.email}`;
+      expect(n).toBe(5);
+      // Many IPs: the account-wide limit (20) applies everywhere.
+      for (let i = 0; i < 15; i++) await recordAttempt(tx, u.email, `192.0.2.${i}`, false);
+      expect(await signInLocked(tx, u.email, office)).toBe(true);
+      // A password reset or an admin's temporary password clears it.
+      await setPassword(tx, u.id, await hashPassword("a-new-password-1"), false);
+      expect(await signInLocked(tx, u.email, office)).toBe(false);
+      expect(await signInLocked(tx, u.email, attacker)).toBe(false);
+    });
+  });
+
+  it("a new password or a removal cancels every open link", async () => {
+    await scenario(async ({ tx }) => {
+      const u = await newUser(tx);
+      await insertLinkToken(tx, u.id, "t-inv", "INVITE");
+      await insertLinkToken(tx, u.id, "t-res", "RESET");
+      expect(await consumeLinkToken(tx, "t-res")).not.toBeNull();
+      await setPassword(tx, u.id, await hashPassword("a-new-password-1"), false);
+      expect(await peekLinkToken(tx, "t-inv")).toBeNull();
+      await insertLinkToken(tx, u.id, "t-later", "RESET");
+      await setSignInAllowed(tx, u.id, false);
+      expect(await peekLinkToken(tx, "t-later")).toBeNull();
+    });
+  });
+
+  it("a user cannot clear their own forced password change or removal (direct Data API access)", async () => {
+    await scenario(async (ctx) => {
+      await ctx.tx`update public.profiles set must_change_password = true where id = ${ctx.users.advisor.id}`;
+      expect(await ctx.expectError("advisor", (t) => t`update public.profiles set must_change_password = false where id = ${ctx.users.advisor.id}`)).toMatch(/Only an admin/);
+      expect(await ctx.expectError("advisor", (t) => t`update public.profiles set removed_at = now(), is_active = false where id = ${ctx.users.advisor.id}`)).toMatch(/Only an admin/);
+    });
+  });
+
   it("a reset or invite link works once, and not after it expires or a newer one is sent", async () => {
     await scenario(async ({ tx }) => {
       const u = await newUser(tx);
@@ -144,29 +186,55 @@ describeDb("in-app sign-in (AUTH_MODE=app)", () => {
     });
   });
 
-  it("who the user is stays inside the transaction: the pooled connection does not keep it", async () => {
-    const one = createSql(TEST_DB!, 1);
+  it("parallel sign-ins for one email wait for each other", async () => {
+    const a = createSql(TEST_DB!, 1), b = createSql(TEST_DB!, 1);
     try {
-      const advisor = await withSystemTx("test", async (tx) => newUser(tx), { sql: one });
-      const otherAdvisor = await withSystemTx("test", async (tx) => newUser(tx), { sql: one });
-      const actor = { id: advisor.id, email: advisor.email, fullName: "A", role: "ADVISOR" as const };
-      const mine = await withUserTx(actor, async (tx) => {
-        const c = await createClient(tx, actor, { full_name: `Leak Test ${unique()}`, status: "ACTIVE" });
-        const [{ n }] = await tx<{ n: number }[]>`select count(*)::int as n from public.clients where id = ${c.id}`;
-        return { id: c.id, n };
-      }, { sql: one });
-      expect(mine.n).toBe(1);
-      // Same single connection, next request as another advisor: the first advisor's client is invisible.
-      const seen = await withUserTx({ id: otherAdvisor.id }, (tx) => tx<{ n: number }[]>`select count(*)::int as n from public.clients where id = ${mine.id}`, { sql: one });
-      expect(seen[0].n).toBe(0);
-      // And outside any transaction, nothing is left on the connection.
-      const [after] = await one<{ who: string; claims: string | null }[]>`select current_user as who, nullif(current_setting('request.jwt.claims', true), '') as claims`;
+      const email = `race.${unique()}@test.invalid`;
+      let release!: () => void;
+      const held = new Promise<void>((r) => (release = r));
+      const first = a.begin(async (tx) => {
+        await lockAccountForSignIn(tx as unknown as Tx, email);
+        await held;
+      });
+      await new Promise((r) => setTimeout(r, 200));
+      const second = await b.begin(async (tx) => {
+        await tx`set local lock_timeout = '300ms'`;
+        return lockAccountForSignIn(tx as unknown as Tx, email).then(() => "got it", (e: Error) => e.message);
+      }).catch((e: Error) => e.message);
+      expect(second).toMatch(/lock timeout/);
+      release();
+      await first;
+      const third = await b.begin(async (tx) => lockAccountForSignIn(tx as unknown as Tx, email).then(() => "got it"));
+      expect(third).toBe("got it");
+    } finally {
+      await a.end();
+      await b.end();
+    }
+  });
+
+  it("who the user is stays inside the transaction: the pooled connection does not keep it", async () => {
+    // One connection, as the pool may hand the same one to consecutive requests. Nothing is written.
+    const one = createSql(TEST_DB!, 1);
+    const ids = [crypto.randomUUID(), crypto.randomUUID()];
+    const whoAmI = (tx: Tx) => tx<{ who: string; uid: string | null }[]>`select current_user as who, auth.uid()::text as uid`;
+    try {
+      const [a] = await withUserTx({ id: ids[0] }, whoAmI, { sql: one });
+      expect(a).toEqual({ who: "authenticated", uid: ids[0] });
+      // Outside any transaction, nothing is left on the connection.
+      const [between] = await one<{ who: string; claims: string | null }[]>`select current_user as who, nullif(current_setting('request.jwt.claims', true), '') as claims`;
+      expect(between.claims).toBeNull();
+      expect(between.who).not.toBe("authenticated");
+      // The server's own transaction runs as no user.
+      const [sys] = await withSystemTx("test", whoAmI, { sql: one });
+      expect(sys.uid).toBeNull();
+      expect(sys.who).not.toBe("authenticated");
+      // The next request is the next user only.
+      const [b] = await withUserTx({ id: ids[1] }, whoAmI, { sql: one });
+      expect(b).toEqual({ who: "authenticated", uid: ids[1] });
+      // A transaction that fails still leaves nothing behind.
+      await withUserTx({ id: ids[0] }, async (tx) => { await tx`select 1/0`; }, { sql: one }).catch(() => null);
+      const [after] = await one<{ claims: string | null }[]>`select nullif(current_setting('request.jwt.claims', true), '') as claims`;
       expect(after.claims).toBeNull();
-      expect(after.who).not.toBe("authenticated");
-      await withSystemTx("test cleanup", async (tx) => {
-        await tx`select set_config('app.audit_reason', 'test cleanup', true)`;
-        await tx`delete from public.client_advisor_assignments where client_id = ${mine.id}`.catch(() => null);
-      }, { sql: one }).catch(() => null);
     } finally {
       await one.end();
     }
