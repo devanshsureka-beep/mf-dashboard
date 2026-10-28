@@ -233,6 +233,12 @@ async function newClient(advisor: string, c: {
 
 // ---------------------------------------------------------------------------
 async function main() {
+  // Whatever the host or project: a database that already holds real clients is never seeded.
+  const [real] = await sql<{ n: number }[]>`select count(*)::int as n from public.clients where email is null or email not like '%@example.com'`;
+  if (real.n > 0) {
+    console.error(`Refusing to seed: this database already has ${real.n} client(s) that are not demo data.`);
+    process.exit(1);
+  }
   const existing = await sql<{ n: number }[]>`select count(*)::int as n from public.clients where email like '%@example.com'`;
   if (existing[0].n > 0) {
     console.log("Demo data already present — nothing to do. Reset the database to reseed.");

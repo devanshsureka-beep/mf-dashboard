@@ -36,7 +36,7 @@ export interface Ctx {
 
 async function setUser(tx: Tx, a: Actor | null, reason = "") {
   if (!a) {
-    await tx`select set_config('role', 'postgres', true), set_config('request.jwt.claims', '', true), set_config('app.audit_reason', '', true)`;
+    await tx`select set_config('role', session_user::text, true), set_config('request.jwt.claims', '', true), set_config('app.audit_reason', '', true)`;
     return;
   }
   const claims = JSON.stringify({ sub: a.id, role: "authenticated", email: a.email });

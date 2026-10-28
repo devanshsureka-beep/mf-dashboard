@@ -12,7 +12,9 @@
     "test:watch": "vitest",
     "seed": "tsx scripts/seed/index.ts",
     "db:migrate": "tsx scripts/db/migrate.ts",
-    "verify": "npm run lint && npm run typecheck && npm run test && npm run build"
+    "verify": "npm run lint && npm run typecheck && npm run test && npm run build",
+    "db:check": "tsx scripts/db/check-database.ts",
+    "admin:create": "tsx scripts/db/create-admin.ts"
   },
   "dependencies": {
     "@fontsource/lato": "^5.2.5",

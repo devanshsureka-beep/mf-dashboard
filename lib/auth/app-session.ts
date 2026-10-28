@@ -1,6 +1,7 @@
 import "server-only";
 import { cookies, headers } from "next/headers";
 import { withSystemTx } from "@/lib/db/tx";
+import { clientIp } from "@/lib/auth/client-ip";
 import { SESSION_COOKIE } from "@/lib/auth/mode";
 import { newToken, tokenHash } from "@/lib/auth/tokens";
 import { deleteSession, insertSession, SESSION_MAX_HOURS, sessionUser, type SessionUser } from "@/services/auth-users";
@@ -13,11 +14,9 @@ import { deleteSession, insertSession, SESSION_MAX_HOURS, sessionUser, type Sess
 
 export async function requestMeta(): Promise<{ ip: string | null; userAgent: string | null }> {
   const h = await headers();
-  // On Vercel these headers are set by the platform, not the client. Behind another proxy
-  // (e.g. at the GCP move), check which header it sets before trusting any of them.
-  const ip = h.get("x-vercel-forwarded-for")?.split(",")[0].trim() || h.get("x-real-ip")?.trim()
-    || (h.get("x-forwarded-for") ?? "").split(",")[0].trim() || null;
-  return { ip: ip ? ip.slice(0, 64) : null, userAgent: h.get("user-agent")?.slice(0, 200) ?? null };
+  // Only the entries our own load balancer / proxy appended are trusted (see lib/auth/client-ip.ts).
+  const ip = clientIp(h.get("x-forwarded-for"), Number(process.env.TRUSTED_PROXY_ENTRIES));
+  return { ip, userAgent: h.get("user-agent")?.slice(0, 200) ?? null };
 }
 
 const cookieOptions = (maxAgeSeconds: number) => ({
